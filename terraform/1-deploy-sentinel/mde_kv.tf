@@ -63,6 +63,37 @@ resource "azurerm_key_vault_access_policy" "vm_mde_secret_get" {
 }
 
 # Custom Script Extension that pulls the script from KV and runs it
+locals {
+  # PowerShell script executed on the VM (runs as SYSTEM via CustomScriptExtension)
+  mde_onboard_ps = <<'PS'
+$kv   = "${azurerm_key_vault.mde[0].vault_uri}".TrimEnd('/')
+$name = "${var.mde_onboarding_secret_name}"
+$p    = "$env:WINDIR\\Temp\\mde-onboard.cmd"
+
+# Get Key Vault token via IMDS (VM system-assigned managed identity)
+$imds = "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net"
+$tok  = (Invoke-RestMethod -Headers @{ Metadata = 'true' } -Method GET -Uri $imds).access_token
+
+# Fetch secret value
+$sec = Invoke-RestMethod -Headers @{ Authorization = "Bearer $tok" } -Method GET -Uri "$kv/secrets/$name?api-version=7.4"
+
+# Write onboarding CMD to disk (ASCII)
+[IO.File]::WriteAllText($p, $sec.value, [Text.Encoding]::ASCII)
+
+# Remove trailing 'pause' if present
+(Get-Content -Raw $p) -replace '(^|\r?\n)pause\s*(\r?\n|$)','\r\n' | Set-Content -NoNewline -Encoding ASCII $p
+
+# Execute with auto-consent
+cmd /c "echo Y| %WINDIR%\\Temp\\mde-onboard.cmd"
+PS
+
+  # CustomScriptExtension expects a single command string
+  mde_onboard_command = format(
+    "powershell -ExecutionPolicy Bypass -NoProfile -Command \"%s\"",
+    replace(replace(local.mde_onboard_ps, "\n", "; "), "\"", "\\\"")
+  )
+}
+
 resource "azurerm_virtual_machine_extension" "mde_onboard_kv" {
   count = (var.enable_defender_for_endpoint && var.mde_onboarding_secret_name != null) ? 1 : 0
 
@@ -74,21 +105,7 @@ resource "azurerm_virtual_machine_extension" "mde_onboard_kv" {
   auto_upgrade_minor_version = true
 
   protected_settings = jsonencode({
-    commandToExecute = join(" ", [
-      "powershell -ExecutionPolicy Bypass -NoProfile -Command",
-      "\"$kv='${azurerm_key_vault.mde[0].vault_uri}';",
-      "$name='${var.mde_onboarding_secret_name}';",
-      "$p='$env:WINDIR\\Temp\\mde-onboard.cmd';",
-      # IMDS token for Key Vault
-      "$imds='http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net';",
-      "$tok = (Invoke-RestMethod -Headers @{Metadata='true'} -Method GET -Uri $imds).access_token;",
-      # Fetch secret value
-      "$base = $kv.TrimEnd('/');",
-      "$sec = Invoke-RestMethod -Headers @{Authorization=\"Bearer $tok\"} -Method GET -Uri (\"$base/secrets/$name?api-version=7.4\");",
-      "[IO.File]::WriteAllText($p, $sec.value, [Text.Encoding]::ASCII);",
-      "(Get-Content -Raw $p) -replace '(^|\\r?\\n)pause\\s*(\\r?\\n|$)','\\r\\n' | Set-Content -NoNewline -Encoding ASCII $p;",
-      "cmd /c \"\"echo Y| %WINDIR%\\Temp\\mde-onboard.cmd\"\""
-    ])
+    commandToExecute = local.mde_onboard_command
   })
 
   depends_on = [
