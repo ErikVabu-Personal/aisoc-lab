@@ -33,8 +33,8 @@ if (-not (Test-Path -LiteralPath $p)) {
 # Remove trailing 'pause' if present
 (Get-Content -Raw -LiteralPath $p) -replace '(^|\r?\n)pause\s*(\r?\n|$)','\r\n' | Set-Content -NoNewline -Encoding ASCII -LiteralPath $p
 
-# Execute with auto-consent
-$cmd = "echo Y| \"$p\""
+# Execute with auto-consent (avoid escaping issues)
+$cmd = 'echo Y| "' + $p + '"'
 & cmd.exe /c $cmd
 if ($LASTEXITCODE -ne 0) {
   throw "MDE onboarding script returned exit code $LASTEXITCODE"
