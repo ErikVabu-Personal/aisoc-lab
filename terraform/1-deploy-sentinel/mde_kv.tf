@@ -65,7 +65,7 @@ resource "azurerm_key_vault_access_policy" "vm_mde_secret_get" {
 # Custom Script Extension that pulls the script from KV and runs it
 locals {
   # PowerShell script executed on the VM (runs as SYSTEM via CustomScriptExtension)
-  mde_onboard_ps = <<'PS'
+  mde_onboard_ps = <<PS
 $kv   = "${azurerm_key_vault.mde[0].vault_uri}".TrimEnd('/')
 $name = "${var.mde_onboarding_secret_name}"
 $p    = "$env:WINDIR\\Temp\\mde-onboard.cmd"
