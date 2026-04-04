@@ -78,14 +78,26 @@ $tok  = (Invoke-RestMethod -Headers @{ Metadata = 'true' } -Method GET -Uri $imd
 # Fetch secret value
 $sec = Invoke-RestMethod -Headers @{ Authorization = "Bearer $tok" } -Method GET -Uri "$kv/secrets/$name?api-version=7.4"
 
+# Ensure target directory exists
+$dir = Split-Path -Parent $p
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
 # Write onboarding CMD to disk (ASCII)
 [IO.File]::WriteAllText($p, $sec.value, [Text.Encoding]::ASCII)
 
+if (-not (Test-Path -LiteralPath $p)) {
+  throw "Onboarding script was not written to disk: $p"
+}
+
 # Remove trailing 'pause' if present
-(Get-Content -Raw $p) -replace '(^|\r?\n)pause\s*(\r?\n|$)','\r\n' | Set-Content -NoNewline -Encoding ASCII $p
+(Get-Content -Raw -LiteralPath $p) -replace '(^|\r?\n)pause\s*(\r?\n|$)','\r\n' | Set-Content -NoNewline -Encoding ASCII -LiteralPath $p
 
 # Execute with auto-consent
-cmd /c "echo Y| %WINDIR%\\Temp\\mde-onboard.cmd"
+$cmd = "echo Y| `"$p`""
+$proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $cmd -Wait -PassThru
+if ($proc.ExitCode -ne 0) {
+  throw "MDE onboarding script returned exit code $($proc.ExitCode)"
+}
 PS
 
   # CustomScriptExtension expects a single command string
