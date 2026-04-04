@@ -160,6 +160,10 @@ resource "azurerm_windows_virtual_machine" "vm" {
   resource_group_name = azurerm_resource_group.rg.name
   size                = local.selected_vm_size
 
+  identity {
+    type = "SystemAssigned"
+  }
+
   admin_username = var.admin_username
   admin_password = var.admin_password
 
