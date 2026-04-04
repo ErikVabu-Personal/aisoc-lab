@@ -13,7 +13,12 @@ if ([string]::IsNullOrWhiteSpace($tok)) {
 }
 
 # Fetch secret value
-$sec = Invoke-RestMethod -Headers @{ Authorization = "Bearer $tok" } -Method GET -Uri "$kv/secrets/$name?api-version=7.4"
+$ub = [System.UriBuilder]::new("$kv/secrets/$name")
+$ub.Query = "api-version=7.4"
+$secretUri = $ub.Uri.AbsoluteUri
+Write-Host "Fetching Key Vault secret from: $secretUri"
+
+$sec = Invoke-RestMethod -Headers @{ Authorization = "Bearer $tok" } -Method GET -Uri $secretUri
 
 if (-not $sec.value) {
   throw "Key Vault secret '$name' has no value (or was not returned)."
