@@ -41,3 +41,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "MDE onboarding script executed successfully."
+
+# Verification signals
+try {
+  $sense = Get-Service -Name Sense -ErrorAction Stop
+  Write-Host ("Sense service: {0}" -f $sense.Status)
+} catch {
+  Write-Host "Sense service not found"
+}
+
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection") {
+  Write-Host "MDE registry hive present"
+} else {
+  Write-Host "MDE registry hive NOT present"
+}
+
