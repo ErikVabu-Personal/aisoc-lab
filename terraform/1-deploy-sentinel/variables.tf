@@ -93,7 +93,7 @@ variable "mde_onboarding_script_path" {
 variable "prevent_destroy_mde_key_vault" {
   description = "Safety switch. When true, the MDE Key Vault cannot be destroyed (helps avoid stuck KV deletes/purges during iteration). Set to false when you want to terraform destroy everything."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "enable_sentinel_mde_connector" {
