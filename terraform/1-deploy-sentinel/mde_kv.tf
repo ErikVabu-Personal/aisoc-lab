@@ -101,30 +101,20 @@ if ($LASTEXITCODE -ne 0) {
 PS
 
   # CustomScriptExtension expects a single command string
-  # CustomScriptExtension executes via cmd.exe, so quoting is fragile.
-  # We avoid cmd metacharacter issues (notably '&' in the IMDS URL) by base64-encoding
-  # the full PowerShell script and decoding/executing it inside PowerShell.
-  mde_onboard_ps_b64 = base64encode(local.mde_onboard_ps)
-
-  mde_onboard_command = format(
-    "powershell -ExecutionPolicy Bypass -NoProfile -Command \"$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s')); iex $s\"",
-    local.mde_onboard_ps_b64
-  )
+  # (No commandToExecute needed; VM Run Command executes PowerShell source directly.)
 }
 
-resource "azurerm_virtual_machine_extension" "mde_onboard_kv" {
+resource "azurerm_virtual_machine_run_command" "mde_onboard" {
   count = (var.enable_defender_for_endpoint && var.mde_onboarding_secret_name != null) ? 1 : 0
 
-  name                       = "MDEOnboard"
-  virtual_machine_id         = azurerm_windows_virtual_machine.vm.id
-  publisher                  = "Microsoft.Compute"
-  type                       = "CustomScriptExtension"
-  type_handler_version       = "1.10"
-  auto_upgrade_minor_version = true
+  name               = "mde-onboard"
+  location           = azurerm_resource_group.rg.location
+  virtual_machine_id = azurerm_windows_virtual_machine.vm.id
 
-  protected_settings = jsonencode({
-    commandToExecute = local.mde_onboard_command
-  })
+  # Run Command executes PowerShell directly (no cmd.exe quoting issues)
+  source {
+    script = local.mde_onboard_ps
+  }
 
   depends_on = [
     azurerm_key_vault_access_policy.vm_mde_secret_get,
