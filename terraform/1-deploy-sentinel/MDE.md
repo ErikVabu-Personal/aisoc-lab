@@ -23,11 +23,18 @@ mde_onboarding_secret_name   = "MDE-ONBOARD"
 terraform apply
 ```
 
-3) Upload the onboarding script to Key Vault (one-time):
+3) Upload the onboarding script to Key Vault.
+
+**Option A (recommended for non-lab):** upload via `az keyvault secret set` (does NOT store the script in TF state).
 
 ```bash
-# Use the vault name from Azure Portal or via output `mde_key_vault_uri`
 az keyvault secret set --vault-name <vaultName> --name MDE-ONBOARD --file onboarding.cmd
+```
+
+**Option B (LAB ONLY):** let Terraform upload it (stores the script in TF state).
+
+```hcl
+mde_onboarding_script_path = "./onboarding.cmd"
 ```
 
 4) Apply again so the extension pulls and runs the script:

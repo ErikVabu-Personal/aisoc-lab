@@ -39,12 +39,16 @@ enable_windows_event_logs = true
 # This uses Key Vault to avoid copy/paste into tfvars.
 # Steps:
 # 1) terraform apply with enable_defender_for_endpoint=true
-# 2) set the onboarding secret once:
-#    az keyvault secret set --vault-name <vaultName> --name MDE-ONBOARD --file onboarding.cmd
+# 2) Provide the onboarding script.
+#    Option A (recommended): upload it with az CLI:
+#      az keyvault secret set --vault-name <vaultName> --name MDE-ONBOARD --file onboarding.cmd
+#    Option B (LAB ONLY): let Terraform upload it (will be stored in TF state):
+#      mde_onboarding_script_path = "./onboarding.cmd"
 # 3) terraform apply again
 
 enable_defender_for_endpoint  = false
 mde_onboarding_secret_name    = "MDE-ONBOARD"
+# mde_onboarding_script_path  = "./onboarding.cmd"
 
 enable_sentinel_mde_connector = false
 

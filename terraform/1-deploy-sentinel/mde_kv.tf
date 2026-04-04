@@ -42,9 +42,19 @@ resource "azurerm_key_vault" "mde" {
   tags = local.tags
 }
 
+# (Optional) Upload onboarding script to Key Vault (LAB ONLY).
+# Note: secret content will be stored in Terraform state.
+resource "azurerm_key_vault_secret" "mde_onboard" {
+  count = (var.enable_defender_for_endpoint && var.mde_onboarding_script_path != null) ? 1 : 0
+
+  name         = var.mde_onboarding_secret_name
+  value        = file(var.mde_onboarding_script_path)
+  key_vault_id = azurerm_key_vault.mde[0].id
+}
+
 # Allow the VM managed identity to read the onboarding secret
 resource "azurerm_key_vault_access_policy" "vm_mde_secret_get" {
-  count      = var.enable_defender_for_endpoint ? 1 : 0
+  count       = var.enable_defender_for_endpoint ? 1 : 0
   key_vault_id = azurerm_key_vault.mde[0].id
   tenant_id    = data.azurerm_client_config.current.tenant_id
   object_id    = azurerm_windows_virtual_machine.vm.identity[0].principal_id
@@ -82,7 +92,8 @@ resource "azurerm_virtual_machine_extension" "mde_onboard_kv" {
   })
 
   depends_on = [
-    azurerm_key_vault_access_policy.vm_mde_secret_get
+    azurerm_key_vault_access_policy.vm_mde_secret_get,
+    azurerm_key_vault_secret.mde_onboard
   ]
 }
 

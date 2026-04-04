@@ -84,6 +84,12 @@ variable "mde_onboarding_secret_name" {
   default     = "MDE-ONBOARD"
 }
 
+variable "mde_onboarding_script_path" {
+  description = "Local path to the MDE onboarding script file (CMD/BAT). If set, Terraform will upload it to Key Vault as a secret (LAB ONLY: stored in TF state)."
+  type        = string
+  default     = null
+}
+
 variable "enable_sentinel_mde_connector" {
   description = "Enable the Microsoft Defender for Endpoint data connector in Sentinel. Requires MDE licensing + tenant consent in Sentinel; otherwise Azure returns InvalidLicense/Missing consent."
   type        = bool
