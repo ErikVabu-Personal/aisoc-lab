@@ -40,7 +40,7 @@ resource "azurerm_key_vault" "mde" {
   }
 
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = var.prevent_destroy_mde_key_vault
   }
 
   tags = local.tags
