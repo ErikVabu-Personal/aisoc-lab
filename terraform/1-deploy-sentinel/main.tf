@@ -20,6 +20,7 @@ locals {
 }
 
 data "external" "pick" {
+  count   = var.auto_select_location_and_sku ? 1 : 0
   program = ["python3", "${path.module}/scripts/select_vm_sku.py"]
 
   # external data source only supports string values; encode lists as JSON
@@ -32,8 +33,8 @@ data "external" "pick" {
 }
 
 locals {
-  selected_location = var.auto_select_location_and_sku ? data.external.pick.result.location : var.location
-  selected_vm_size  = var.auto_select_location_and_sku ? data.external.pick.result.vm_size : var.vm_size
+  selected_location = var.auto_select_location_and_sku ? data.external.pick[0].result.location : var.location
+  selected_vm_size  = var.auto_select_location_and_sku ? data.external.pick[0].result.vm_size : var.vm_size
 }
 
 resource "azurerm_resource_group" "rg" {
