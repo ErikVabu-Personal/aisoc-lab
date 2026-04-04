@@ -75,7 +75,7 @@ variable "enable_windows_event_logs" {
 variable "enable_defender_for_endpoint" {
   description = "Onboard the VM to Microsoft Defender for Endpoint (MDE) by fetching an onboarding script from Key Vault and executing it."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "mde_onboarding_secret_name" {
@@ -102,7 +102,7 @@ variable "enable_sentinel_mde_connector" {
 variable "enable_scheduled_rule_tpm_wmi" {
   description = "Deploy a simple scheduled Sentinel analytics rule that triggers on Microsoft-Windows-TPM-WMI events (runs every 5 minutes)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "vm_name" {
