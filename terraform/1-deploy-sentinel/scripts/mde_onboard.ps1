@@ -1,0 +1,51 @@
+param(
+  [Parameter(Mandatory=$true)]
+  [string]$KeyVaultUri,
+
+  [Parameter(Mandatory=$true)]
+  [string]$SecretName
+)
+
+$ErrorActionPreference = 'Stop'
+
+$kv   = $KeyVaultUri.TrimEnd('/')
+$name = $SecretName
+$p    = "$env:WINDIR\Temp\mde-onboard.cmd"
+
+# Get Key Vault token via IMDS (VM system-assigned managed identity)
+$imds = 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net'
+$tok  = (Invoke-RestMethod -Headers @{ Metadata = 'true' } -Method GET -Uri $imds).access_token
+
+if ([string]::IsNullOrWhiteSpace($tok)) {
+  throw 'Failed to acquire IMDS token for Key Vault.'
+}
+
+# Fetch secret value
+$sec = Invoke-RestMethod -Headers @{ Authorization = "Bearer $tok" } -Method GET -Uri "$kv/secrets/$name?api-version=7.4"
+
+if (-not $sec.value) {
+  throw "Key Vault secret '$name' has no value (or was not returned)."
+}
+
+# Ensure target directory exists
+$dir = Split-Path -Parent $p
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+# Write onboarding CMD to disk (ASCII)
+[IO.File]::WriteAllText($p, $sec.value, [Text.Encoding]::ASCII)
+
+if (-not (Test-Path -LiteralPath $p)) {
+  throw "Onboarding script was not written to disk: $p"
+}
+
+# Remove trailing 'pause' if present
+(Get-Content -Raw -LiteralPath $p) -replace '(^|\r?\n)pause\s*(\r?\n|$)','\r\n' | Set-Content -NoNewline -Encoding ASCII -LiteralPath $p
+
+# Execute with auto-consent
+$cmd = "echo Y| \"$p\""
+& cmd.exe /c $cmd
+if ($LASTEXITCODE -ne 0) {
+  throw "MDE onboarding script returned exit code $LASTEXITCODE"
+}
+
+Write-Host "MDE onboarding script executed successfully."

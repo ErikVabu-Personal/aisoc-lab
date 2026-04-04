@@ -62,48 +62,6 @@ resource "azurerm_key_vault_access_policy" "vm_mde_secret_get" {
   secret_permissions = ["Get"]
 }
 
-# Custom Script Extension that pulls the script from KV and runs it
-locals {
-  # PowerShell script executed on the VM (runs as SYSTEM via CustomScriptExtension)
-  mde_onboard_ps = <<PS
-$kv   = "${azurerm_key_vault.mde[0].vault_uri}".TrimEnd('/')
-$name = "${var.mde_onboarding_secret_name}"
-$p    = "$env:WINDIR\\Temp\\mde-onboard.cmd"
-
-# Get Key Vault token via IMDS (VM system-assigned managed identity)
-$imds = "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net"
-# (Above URL contains '&'. We escape '&' at the outer commandToExecute layer to avoid cmd.exe splitting.)
-$tok  = (Invoke-RestMethod -Headers @{ Metadata = 'true' } -Method GET -Uri $imds).access_token
-
-# Fetch secret value
-$sec = Invoke-RestMethod -Headers @{ Authorization = "Bearer $tok" } -Method GET -Uri "$kv/secrets/$name?api-version=7.4"
-
-# Ensure target directory exists
-$dir = Split-Path -Parent $p
-New-Item -ItemType Directory -Force -Path $dir | Out-Null
-
-# Write onboarding CMD to disk (ASCII)
-[IO.File]::WriteAllText($p, $sec.value, [Text.Encoding]::ASCII)
-
-if (-not (Test-Path -LiteralPath $p)) {
-  throw "Onboarding script was not written to disk: $p"
-}
-
-# Remove trailing 'pause' if present
-(Get-Content -Raw -LiteralPath $p) -replace '(^|\r?\n)pause\s*(\r?\n|$)','\r\n' | Set-Content -NoNewline -Encoding ASCII -LiteralPath $p
-
-# Execute with auto-consent (avoid Start-Process parsing issues)
-$cmd = "echo Y| \"$p\""
-& cmd.exe /c $cmd
-if ($LASTEXITCODE -ne 0) {
-  throw "MDE onboarding script returned exit code $LASTEXITCODE"
-}
-PS
-
-  # CustomScriptExtension expects a single command string
-  # (No commandToExecute needed; VM Run Command executes PowerShell source directly.)
-}
-
 resource "azurerm_virtual_machine_run_command" "mde_onboard" {
   count = (var.enable_defender_for_endpoint && var.mde_onboarding_secret_name != null) ? 1 : 0
 
@@ -111,9 +69,18 @@ resource "azurerm_virtual_machine_run_command" "mde_onboard" {
   location           = azurerm_resource_group.rg.location
   virtual_machine_id = azurerm_windows_virtual_machine.vm.id
 
-  # Run Command executes PowerShell directly (no cmd.exe quoting issues)
   source {
-    script = local.mde_onboard_ps
+    script = file("${path.module}/scripts/mde_onboard.ps1")
+  }
+
+  parameter {
+    name  = "KeyVaultUri"
+    value = azurerm_key_vault.mde[0].vault_uri
+  }
+
+  parameter {
+    name  = "SecretName"
+    value = var.mde_onboarding_secret_name
   }
 
   depends_on = [
