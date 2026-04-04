@@ -21,8 +21,6 @@ terraform {
 
 # NOTE: azurerm_virtual_machine_run_command is provided by azurerm provider.
 # Keep azurerm up to date if you hit schema/API issues.
-  }
-}
 
 provider "azurerm" {
   features {}
