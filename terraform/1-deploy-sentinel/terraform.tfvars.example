@@ -1,0 +1,48 @@
+# Rename to terraform.tfvars and fill in values
+
+# You can keep a preferred default, but auto-selection will try multiple regions by default.
+location            = "westeurope"
+
+auto_select_location_and_sku = true
+
+# Optional overrides:
+# location_candidates = ["northeurope", "westeurope", "westus"]
+# vm_size_candidates  = ["Standard_B1ms", "Standard_D2as_v5"]
+
+# Windows VM credentials
+# admin_username = "azureadmin"
+
+# RDP allow-listing
+# auto_detect_rdp_cidr = true
+# allowed_rdp_cidr = "x.x.x.x/32"
+
+# OpenRouter (optional)
+# openrouter_api_key = "sk-or-v1-..."
+resource_group_name = "rg-sentinel-test"
+workspace_name      = "law-sentinel-test"
+vm_name             = "win11-test"
+vm_size             = "Standard_B2s"
+
+# Set to your public IP with /32
+allowed_rdp_cidr = "203.0.113.10/32"
+
+# Choose a strong password
+admin_username = "azureadmin"
+admin_password = "CHANGEME-StrongPassword-123!"
+
+# Enable log collection via Azure Monitor Agent
+enable_ama               = true
+enable_windows_event_logs = true
+
+# Defender for Endpoint onboarding (optional)
+enable_defender_for_endpoint  = false
+# Paste the full onboarding script (the CMD/BAT content) as a heredoc if enabling:
+# mde_onboarding_script = <<EOT
+# <PASTE HERE>
+# EOT
+mde_onboarding_script         = null
+enable_sentinel_mde_connector = false
+
+# Optional: auto shutdown time (HHMM) or null
+auto_shutdown_time     = "1900"
+auto_shutdown_timezone = "Romance Standard Time"

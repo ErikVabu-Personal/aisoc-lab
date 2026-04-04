@@ -1,0 +1,14 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+
+    "LAW_WORKSPACE_ID": "<workspace-guid>",
+    "LAW_WORKSPACE_NAME": "<workspace-name>",
+    "AZURE_SUBSCRIPTION_ID": "<sub>",
+    "AZURE_RESOURCE_GROUP": "<rg>",
+
+    "KEYVAULT_URI": "https://<kv>.vault.azure.net/"
+  }
+}

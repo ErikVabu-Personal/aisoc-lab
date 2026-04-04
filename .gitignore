@@ -1,0 +1,15 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Local tfvars (contains secrets)
+terraform.tfvars
+*.auto.tfvars
+
+# OS
+.DS_Store
+Thumbs.db
