@@ -212,7 +212,8 @@ resource "azurerm_monitor_data_collection_rule" "dcr" {
       x_path_queries = [
         "Application!*[System[(Level=1 or Level=2 or Level=3)]]",
         "System!*[System[(Level=1 or Level=2 or Level=3)]]",
-        "Security!*[System[(Level=1 or Level=2 or Level=3)]]",
+        # Security events are typically Level=4 (Information). Include Level 4 so audit events arrive.
+        "Security!*[System[(Level=1 or Level=2 or Level=3 or Level=4)]]",
       ]
     }
   }
