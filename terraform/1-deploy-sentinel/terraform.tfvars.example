@@ -35,12 +35,16 @@ enable_ama               = true
 enable_windows_event_logs = true
 
 # Defender for Endpoint onboarding (optional)
+# This uses Key Vault to avoid copy/paste into tfvars.
+# Steps:
+# 1) terraform apply with enable_defender_for_endpoint=true
+# 2) set the onboarding secret once:
+#    az keyvault secret set --vault-name <vaultName> --name MDE-ONBOARD --file onboarding.cmd
+# 3) terraform apply again
+
 enable_defender_for_endpoint  = false
-# Paste the full onboarding script (the CMD/BAT content) as a heredoc if enabling:
-# mde_onboarding_script = <<EOT
-# <PASTE HERE>
-# EOT
-mde_onboarding_script         = null
+mde_onboarding_secret_name    = "MDE-ONBOARD"
+
 enable_sentinel_mde_connector = false
 
 # Optional: auto shutdown time (HHMM) or null

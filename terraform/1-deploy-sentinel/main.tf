@@ -250,34 +250,7 @@ resource "azurerm_monitor_data_collection_rule_association" "dcr_assoc" {
 }
 
 # --- Defender for Endpoint (MDE) onboarding (optional) ---
-
-resource "azurerm_virtual_machine_extension" "mde_onboard" {
-  count = (var.enable_defender_for_endpoint && var.mde_onboarding_script != null) ? 1 : 0
-
-  name                       = "MDEOnboard"
-  virtual_machine_id         = azurerm_windows_virtual_machine.vm.id
-  publisher                  = "Microsoft.Compute"
-  type                       = "CustomScriptExtension"
-  type_handler_version       = "1.10"
-  auto_upgrade_minor_version = true
-
-  # The onboarding script from the MDE portal is typically an interactive CMD/BAT script.
-  # CustomScriptExtension runs as SYSTEM, but it's non-interactive.
-  # We write the script to disk from base64, then execute it with an auto-consent (echo Y| ...).
-  protected_settings = jsonencode({
-    commandToExecute = join(" ", [
-      "powershell -ExecutionPolicy Bypass -NoProfile -Command",
-      # 1) Write script from base64
-      "\"$b64='${base64encode(var.mde_onboarding_script)}';",
-      "$p='$env:WINDIR\\Temp\\mde-onboard.cmd';",
-      "[IO.File]::WriteAllBytes($p,[Convert]::FromBase64String($b64));",
-      # 2) Remove trailing 'pause' which would hang non-interactive extension runs
-      "(Get-Content -Raw $p) -replace '(^|\\r?\\n)pause\\s*(\\r?\\n|$)','\\r\\n' | Set-Content -NoNewline -Encoding ASCII $p;",
-      # 3) Execute with auto-consent
-      "cmd /c \"\"echo Y| %WINDIR%\\Temp\\mde-onboard.cmd\"\"\"\""
-    ])
-  })
-}
+# Implemented in mde_kv.tf (Key Vault secret pull + execution)
 
 # Enable the Sentinel connector for Defender for Endpoint (brings MDE incidents/alerts into Sentinel)
 resource "azurerm_sentinel_data_connector_microsoft_defender_advanced_threat_protection" "mde" {

@@ -73,21 +73,15 @@ variable "enable_windows_event_logs" {
 }
 
 variable "enable_defender_for_endpoint" {
-  description = "Attempt to onboard the VM to Microsoft Defender for Endpoint using a provided onboarding script"
+  description = "Onboard the VM to Microsoft Defender for Endpoint (MDE) by fetching an onboarding script from Key Vault and executing it."
   type        = bool
   default     = false
 }
 
-variable "mde_onboarding_script" {
-  description = <<EOT
-Onboarding script content for Microsoft Defender for Endpoint (as provided by the MDE portal).
-
-The MDE onboarding script is typically a CMD/BAT script with an interactive Y/N prompt.
-Terraform will write it to disk and execute it non-interactively (auto-confirm).
-EOT
-  type      = string
-  default   = null
-  sensitive = true
+variable "mde_onboarding_secret_name" {
+  description = "Key Vault secret name containing the MDE onboarding script content (CMD/BAT)."
+  type        = string
+  default     = "MDE-ONBOARD"
 }
 
 variable "enable_sentinel_mde_connector" {
