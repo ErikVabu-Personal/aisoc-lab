@@ -79,13 +79,13 @@ variable "enable_defender_for_endpoint" {
 }
 
 variable "mde_onboarding_secret_name" {
-  description = "Key Vault secret name containing the MDE onboarding script content (CMD/BAT)."
+  description = "Key Vault secret name containing the MDE onboarding script content (CMD/BAT). Set to null to skip running the onboarding extension."
   type        = string
   default     = "MDE-ONBOARD"
 }
 
 variable "enable_sentinel_mde_connector" {
-  description = "Enable the Microsoft Defender for Endpoint data connector in Sentinel (requires MDE already set up in tenant)"
+  description = "Enable the Microsoft Defender for Endpoint data connector in Sentinel. Requires MDE licensing + tenant consent in Sentinel; otherwise Azure returns InvalidLicense/Missing consent."
   type        = bool
   default     = false
 }
