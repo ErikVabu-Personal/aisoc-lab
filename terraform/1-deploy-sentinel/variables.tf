@@ -99,7 +99,7 @@ variable "vm_name" {
 variable "vm_size" {
   description = "Azure VM size (pick something you have quota for; B/Dv3 are usually widely available)"
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_D2s_v3"
 }
 
 variable "admin_username" {

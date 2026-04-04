@@ -22,7 +22,7 @@ auto_select_location_and_sku = false
 resource_group_name = "rg-sentinel-test"
 workspace_name      = "law-sentinel-test"
 vm_name             = "win11-test"
-vm_size             = "Standard_B2s"
+vm_size             = "Standard_D2s_v3"
 
 # Set to your public IP with /32
 allowed_rdp_cidr = "203.0.113.10/32"
