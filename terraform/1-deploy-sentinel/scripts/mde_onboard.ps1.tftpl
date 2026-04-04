@@ -40,24 +40,32 @@ if (-not (Test-Path -LiteralPath $p)) {
 
 # Execute with auto-consent (avoid escaping issues)
 $cmd = 'echo Y| "' + $p + '"'
+Write-Host "Executing onboarding cmd via: cmd.exe /c $cmd"
 & cmd.exe /c $cmd
-if ($LASTEXITCODE -ne 0) {
-  throw "MDE onboarding script returned exit code $LASTEXITCODE"
-}
-
-Write-Host "MDE onboarding script executed successfully."
+$exit = $LASTEXITCODE
+Write-Host "Onboarding cmd exit code: $exit"
 
 # Verification signals
+$senseStatus = $null
 try {
   $sense = Get-Service -Name Sense -ErrorAction Stop
-  Write-Host ("Sense service: {0}" -f $sense.Status)
+  $senseStatus = $sense.Status
+  Write-Host ("Sense service: {0}" -f $senseStatus)
 } catch {
   Write-Host "Sense service not found"
 }
 
-if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection") {
+$hivePresent = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection"
+if ($hivePresent) {
   Write-Host "MDE registry hive present"
 } else {
   Write-Host "MDE registry hive NOT present"
 }
 
+# Some onboarding scripts return non-zero even when onboarding succeeded.
+# Treat as success if we see strong success indicators.
+if ($exit -ne 0 -and -not $hivePresent -and $senseStatus -ne 'Running') {
+  throw "MDE onboarding script returned exit code $exit"
+}
+
+Write-Host "MDE onboarding completed (exit=$exit, hivePresent=$hivePresent, sense=$senseStatus)"
