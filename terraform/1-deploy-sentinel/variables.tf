@@ -99,6 +99,12 @@ variable "enable_sentinel_mde_connector" {
   default     = false
 }
 
+variable "enable_scheduled_rule_tpm_wmi" {
+  description = "Deploy a simple scheduled Sentinel analytics rule that triggers on Microsoft-Windows-TPM-WMI events (runs every 5 minutes)."
+  type        = bool
+  default     = false
+}
+
 variable "vm_name" {
   description = "Windows VM name"
   type        = string

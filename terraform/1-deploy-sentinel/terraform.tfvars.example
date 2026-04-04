@@ -57,6 +57,9 @@ mde_onboarding_secret_name    = "MDE-ONBOARD"
 
 enable_sentinel_mde_connector = false
 
+# Sentinel scheduled analytics rule (lab)
+enable_scheduled_rule_tpm_wmi = true
+
 # Optional: auto shutdown time (HHMM) or null
 auto_shutdown_time     = "1900"
 auto_shutdown_timezone = "Romance Standard Time"
