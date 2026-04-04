@@ -47,9 +47,9 @@ enable_windows_event_logs = true
 # 3) terraform apply again
 #
 # Cleanup note:
-# - By default we prevent destroying the MDE Key Vault (helps avoid stuck KV deletes).
-# - When you want to destroy the whole lab, set:
-#     prevent_destroy_mde_key_vault = false
+# - We allow full teardown by default.
+# - If you want a safety rail to avoid KV deletions during iteration, uncomment
+#   the prevent_destroy lifecycle block in mde_kv.tf.
 
 enable_defender_for_endpoint  = false
 mde_onboarding_secret_name    = "MDE-ONBOARD"

@@ -39,9 +39,8 @@ resource "azurerm_key_vault" "mde" {
     secret_permissions = ["Get", "List", "Set", "Delete"]
   }
 
-  lifecycle {
-    prevent_destroy = var.prevent_destroy_mde_key_vault
-  }
+  # NOTE: Terraform requires lifecycle.prevent_destroy to be a constant.
+  # We intentionally do NOT set prevent_destroy here so the lab can be fully torn down.
 
   tags = local.tags
 }

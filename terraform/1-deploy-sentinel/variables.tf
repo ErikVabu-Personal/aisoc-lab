@@ -90,11 +90,8 @@ variable "mde_onboarding_script_path" {
   default     = null
 }
 
-variable "prevent_destroy_mde_key_vault" {
-  description = "Safety switch. When true, the MDE Key Vault cannot be destroyed (helps avoid stuck KV deletes/purges during iteration). Set to false when you want to terraform destroy everything."
-  type        = bool
-  default     = false
-}
+# NOTE: lifecycle.prevent_destroy must be a constant; we cannot toggle it with a variable.
+# If you want a safety rail, uncomment the prevent_destroy block in mde_kv.tf.
 
 variable "enable_sentinel_mde_connector" {
   description = "Enable the Microsoft Defender for Endpoint data connector in Sentinel. Requires MDE licensing + tenant consent in Sentinel; otherwise Azure returns InvalidLicense/Missing consent."
