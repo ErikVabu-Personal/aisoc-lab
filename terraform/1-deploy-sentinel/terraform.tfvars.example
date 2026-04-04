@@ -1,13 +1,14 @@
 # Rename to terraform.tfvars and fill in values
 
-# You can keep a preferred default, but auto-selection will try multiple regions by default.
-location            = "westeurope"
+# Region
+location = "westus" # West US
 
-auto_select_location_and_sku = true
+# Disable auto-pick (it can be slow because it probes multiple regions/SKUs)
+auto_select_location_and_sku = false
 
-# Optional overrides:
-# location_candidates = ["northeurope", "westeurope", "westus"]
-# vm_size_candidates  = ["Standard_B1ms", "Standard_D2as_v5"]
+# (Optional) If you re-enable auto-pick later:
+# location_candidates = ["westus"]
+# vm_size_candidates  = ["Standard_B1ms", "Standard_B2s", "Standard_D2as_v5"]
 
 # Windows VM credentials
 # admin_username = "azureadmin"
