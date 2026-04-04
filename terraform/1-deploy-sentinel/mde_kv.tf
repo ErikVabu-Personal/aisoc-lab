@@ -70,17 +70,10 @@ resource "azurerm_virtual_machine_run_command" "mde_onboard" {
   virtual_machine_id = azurerm_windows_virtual_machine.vm.id
 
   source {
-    script = file("${path.module}/scripts/mde_onboard.ps1")
-  }
-
-  parameter {
-    name  = "KeyVaultUri"
-    value = azurerm_key_vault.mde[0].vault_uri
-  }
-
-  parameter {
-    name  = "SecretName"
-    value = var.mde_onboarding_secret_name
+    script = templatefile("${path.module}/scripts/mde_onboard.ps1.tftpl", {
+      key_vault_uri = azurerm_key_vault.mde[0].vault_uri
+      secret_name   = var.mde_onboarding_secret_name
+    })
   }
 
   depends_on = [
