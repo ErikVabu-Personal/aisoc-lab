@@ -101,15 +101,14 @@ if ($LASTEXITCODE -ne 0) {
 PS
 
   # CustomScriptExtension expects a single command string
-  # NOTE: CustomScriptExtension executes via cmd.exe; unescaped '&' can be interpreted by cmd
-  # if quoting/escaping goes wrong. As an extra guard, escape '&' as '^&'.
-  mde_onboard_command = replace(
-    format(
-      "powershell -ExecutionPolicy Bypass -NoProfile -Command \"%s\"",
-      replace(replace(local.mde_onboard_ps, "\n", "; "), "\"", "\\\"")
-    ),
-    "&",
-    "^&"
+  # CustomScriptExtension executes via cmd.exe, so quoting is fragile.
+  # We avoid cmd metacharacter issues (notably '&' in the IMDS URL) by base64-encoding
+  # the full PowerShell script and decoding/executing it inside PowerShell.
+  mde_onboard_ps_b64 = base64encode(local.mde_onboard_ps)
+
+  mde_onboard_command = format(
+    "powershell -ExecutionPolicy Bypass -NoProfile -Command \"$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s')); iex $s\"",
+    local.mde_onboard_ps_b64
   )
 }
 
