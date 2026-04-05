@@ -1,7 +1,7 @@
 # Rename to terraform.tfvars
 
-# If Consumption is blocked, use B1 or S1
-function_plan_sku = "B1"
+# If B1 quota is blocked/0, use S1
+function_plan_sku = "S1"
 
 # Optional
 # openrouter_api_key = "sk-or-v1-..."

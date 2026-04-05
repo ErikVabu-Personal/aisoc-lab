@@ -6,7 +6,7 @@ variable "openrouter_api_key" {
 }
 
 variable "function_plan_sku" {
-  description = "App Service Plan SKU for the SOC gateway Function. Use B1/S1."
+  description = "App Service Plan SKU for the SOC gateway Function. Use S1 if B1 quota is 0 in your subscription/region."
   type        = string
-  default     = "B1"
+  default     = "S1"
 }
