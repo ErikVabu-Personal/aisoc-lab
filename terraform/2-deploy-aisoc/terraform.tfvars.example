@@ -1,7 +1,7 @@
 # Rename to terraform.tfvars
 
-# If B1 quota is blocked/0, use S1
-function_plan_sku = "S1"
+# If S1 quota is blocked/0, use a Premium plan you have quota for (e.g. P1v4)
+function_plan_sku = "P1v4"
 
 # Optional
 # openrouter_api_key = "sk-or-v1-..."
