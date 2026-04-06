@@ -120,9 +120,16 @@ Test-Path "HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection"
 
 ---
 
-## Phase 2 — Deploy SOC Gateway (Azure Function)
+## Phase 2 — Deploy SOC Gateway + Foundry Hub/Project (Terraform)
 
 Phase 2 reads Phase 1 outputs from local state (`../1-deploy-sentinel/terraform.tfstate`).
+
+Phase 2 provisions:
+
+- SOC Gateway **Azure Function App** + supporting resources (Storage, App Service Plan)
+- **Key Vault** (for provider secrets)
+- RBAC for the Function MI to query Log Analytics and interact with Sentinel
+- Azure AI Foundry **Hub/Account** + **Project** (via AzAPI)
 
 ### 1) Configure tfvars
 
@@ -136,14 +143,28 @@ cp terraform.tfvars.example terraform.tfvars
 Important settings:
 
 - `function_plan_sku` — pick a SKU you have quota for (e.g. `EP1`)
-- `location_override` — optional: deploy Phase 2 in another region if App Service quota is blocked in West US
+- `location_override` — optional: deploy Phase 2 in another region if App Service quota is blocked
+- `foundry_location` — **recommended** to set explicitly (Foundry enablement differs by region)
 
 Example (common in restricted subscriptions):
 
 ```hcl
+# App Service / Functions region (quota-driven)
 location_override = "westcentralus"
 function_plan_sku = "EP1"
+
+# Foundry region (capability-driven)
+foundry_location = "westus"
 ```
+
+Model settings (used later by agent deployment scripts):
+
+```hcl
+foundry_model_choice          = "gpt-4.1-mini"
+foundry_model_deployment_name = "gpt-4.1-mini"
+```
+
+> Note: `foundry_hub_name` and `foundry_project_name` are optional and will auto-generate with a random suffix.
 
 ### 2) Apply
 
@@ -152,10 +173,12 @@ terraform init
 terraform apply
 ```
 
-Terraform outputs:
+Terraform outputs include:
 
 - `soc_gateway_function_name`
 - `key_vault_uri`
+- `foundry_hub_name`, `foundry_project_name`
+- `foundry_account_id`, `foundry_project_id`
 
 ---
 
@@ -264,6 +287,35 @@ Use the GitHub Action (Linux build).
 
 ---
 
+## Phase 3 — Deploy Foundry agents (script)
+
+Agent resources evolve faster than Terraform providers, so we deploy them via script.
+
+### 1) Run the agent deployment stub
+
+After Phase 2 completes:
+
+```bash
+python3 scripts/deploy_agents.py --tfstate terraform/2-deploy-aisoc/terraform.tfstate
+```
+
+This prints the resolved config (Foundry hub/project + gateway) and validates required settings.
+
+### 2) Next iterations
+
+- Implement creation/update of 3 agents:
+  - Triage
+  - Investigator
+  - Reporter
+- Wire agent tools to SOC Gateway endpoints:
+  - `POST /api/kql/query`
+  - `GET /api/sentinel/incidents`
+  - `GET /api/sentinel/incidents/{id}`
+  - `PATCH /api/sentinel/incidents/{id}`
+
+---
+
 ## Next step
 
-- Create Azure AI Foundry Agent Service agents and point their tools at the gateway endpoints.
+- Deploy Foundry agents and point their tools at the gateway endpoints.
+- (Planned) Visualize agent activity using PixelAgents fed by Foundry telemetry.
