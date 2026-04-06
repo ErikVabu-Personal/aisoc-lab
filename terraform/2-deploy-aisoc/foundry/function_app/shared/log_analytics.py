@@ -14,7 +14,10 @@ def _get_token() -> str:
     if msi_endpoint and msi_secret:
         r = requests.get(
             msi_endpoint,
-            params={"resource": "https://api.loganalytics.io"},
+            params={
+                "resource": "https://api.loganalytics.io",
+                "api-version": "2017-09-01",
+            },
             headers={"Secret": msi_secret},
             timeout=30,
         )
