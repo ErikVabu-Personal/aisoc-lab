@@ -18,13 +18,15 @@ locals {
   kv_name        = "kv-${local.foundry_prefix}-${random_string.suffix.result}"
   sa_name        = "safoundrysoc${random_string.suffix.result}" # must be lowercase
   func_name      = "func-${local.foundry_prefix}-${random_string.suffix.result}"
+
+  location_effective = var.location_override != null ? var.location_override : data.terraform_remote_state.sentinel.outputs.selected_location
 }
 
 # Storage account for Function App
 resource "azurerm_storage_account" "fa" {
   name                     = local.sa_name
   resource_group_name      = data.terraform_remote_state.sentinel.outputs.resource_group
-  location                 = data.terraform_remote_state.sentinel.outputs.selected_location
+  location                 = local.location_effective
   account_tier             = "Standard"
   account_replication_type = "LRS"
 
@@ -36,7 +38,7 @@ resource "azurerm_storage_account" "fa" {
 resource "azurerm_service_plan" "fa" {
   name                = "asp-${local.foundry_prefix}-${random_string.suffix.result}"
   resource_group_name = data.terraform_remote_state.sentinel.outputs.resource_group
-  location            = data.terraform_remote_state.sentinel.outputs.selected_location
+  location            = local.location_effective
 
   os_type  = "Linux"
   # NOTE: Consumption plans use "Dynamic" workers and can fail if your subscription's
@@ -49,7 +51,7 @@ resource "azurerm_service_plan" "fa" {
 # Key Vault to store API keys (OpenRouter etc.)
 resource "azurerm_key_vault" "kv" {
   name                = local.kv_name
-  location            = data.terraform_remote_state.sentinel.outputs.selected_location
+  location            = local.location_effective
   resource_group_name = data.terraform_remote_state.sentinel.outputs.resource_group
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
@@ -80,7 +82,7 @@ resource "azurerm_key_vault_secret" "openrouter" {
 resource "azurerm_linux_function_app" "soc_gateway" {
   name                = local.func_name
   resource_group_name = data.terraform_remote_state.sentinel.outputs.resource_group
-  location            = data.terraform_remote_state.sentinel.outputs.selected_location
+  location            = local.location_effective
 
   service_plan_id            = azurerm_service_plan.fa.id
   storage_account_name       = azurerm_storage_account.fa.name

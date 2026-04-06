@@ -1,7 +1,13 @@
 # Rename to terraform.tfvars
 
-# If S1 quota is blocked/0, use a Premium plan you have quota for (e.g. P1v4)
-function_plan_sku = "P1v4"
+# SKU quotas vary per region/subscription.
+# Example:
+# function_plan_sku = "S1"
+# function_plan_sku = "P1v4"
+
+# Optional: override region for Phase 2 resources (defaults to Phase 1 region)
+# location_override = "westus"
+
 
 # Optional
 # openrouter_api_key = "sk-or-v1-..."

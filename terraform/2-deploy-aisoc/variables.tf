@@ -6,7 +6,13 @@ variable "openrouter_api_key" {
 }
 
 variable "function_plan_sku" {
-  description = "App Service Plan SKU for the SOC gateway Function. Use S1 if B1 quota is 0 in your subscription/region."
+  description = "App Service Plan SKU for the SOC gateway Function. Region quotas vary heavily; set this in tfvars when needed."
   type        = string
   default     = "S1"
+}
+
+variable "location_override" {
+  description = "Optional region override for Phase 2 resources (e.g. 'westus'). If null, uses Phase 1 selected_location from remote state."
+  type        = string
+  default     = null
 }
