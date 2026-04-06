@@ -25,8 +25,9 @@ locals {
 locals {
   foundry_rg_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${data.terraform_remote_state.sentinel.outputs.resource_group}"
 
-  # Prefer stable. Switch to 2026-01-15-preview only if we hit missing fields.
-  foundry_api_version = "2025-12-01"
+  # AzAPI schema validation currently supports these CognitiveServices apiVersions.
+  # Use a supported preview version for now.
+  foundry_api_version = "2025-10-01-preview"
 
   # Auto-generate globally-unique-ish names if not provided.
   # (Cognitive Services account names must be unique and follow specific rules.)
