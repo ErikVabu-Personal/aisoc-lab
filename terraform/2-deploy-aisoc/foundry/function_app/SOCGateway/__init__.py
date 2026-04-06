@@ -5,6 +5,7 @@ import azure.functions as func
 from shared.log_analytics import query_law
 from shared.sentinel import list_incidents, get_incident, update_incident
 from shared.auth import get_openrouter_api_key_from_env_or_kv
+from shared.permissions import require_key
 
 
 def _json(req: func.HttpRequest) -> dict:
@@ -19,6 +20,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         if route == "kql/query":
+            require_key(req, "AISOC_READ_KEY")
             body = _json(req)
             kql = body.get("query")
             timespan = body.get("timespan", "PT1H")
@@ -27,6 +29,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(json.dumps(query_law(kql, timespan)), mimetype="application/json")
 
         if route == "sentinel/incidents":
+            require_key(req, "AISOC_READ_KEY")
             # Dynamic from env set by Terraform
             sub = os.environ["AZURE_SUBSCRIPTION_ID"]
             rg = os.environ["AZURE_RESOURCE_GROUP"]
@@ -34,6 +37,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(json.dumps(list_incidents(sub, rg, ws)), mimetype="application/json")
 
         if route == "sentinel/incident":
+            require_key(req, "AISOC_READ_KEY")
             sub = os.environ["AZURE_SUBSCRIPTION_ID"]
             rg = os.environ["AZURE_RESOURCE_GROUP"]
             ws = os.environ["LAW_WORKSPACE_NAME"]
@@ -43,6 +47,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(json.dumps(get_incident(sub, rg, ws, incident_id)), mimetype="application/json")
 
         if route == "sentinel/incident/update":
+            require_key(req, "AISOC_WRITE_KEY")
             sub = os.environ["AZURE_SUBSCRIPTION_ID"]
             rg = os.environ["AZURE_RESOURCE_GROUP"]
             ws = os.environ["LAW_WORKSPACE_NAME"]
@@ -59,6 +64,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         if route == "llm/openrouter":
+            require_key(req, "AISOC_READ_KEY")
             # Optional utility endpoint
             body = _json(req)
             prompt = body.get("prompt")
@@ -83,5 +89,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         return func.HttpResponse("Unknown route", status_code=404)
 
+    except PermissionError as e:
+        # Don't leak which key was expected
+        return func.HttpResponse(json.dumps({"error": "Forbidden"}), status_code=403, mimetype="application/json")
     except Exception as e:
         return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")

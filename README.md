@@ -197,6 +197,26 @@ Inputs:
 
 ## Smoke tests (Gateway)
 
+### Gateway auth keys (read vs write)
+
+The SOC gateway supports a simple extra auth layer on top of the Function key:
+
+- `AISOC_READ_KEY` — required for read endpoints (KQL + incident list/get)
+- `AISOC_WRITE_KEY` — required for write endpoints (incident update)
+
+Set them as Function App settings (Portal → Function App → Configuration):
+
+- `AISOC_READ_KEY` = some random string
+- `AISOC_WRITE_KEY` = some random string
+
+Pass them on requests as:
+
+- header: `x-aisoc-key: <key>`
+  -or-
+- query param: `?aisoc_key=<key>`
+
+You still need the standard Function key (`?code=<function-key>`).
+
 Get a **Function key**:
 
 Function App → Functions → `SOCGateway` → Function Keys
