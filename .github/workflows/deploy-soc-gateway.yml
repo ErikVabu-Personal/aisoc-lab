@@ -42,12 +42,13 @@ jobs:
           # Install dependencies into the Azure Functions expected folder
           python -m pip install --no-cache-dir --target ".python_packages/lib/site-packages" -r requirements.txt
 
-          # Sanity check: fail fast if requests didn't land in the package
+          # Sanity check: fail fast if deps didn't land in the package
           python - <<'PY'
           import sys, pathlib
           sys.path.insert(0, str(pathlib.Path('.python_packages/lib/site-packages').resolve()))
           import requests  # noqa: F401
-          print('requests_ok')
+          import azure.functions  # noqa: F401
+          print('deps_ok')
           PY
 
           # Zip must have host.json at root
