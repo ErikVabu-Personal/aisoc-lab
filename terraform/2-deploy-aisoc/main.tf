@@ -174,6 +174,16 @@ output "foundry_project_name" {
   description = "Configured Foundry project name (may be null until set)."
 }
 
+output "foundry_account_id" {
+  value       = try(azapi_resource.foundry_account[0].id, null)
+  description = "Foundry/Cognitive Services account resource id (Hub)."
+}
+
+output "foundry_project_id" {
+  value       = try(azapi_resource.foundry_project[0].id, null)
+  description = "Foundry project resource id."
+}
+
 output "foundry_location" {
   value       = coalesce(var.foundry_location, local.location_effective)
   description = "Effective location to use for Foundry-related resources."

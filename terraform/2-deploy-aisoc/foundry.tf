@@ -27,26 +27,47 @@ locals {
   foundry_location_effective = coalesce(var.foundry_location, local.location_effective)
 }
 
-# TODO: Confirm the correct resource types/apiVersions for Foundry Hub/Project.
-# We keep this as a scaffold so the repo has the intended shape.
-
-# Example placeholders (WILL need verification):
-# resource "azapi_resource" "foundry_hub" {
-#   type      = "Microsoft.MachineLearningServices/workspaces@2024-04-01"
-#   name      = var.foundry_hub_name
-#   location  = local.foundry_location_effective
-#   parent_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${data.terraform_remote_state.sentinel.outputs.resource_group}"
-#   body = jsonencode({
-#     properties = {
-#       # ...
-#     }
-#   })
-# }
+# Foundry control-plane mapping (based on provider discovery):
+# - Hub/Account: Microsoft.CognitiveServices/accounts
+# - Project:     Microsoft.CognitiveServices/accounts/projects
 #
-# resource "azapi_resource" "foundry_project" {
-#   type      = "<FOUNDY_PROJECT_TYPE>@<API_VERSION>"
-#   name      = var.foundry_project_name
-#   location  = local.foundry_location_effective
-#   parent_id = azapi_resource.foundry_hub.id
-#   body      = jsonencode({ properties = {} })
-# }
+# Erik confirmed these resourceTypes + stable apiVersions are available.
+# We pin to a stable apiVersion by default.
+
+locals {
+  foundry_rg_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${data.terraform_remote_state.sentinel.outputs.resource_group}"
+
+  # Prefer stable. Switch to 2026-01-15-preview only if we hit missing fields.
+  foundry_api_version = "2025-12-01"
+}
+
+resource "azapi_resource" "foundry_account" {
+  count = var.foundry_hub_name == null ? 0 : 1
+
+  type      = "Microsoft.CognitiveServices/accounts@${local.foundry_api_version}"
+  name      = var.foundry_hub_name
+  location  = local.foundry_location_effective
+  parent_id = local.foundry_rg_id
+
+  body = jsonencode({
+    kind = "AIServices"
+    sku  = { name = "S0" }
+    properties = {
+      # Keep minimal; expand if your tenant requires specific network/auth settings.
+      customSubDomainName = var.foundry_hub_name
+    }
+  })
+}
+
+resource "azapi_resource" "foundry_project" {
+  count = var.foundry_project_name == null || var.foundry_hub_name == null ? 0 : 1
+
+  type      = "Microsoft.CognitiveServices/accounts/projects@${local.foundry_api_version}"
+  name      = var.foundry_project_name
+  location  = local.foundry_location_effective
+  parent_id = azapi_resource.foundry_account[0].id
+
+  body = jsonencode({
+    properties = {}
+  })
+}
