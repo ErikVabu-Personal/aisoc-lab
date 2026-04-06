@@ -20,7 +20,8 @@ function_plan_sku = "EP1"
 # foundry_project_name = "aisoc-project"
 
 # OPTIONAL: defaults to location_override/effective location
-# foundry_location = "westeurope"
+# Recommended: set Foundry location explicitly, separately from App Service quota hacks.
+foundry_location = "westus"
 
 # REQUIRED: model choice + deployment name that agents should target
 foundry_model_choice          = "gpt-4.1-mini"
