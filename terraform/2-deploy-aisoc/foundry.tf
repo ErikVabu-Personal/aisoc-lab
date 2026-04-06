@@ -63,6 +63,9 @@ resource "azapi_resource" "foundry_project" {
   location  = local.foundry_location_effective
   parent_id = azapi_resource.foundry_account.id
 
+  # Be explicit: ensure account creation/update is fully applied before project.
+  depends_on = [azapi_resource.foundry_account]
+
   body = {
     properties = {}
   }
