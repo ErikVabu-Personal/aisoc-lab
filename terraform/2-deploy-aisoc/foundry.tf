@@ -11,18 +11,6 @@
 # The exact resource types & apiVersions may need adjustment depending on
 # your tenant/region and current Azure RP versions.
 
-terraform {
-  required_providers {
-    azapi = {
-      source  = "Azure/azapi"
-      version = "~> 2.0"
-    }
-  }
-}
-
-# AzAPI uses the same Azure authentication context as azurerm.
-provider "azapi" {}
-
 locals {
   foundry_location_effective = coalesce(var.foundry_location, local.location_effective)
 }
