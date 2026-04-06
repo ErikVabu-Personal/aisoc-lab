@@ -46,7 +46,8 @@ resource "azapi_resource" "foundry_account" {
     sku  = { name = "S0" }
     properties = {
       # Keep minimal; expand if your tenant requires specific network/auth settings.
-      customSubDomainName = local.foundry_hub_name_effective
+      customSubDomainName      = local.foundry_hub_name_effective
+      allowProjectManagement   = true
     }
   }
 }
