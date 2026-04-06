@@ -10,3 +10,13 @@ function_plan_sku = "EP1"
 
 # Optional
 # openrouter_api_key = "sk-or-v1-..."
+
+# --- Foundry (Hub/Project + agent runtime config)
+# These can be created via AzAPI (Hub/Project), while the agent+model deployment
+# is done via script using Terraform outputs.
+#
+# foundry_hub_name              = "aisoc-hub"
+# foundry_project_name          = "aisoc-project"
+# foundry_location              = "westeurope" # optional; defaults to location_override/effective location
+# foundry_model_choice          = "gpt-4.1-mini"
+# foundry_model_deployment_name = "gpt-4.1-mini"  # whatever your Foundry deployment is called

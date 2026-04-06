@@ -159,3 +159,32 @@ output "soc_gateway_principal_id" {
 output "key_vault_uri" {
   value = azurerm_key_vault.kv.vault_uri
 }
+
+# -----------------------------
+# Foundry outputs (consumed by scripts)
+# -----------------------------
+
+output "foundry_hub_name" {
+  value       = var.foundry_hub_name
+  description = "Configured Foundry hub name (may be null until set)."
+}
+
+output "foundry_project_name" {
+  value       = var.foundry_project_name
+  description = "Configured Foundry project name (may be null until set)."
+}
+
+output "foundry_location" {
+  value       = coalesce(var.foundry_location, local.location_effective)
+  description = "Effective location to use for Foundry-related resources."
+}
+
+output "foundry_model_choice" {
+  value       = var.foundry_model_choice
+  description = "Desired model family/choice string (e.g. gpt-4.1-mini)."
+}
+
+output "foundry_model_deployment_name" {
+  value       = var.foundry_model_deployment_name
+  description = "Desired Foundry model deployment name that agents should target."
+}
