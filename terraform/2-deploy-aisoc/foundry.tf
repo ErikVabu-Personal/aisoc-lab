@@ -39,13 +39,16 @@ locals {
 
   # Prefer stable. Switch to 2026-01-15-preview only if we hit missing fields.
   foundry_api_version = "2025-12-01"
+
+  # Auto-generate globally-unique-ish names if not provided.
+  # (Cognitive Services account names must be unique and follow specific rules.)
+  foundry_hub_name_effective     = coalesce(var.foundry_hub_name, "aisoc-hub-${random_string.suffix.result}")
+  foundry_project_name_effective = coalesce(var.foundry_project_name, "aisoc-project-${random_string.suffix.result}")
 }
 
 resource "azapi_resource" "foundry_account" {
-  count = var.foundry_hub_name == null ? 0 : 1
-
   type      = "Microsoft.CognitiveServices/accounts@${local.foundry_api_version}"
-  name      = var.foundry_hub_name
+  name      = local.foundry_hub_name_effective
   location  = local.foundry_location_effective
   parent_id = local.foundry_rg_id
 
@@ -60,12 +63,10 @@ resource "azapi_resource" "foundry_account" {
 }
 
 resource "azapi_resource" "foundry_project" {
-  count = var.foundry_project_name == null || var.foundry_hub_name == null ? 0 : 1
-
   type      = "Microsoft.CognitiveServices/accounts/projects@${local.foundry_api_version}"
-  name      = var.foundry_project_name
+  name      = local.foundry_project_name_effective
   location  = local.foundry_location_effective
-  parent_id = azapi_resource.foundry_account[0].id
+  parent_id = azapi_resource.foundry_account.id
 
   body = jsonencode({
     properties = {}

@@ -15,11 +15,9 @@ function_plan_sku = "EP1"
 # These are REQUIRED for the Foundry Hub/Project Terraform (AzAPI) resources.
 # The agent + model deployment is still done via script using Terraform outputs.
 
-# REQUIRED: pick a globally-unique hub/account name (Cognitive Services account)
-foundry_hub_name = "aisoc-hub-CHANGE-ME"
-
-# REQUIRED: project name (scoped under the hub/account)
-foundry_project_name = "aisoc-project"
+# OPTIONAL: if omitted, Terraform auto-generates unique-ish names using the random suffix.
+# foundry_hub_name     = "aisoc-hub-<something-unique>"
+# foundry_project_name = "aisoc-project"
 
 # OPTIONAL: defaults to location_override/effective location
 # foundry_location = "westeurope"

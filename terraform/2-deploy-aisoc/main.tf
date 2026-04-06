@@ -165,22 +165,22 @@ output "key_vault_uri" {
 # -----------------------------
 
 output "foundry_hub_name" {
-  value       = var.foundry_hub_name
-  description = "Configured Foundry hub name (may be null until set)."
+  value       = local.foundry_hub_name_effective
+  description = "Effective Foundry hub/account name (auto-generated if not provided)."
 }
 
 output "foundry_project_name" {
-  value       = var.foundry_project_name
-  description = "Configured Foundry project name (may be null until set)."
+  value       = local.foundry_project_name_effective
+  description = "Effective Foundry project name (auto-generated if not provided)."
 }
 
 output "foundry_account_id" {
-  value       = try(azapi_resource.foundry_account[0].id, null)
+  value       = azapi_resource.foundry_account.id
   description = "Foundry/Cognitive Services account resource id (Hub)."
 }
 
 output "foundry_project_id" {
-  value       = try(azapi_resource.foundry_project[0].id, null)
+  value       = azapi_resource.foundry_project.id
   description = "Foundry project resource id."
 }
 
