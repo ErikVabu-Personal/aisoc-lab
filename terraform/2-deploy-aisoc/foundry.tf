@@ -25,9 +25,9 @@ locals {
 locals {
   foundry_rg_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${data.terraform_remote_state.sentinel.outputs.resource_group}"
 
-  # Use the newest preview for accounts/projects. Older previews can reject project creation
-  # with misleading "enable managed identity" errors even when identity is present.
-  foundry_api_version = "2026-01-15-preview"
+  # Keep apiVersion pinned to one supported by common AzAPI provider schemas.
+  # Note: some regions/subscriptions may still reject project creation with a generic error.
+  foundry_api_version = "2025-10-01-preview"
 
   # Auto-generate globally-unique-ish names if not provided.
   # (Cognitive Services account names must be unique and follow specific rules.)
