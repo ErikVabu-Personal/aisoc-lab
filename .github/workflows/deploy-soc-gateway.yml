@@ -38,7 +38,17 @@ jobs:
 
           python -m pip install --upgrade pip
           rm -rf .python_packages function_app.zip
-          python -m pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+
+          # Install dependencies into the Azure Functions expected folder
+          python -m pip install --no-cache-dir --target ".python_packages/lib/site-packages" -r requirements.txt
+
+          # Sanity check: fail fast if requests didn't land in the package
+          python - <<'PY'
+          import sys, pathlib
+          sys.path.insert(0, str(pathlib.Path('.python_packages/lib/site-packages').resolve()))
+          import requests  # noqa: F401
+          print('requests_ok')
+          PY
 
           # Zip must have host.json at root
           zip -r function_app.zip host.json requirements.txt SOCGateway shared .python_packages
