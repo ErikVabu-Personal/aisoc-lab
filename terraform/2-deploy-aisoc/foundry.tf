@@ -41,14 +41,14 @@ resource "azapi_resource" "foundry_account" {
   location  = local.foundry_location_effective
   parent_id = local.foundry_rg_id
 
-  body = jsonencode({
+  body = {
     kind = "AIServices"
     sku  = { name = "S0" }
     properties = {
       # Keep minimal; expand if your tenant requires specific network/auth settings.
-      customSubDomainName = var.foundry_hub_name
+      customSubDomainName = local.foundry_hub_name_effective
     }
-  })
+  }
 }
 
 resource "azapi_resource" "foundry_project" {
@@ -57,7 +57,7 @@ resource "azapi_resource" "foundry_project" {
   location  = local.foundry_location_effective
   parent_id = azapi_resource.foundry_account.id
 
-  body = jsonencode({
+  body = {
     properties = {}
-  })
+  }
 }
