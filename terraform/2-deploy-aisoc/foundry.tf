@@ -33,6 +33,10 @@ locals {
   # (Cognitive Services account names must be unique and follow specific rules.)
   foundry_hub_name_effective     = coalesce(var.foundry_hub_name, "aisoc-hub-${random_string.suffix.result}")
   foundry_project_name_effective = coalesce(var.foundry_project_name, "aisoc-project-${random_string.suffix.result}")
+
+  # customSubDomainName must be globally unique and may remain reserved for ~48h after delete.
+  # Use a dedicated random suffix to avoid collisions when recreating resources.
+  foundry_custom_subdomain = "aisoc-${random_string.suffix.result}-${random_string.cs_subdomain.result}"
 }
 
 resource "azapi_resource" "foundry_account" {
@@ -51,7 +55,7 @@ resource "azapi_resource" "foundry_account" {
     sku  = { name = "S0" }
     properties = {
       # Keep minimal; expand if your tenant requires specific network/auth settings.
-      customSubDomainName    = local.foundry_hub_name_effective
+      customSubDomainName    = local.foundry_custom_subdomain
       allowProjectManagement = true
     }
   }
