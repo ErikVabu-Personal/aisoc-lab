@@ -41,13 +41,18 @@ resource "azapi_resource" "foundry_account" {
   location  = local.foundry_location_effective
   parent_id = local.foundry_rg_id
 
+  # Azure requires a managed identity for certain AI/AMLRP-backed configurations.
+  identity {
+    type = "SystemAssigned"
+  }
+
   body = {
     kind = "AIServices"
     sku  = { name = "S0" }
     properties = {
       # Keep minimal; expand if your tenant requires specific network/auth settings.
-      customSubDomainName      = local.foundry_hub_name_effective
-      allowProjectManagement   = true
+      customSubDomainName    = local.foundry_hub_name_effective
+      allowProjectManagement = true
     }
   }
 }
