@@ -60,7 +60,6 @@ resource "azapi_resource" "foundry_account" {
 resource "azapi_resource" "foundry_project" {
   type      = "Microsoft.CognitiveServices/accounts/projects@${local.foundry_api_version}"
   name      = local.foundry_project_name_effective
-  location  = local.foundry_location_effective
   parent_id = azapi_resource.foundry_account.id
 
   # Be explicit: ensure account creation/update is fully applied before project.
