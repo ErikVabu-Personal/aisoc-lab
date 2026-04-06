@@ -23,4 +23,8 @@ provider "azurerm" {
   features {}
 }
 
-provider "azapi" {}
+provider "azapi" {
+  # AzAPI's embedded schemas can lag behind the ARM apiVersions advertised by Azure.
+  # We disable validation so we can use newer preview apiVersions for Foundry accounts/projects.
+  schema_validation_enabled = false
+}
