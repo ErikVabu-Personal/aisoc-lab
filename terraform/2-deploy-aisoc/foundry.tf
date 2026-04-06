@@ -67,6 +67,7 @@ resource "azapi_resource" "foundry_project" {
   depends_on = [azapi_resource.foundry_account]
 
   body = {
+    location   = local.foundry_location_effective
     properties = {}
   }
 }
