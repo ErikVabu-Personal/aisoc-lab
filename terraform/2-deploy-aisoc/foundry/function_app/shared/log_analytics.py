@@ -1,6 +1,38 @@
 import os
 import requests
-from azure.identity import DefaultAzureCredential
+
+
+def _get_token() -> str:
+    """Get an AAD token for Log Analytics.
+
+    Prefer managed identity via the local IMDS endpoint.
+    """
+    # Azure Functions provides MSI_ENDPOINT/MSI_SECRET in many hosting modes.
+    msi_endpoint = os.getenv("MSI_ENDPOINT")
+    msi_secret = os.getenv("MSI_SECRET")
+
+    if msi_endpoint and msi_secret:
+        r = requests.get(
+            msi_endpoint,
+            params={"resource": "https://api.loganalytics.io"},
+            headers={"Secret": msi_secret},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()["access_token"]
+
+    # Fallback to IMDS (works when managed identity is enabled)
+    r = requests.get(
+        "http://169.254.169.254/metadata/identity/oauth2/token",
+        params={
+            "api-version": "2018-02-01",
+            "resource": "https://api.loganalytics.io",
+        },
+        headers={"Metadata": "true"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()["access_token"]
 
 
 def query_law(kql: str, timespan: str = "PT1H") -> dict:
@@ -13,8 +45,7 @@ def query_law(kql: str, timespan: str = "PT1H") -> dict:
     if not workspace_id:
         raise RuntimeError("LAW_WORKSPACE_ID env var not set")
 
-    cred = DefaultAzureCredential()
-    token = cred.get_token("https://api.loganalytics.io/.default").token
+    token = _get_token()
 
     url = f"https://api.loganalytics.io/v1/workspaces/{workspace_id}/query"
     payload = {"query": kql, "timespan": timespan}

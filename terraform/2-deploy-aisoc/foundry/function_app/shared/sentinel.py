@@ -1,11 +1,33 @@
 import os
 import requests
-from azure.identity import DefaultAzureCredential
 
 
 def _mgmt_token() -> str:
-    cred = DefaultAzureCredential()
-    return cred.get_token("https://management.azure.com/.default").token
+    # Azure Functions provides MSI_ENDPOINT/MSI_SECRET in many hosting modes.
+    msi_endpoint = os.getenv("MSI_ENDPOINT")
+    msi_secret = os.getenv("MSI_SECRET")
+
+    if msi_endpoint and msi_secret:
+        r = requests.get(
+            msi_endpoint,
+            params={"resource": "https://management.azure.com/"},
+            headers={"Secret": msi_secret},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()["access_token"]
+
+    r = requests.get(
+        "http://169.254.169.254/metadata/identity/oauth2/token",
+        params={
+            "api-version": "2018-02-01",
+            "resource": "https://management.azure.com/",
+        },
+        headers={"Metadata": "true"},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()["access_token"]
 
 
 def list_incidents(subscription_id: str, resource_group: str, workspace_name: str, api_version: str = "2024-03-01") -> dict:
