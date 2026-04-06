@@ -1,12 +1,11 @@
 # Rename to terraform.tfvars
 
-# SKU quotas vary per region/subscription.
-# Example:
-# function_plan_sku = "S1"
-# function_plan_sku = "P1v4"
+# Defaults that work in many restricted subscriptions:
+# - Keep Sentinel/VM in West US (Phase 1)
+# - Deploy App Service/Function in West Central US where EP1 quota is often available
 
-# Optional: override region for Phase 2 resources (defaults to Phase 1 region)
-# location_override = "westus"
+location_override = "westcentralus"
+function_plan_sku = "EP1"
 
 
 # Optional
