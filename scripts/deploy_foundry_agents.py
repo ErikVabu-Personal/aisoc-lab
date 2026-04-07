@@ -117,26 +117,33 @@ def foundry_upsert_agent(project_url: str, token: str, agent_name: str, model_de
     # If your tenant requires a different schema, run with --dry-run and adjust.
 
     # Foundry endpoint expects an api-version query parameter.
-    url = project_url.rstrip("/") + "/agents/" + agent_name + "?api-version=2026-01-15-preview"
+    # The Foundry REST reference uses api-version=v1 for agents.
+    url = project_url.rstrip("/") + "/agents/" + agent_name + "?api-version=v1"
 
     payload = {
         "name": agent_name,
-        "model": {"deployment": model_deployment},
-        "instructions": instructions,
-        "tools": [
-            {
-                "name": t.name,
-                "description": t.description,
-                "type": "http",
-                "http": {
-                    "method": t.method,
-                    "url": t.url,
-                    "headers": t.headers,
-                    "query": t.query,
-                },
-            }
-            for t in tools
-        ],
+        "description": instructions[:512],
+        "definition": {
+            "kind": "prompt",
+            "prompt": {
+                "instructions": instructions,
+                "model": {"deployment": model_deployment},
+                "tools": [
+                    {
+                        "name": t.name,
+                        "description": t.description,
+                        "type": "http",
+                        "http": {
+                            "method": t.method,
+                            "url": t.url,
+                            "headers": t.headers,
+                            "query": t.query,
+                        },
+                    }
+                    for t in tools
+                ],
+            },
+        },
     }
 
     if dry_run:
@@ -145,7 +152,10 @@ def foundry_upsert_agent(project_url: str, token: str, agent_name: str, model_de
         print(json.dumps(payload, indent=2))
         return
 
-    r = requests.put(
+    # Foundry REST reference:
+    # - Create: POST {endpoint}/agents?api-version=v1
+    # - Update: POST {endpoint}/agents/{agent_name}?api-version=v1
+    r = requests.post(
         url,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         json=payload,
