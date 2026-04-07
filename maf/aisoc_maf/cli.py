@@ -5,6 +5,7 @@ import json
 
 from aisoc_maf.config import load_config
 from aisoc_maf.tools.soc_gateway import SOCGateway
+from aisoc_maf.tools.openrouter_via_gateway import OpenRouterViaGateway
 from aisoc_maf.agents.triage import TriageAgent
 
 
@@ -19,11 +20,13 @@ def main() -> int:
 
     cfg = load_config()
     tools = SOCGateway(cfg)
+    llm = OpenRouterViaGateway(cfg)
 
     if args.cmd == "triage":
-        agent = TriageAgent(tools)
+        agent = TriageAgent(tools, llm)
         res = agent.triage_incident(args.incident_id)
-        print(json.dumps({"incident_id": res.incident_id, "summary": res.summary, "next": res.recommended_next_steps}, indent=2))
+        # Print YAML directly (the agent is required to output YAML only)
+        print(res.yaml)
         return 0
 
     return 1
