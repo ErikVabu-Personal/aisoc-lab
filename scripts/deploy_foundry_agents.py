@@ -125,7 +125,7 @@ def foundry_upsert_agent(project_url: str, token: str, agent_name: str, model_de
         "description": instructions[:512],
         "definition": {
             "kind": "prompt",
-            "model": {"deployment": model_deployment},
+            "model": model_deployment,
             "prompt": {
                 "instructions": instructions,
                 "tools": [
