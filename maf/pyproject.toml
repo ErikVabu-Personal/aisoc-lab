@@ -10,5 +10,13 @@ dependencies = [
 [project.scripts]
 aisoc = "aisoc_maf.cli:main"
 
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Explicit package discovery to avoid including non-package folders (e.g. playbooks/)
+packages = ["aisoc_maf", "aisoc_maf.agents", "aisoc_maf.tools"]
+
 [tool.ruff]
 line-length = 100
