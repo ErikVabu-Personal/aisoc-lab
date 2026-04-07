@@ -36,6 +36,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             ws = os.environ["LAW_WORKSPACE_NAME"]
             return func.HttpResponse(json.dumps(list_incidents(sub, rg, ws)), mimetype="application/json")
 
+        # REST-style get by id: GET /sentinel/incidents/{id}
+        if route and route.startswith("sentinel/incidents/") and req.method.upper() == "GET":
+            require_key(req, "AISOC_READ_KEY")
+            sub = os.environ["AZURE_SUBSCRIPTION_ID"]
+            rg = os.environ["AZURE_RESOURCE_GROUP"]
+            ws = os.environ["LAW_WORKSPACE_NAME"]
+            incident_id = route.split("/", 2)[2]
+            if not incident_id:
+                return func.HttpResponse("Missing id", status_code=400)
+            return func.HttpResponse(json.dumps(get_incident(sub, rg, ws, incident_id)), mimetype="application/json")
+
+        # Backwards-compatible query-param get: /sentinel/incident?id={id}
         if route == "sentinel/incident":
             require_key(req, "AISOC_READ_KEY")
             sub = os.environ["AZURE_SUBSCRIPTION_ID"]
@@ -46,6 +58,22 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse("Missing id", status_code=400)
             return func.HttpResponse(json.dumps(get_incident(sub, rg, ws, incident_id)), mimetype="application/json")
 
+        # REST-style update: PATCH /sentinel/incidents/{id}
+        if route and route.startswith("sentinel/incidents/") and req.method.upper() == "PATCH":
+            require_key(req, "AISOC_WRITE_KEY")
+            sub = os.environ["AZURE_SUBSCRIPTION_ID"]
+            rg = os.environ["AZURE_RESOURCE_GROUP"]
+            ws = os.environ["LAW_WORKSPACE_NAME"]
+            incident_id = route.split("/", 2)[2]
+            if not incident_id:
+                return func.HttpResponse("Missing id", status_code=400)
+            body = _json(req)
+            props = body.get("properties")
+            if not isinstance(props, dict):
+                return func.HttpResponse("Missing properties patch", status_code=400)
+            return func.HttpResponse(json.dumps(update_incident(sub, rg, ws, incident_id, props)), mimetype="application/json")
+
+        # Backwards-compatible update: PATCH /sentinel/incident/update?id={id}
         if route == "sentinel/incident/update":
             require_key(req, "AISOC_WRITE_KEY")
             sub = os.environ["AZURE_SUBSCRIPTION_ID"]
@@ -58,10 +86,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             props = body.get("properties")
             if not isinstance(props, dict):
                 return func.HttpResponse("Missing properties patch", status_code=400)
-            return func.HttpResponse(
-                json.dumps(update_incident(sub, rg, ws, incident_id, props)),
-                mimetype="application/json",
-            )
+            return func.HttpResponse(json.dumps(update_incident(sub, rg, ws, incident_id, props)), mimetype="application/json")
 
         if route == "llm/openrouter":
             require_key(req, "AISOC_READ_KEY")
