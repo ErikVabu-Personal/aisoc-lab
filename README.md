@@ -232,6 +232,9 @@ Expected: `Succeeded`
 
 ## Deploy the Function code (GitHub Actions)
 
+Phase 2 creates the **Function App infrastructure**, but the app will have **no functions** until you deploy
+code.
+
 We deploy the Python Function code via GitHub Actions because the dependencies must be built on Linux.
 
 ### 1) Create an Azure service principal for GitHub Actions
@@ -256,6 +259,17 @@ Repo → Settings → Secrets and variables → Actions → **New repository sec
 - Value: the JSON from above
 
 ### 3) Run the workflow
+
+First, confirm whether code is already deployed. If this returns no rows, you must deploy:
+
+```bash
+RG=$(terraform -chdir=terraform/1-deploy-sentinel output -raw resource_group 2>/dev/null || echo "rg-sentinel-test")
+FUNC=$(terraform -chdir=terraform/2-deploy-aisoc output -raw soc_gateway_function_name)
+
+az functionapp function list -g "$RG" -n "$FUNC" -o table
+```
+
+Then deploy:
 
 GitHub → Actions → **Deploy SOC Gateway Function** → Run workflow:
 
