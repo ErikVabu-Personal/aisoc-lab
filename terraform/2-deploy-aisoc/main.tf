@@ -130,7 +130,20 @@ resource "azurerm_key_vault_access_policy" "func_secrets" {
   tenant_id    = data.azurerm_client_config.current.tenant_id
   object_id    = azurerm_linux_function_app.soc_gateway.identity[0].principal_id
 
-  secret_permissions = ["Get", "List"]
+  # Required for both:
+  # - the Function code using managed identity to read secrets
+  # - Key Vault references in App Settings (resolved by the App Service platform)
+  secret_permissions = ["Get"]
+}
+
+# Some tenants require an explicit policy for Key Vault reference resolution.
+# This uses the same identity as the function app.
+resource "azurerm_key_vault_access_policy" "func_kv_reference" {
+  key_vault_id = azurerm_key_vault.kv.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_linux_function_app.soc_gateway.identity[0].principal_id
+
+  secret_permissions = ["Get"]
 }
 
 # RBAC for querying Log Analytics
