@@ -32,12 +32,22 @@ fi
 
 AISOC_GATEWAY_BASE_URL="https://${FUNCAPP}.azurewebsites.net/api"
 
-cat <<EOF
-export AISOC_GATEWAY_BASE_URL="${AISOC_GATEWAY_BASE_URL}"
-export AISOC_FUNCTION_CODE="${AISOC_FUNCTION_CODE}"
-export AISOC_READ_KEY="${AISOC_READ_KEY}"
 WRITE_SECRET_NAME="$(terraform -chdir="$PHASE2_DIR" output -raw aisoc_write_key_secret_name)"
 AISOC_WRITE_KEY="$(az keyvault secret show --id "${KV_URI}secrets/${WRITE_SECRET_NAME}" --query value -o tsv)"
+
+# If DEBUG=1, print non-sensitive hints to stderr (lengths, not values)
+if [[ "${DEBUG:-0}" == "1" ]]; then
+  {
+    echo "[aisoc_env] RG=$RG"
+    echo "[aisoc_env] FUNCAPP=$FUNCAPP"
+    echo "[aisoc_env] KV_URI=$KV_URI"
+    echo "[aisoc_env] READ_SECRET_NAME=$READ_SECRET_NAME"
+    echo "[aisoc_env] WRITE_SECRET_NAME=$WRITE_SECRET_NAME"
+    echo "[aisoc_env] AISOC_FUNCTION_CODE_LEN=${#AISOC_FUNCTION_CODE}"
+    echo "[aisoc_env] AISOC_READ_KEY_LEN=${#AISOC_READ_KEY}"
+    echo "[aisoc_env] AISOC_WRITE_KEY_LEN=${#AISOC_WRITE_KEY}"
+  } >&2
+fi
 
 cat <<EOF
 export AISOC_GATEWAY_BASE_URL="${AISOC_GATEWAY_BASE_URL}"
