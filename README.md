@@ -129,7 +129,9 @@ Phase 2 provisions:
 - SOC Gateway **Azure Function App** + supporting resources (Storage, App Service Plan)
 - **Key Vault** (for provider secrets)
 - RBAC for the Function MI to query Log Analytics and interact with Sentinel
-- Azure AI Foundry **Hub/Account** + **Project** (via AzAPI)
+- Azure AI Foundry **Hub/Account** (via AzAPI)
+
+> Note: Foundry *Project* creation is performed via a script (below) to match Azure Portal behavior.
 
 ### 1) Configure tfvars
 
@@ -173,6 +175,9 @@ terraform init
 terraform apply
 ```
 
+> Note: If you pulled new changes to this repo (or switched branches), re-run `terraform init`
+> to pick up any new providers (Phase 2 uses password generation for gateway keys).
+
 Terraform outputs include:
 
 - `soc_gateway_function_name`
@@ -186,12 +191,20 @@ In some tenants, creating Foundry Projects via Terraform/AzAPI can fail with a m
 managed identity error even when identity is enabled. The Azure Portal succeeds because it uses
 API version `2026-01-15-preview` and includes additional required fields.
 
-To keep Phase 2 reliable, use the helper script after `terraform apply`:
+To keep Phase 2 reliable, use the helper script after `terraform apply`.
+
+First, set the Phase 1 resource group name (Phase 2 uses the same RG as Phase 1):
+
+```bash
+RG=$(terraform -chdir=../1-deploy-sentinel output -raw resource_group 2>/dev/null || echo "rg-sentinel-test")
+```
+
+Then run:
 
 ```bash
 python3 scripts/deploy_foundry_project.py \
   --tfstate terraform/2-deploy-aisoc/terraform.tfstate \
-  --resource-group rg-sentinel-test
+  --resource-group "$RG"
 ```
 
 What it does:
@@ -301,6 +314,26 @@ curl -sS -X POST \
 ```bash
 curl -sS \
   "https://<FUNCTION_APP>.azurewebsites.net/api/sentinel/incidents?code=<KEY>"
+```
+
+---
+
+## Destroy / recreate notes (important)
+
+Azure AI / Cognitive Services resources can be "soft-deleted" and/or reserve certain names for a period
+of time. If you `terraform destroy` and immediately recreate:
+
+- You may hit errors requiring **restore** of a deleted account name.
+- You may hit `CustomDomainInUse` for `customSubDomainName`.
+
+This repo avoids most of that by generating a unique `customSubDomainName`, but if you still get stuck,
+force new random names by tainting the random generators in Phase 2:
+
+```bash
+cd terraform/2-deploy-aisoc
+terraform taint random_string.suffix
+terraform taint random_string.cs_subdomain
+terraform apply
 ```
 
 ---
