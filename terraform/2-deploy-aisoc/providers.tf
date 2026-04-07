@@ -18,7 +18,7 @@ terraform {
     }
 
     # Used to generate gateway auth keys
-    random_password = {
+    random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
