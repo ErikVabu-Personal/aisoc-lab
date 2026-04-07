@@ -132,6 +132,8 @@ Phase 2 provisions:
 - Azure AI Foundry **Hub/Account** (via AzAPI)
 
 > Note: Foundry *Project* creation is performed via a script (below) to match Azure Portal behavior.
+> Terraform can attempt project creation via AzAPI, but it is **disabled by default** because it can
+> fail with misleading managed identity errors.
 
 ### 1) Configure tfvars
 

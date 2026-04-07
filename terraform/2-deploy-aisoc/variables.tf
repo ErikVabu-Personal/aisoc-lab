@@ -50,3 +50,9 @@ variable "foundry_model_deployment_name" {
   type        = string
   default     = null
 }
+
+variable "foundry_manage_project_in_terraform" {
+  description = "If true, attempt to create the Foundry project via AzAPI in Terraform. Default false (use scripts/deploy_foundry_project.py instead)."
+  type        = bool
+  default     = false
+}

@@ -62,6 +62,8 @@ resource "azapi_resource" "foundry_account" {
 }
 
 resource "azapi_resource" "foundry_project" {
+  count = var.foundry_manage_project_in_terraform ? 1 : 0
+
   type      = "Microsoft.CognitiveServices/accounts/projects@${local.foundry_api_version}"
   name      = local.foundry_project_name_effective
   parent_id = azapi_resource.foundry_account.id

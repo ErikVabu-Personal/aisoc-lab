@@ -190,8 +190,8 @@ output "foundry_account_id" {
 }
 
 output "foundry_project_id" {
-  value       = azapi_resource.foundry_project.id
-  description = "Foundry project resource id."
+  value       = var.foundry_manage_project_in_terraform ? try(azapi_resource.foundry_project[0].id, null) : null
+  description = "Foundry project resource id (only when managed by Terraform)."
 }
 
 output "foundry_location" {
