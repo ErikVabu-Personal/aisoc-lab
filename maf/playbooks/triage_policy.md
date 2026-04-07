@@ -27,7 +27,12 @@ You may ONLY use these tools (via the SOC Gateway):
 
 ## Query budget
 - Max KQL queries per triage: **3**.
+- Use the incident timestamps as the primary anchor (center your queries around the incident time).
 - If data is missing, use your remaining budget to request the most discriminating telemetry.
+
+## Limited telemetry note
+This lab may have very limited telemetry. Do **not** conclude "False Positive" purely because queries return empty.
+If evidence is inconclusive due to missing telemetry, prefer **Suspicious** and clearly list gaps.
 
 ## Output
 Return **valid YAML only** matching the schema in `triage_sop.md`.

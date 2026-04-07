@@ -48,10 +48,15 @@ INCIDENT JSON:
 
 Task:
 Propose up to 3 KQL queries (Log Analytics / Sentinel workspace) that reduce uncertainty.
+
+Guidance:
+- Anchor around the incident time. If the incident JSON includes timestamps, pick a slightly wider `timespan` (e.g. PT3H) to cover it.
+- First query should sanity-check that relevant telemetry exists around the time window (avoid overfitting).
+
 Return ONLY JSON with the shape:
-{{
-  \"queries\": [{{\"name\":\"...\", \"query\":\"...\", \"timespan\":\"PT1H\"}}]
-}}
+{
+  "queries": [{"name":"...", "query":"...", "timespan":"PT3H"}]
+}
 """.strip()
 
         plan = self.llm.chat(prompt_plan)
@@ -97,6 +102,12 @@ KQL RESULTS (max 3):
 
 Task:
 Return VALID YAML ONLY matching the Output Format in the SOP.
+
+Hard requirements:
+- Top-level key MUST be `triage_summary`.
+- Include all required fields from the SOP schema (even if empty lists).
+- If telemetry is limited or queries returned empty, do NOT label as "False Positive" unless you have explicit evidence the alert is broken/noisy.
+  Prefer "Suspicious" and list gaps.
 """.strip()
 
         final = self.llm.chat(prompt_yaml)
