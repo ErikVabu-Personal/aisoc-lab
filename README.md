@@ -381,7 +381,7 @@ Use the GitHub Action (Linux build).
 
 ---
 
-## Phase 3 — AISOC agents (Microsoft Agent Framework)
+## Phase 4 — AISOC agents (Microsoft Agent Framework)
 
 This repo is moving toward **Microsoft Agent Framework (MAF)** for the agent runtime/orchestration.
 The SOC Gateway remains the tool surface (KQL + Sentinel incidents).
@@ -418,6 +418,47 @@ python -m aisoc_maf.cli triage <INCIDENT_ID>
 ```
 
 This currently returns a deterministic triage result while we wire in the LLM + MAF workflows.
+
+---
+
+## Phase 4 — AISOC agents (Microsoft Agent Framework)
+
+This repo includes a local MAF-based agent harness under `maf/` (useful for development/testing).
+
+## Phase 5 — Deploy Foundry Agents (Agent Service)
+
+If you want the agents to run inside **Azure AI Foundry Agent Service**, deploy them with the script below.
+
+Prereqs:
+- Azure CLI logged in
+- Foundry project exists
+- Model deployment exists (deployment name)
+- Gateway deployed and working
+
+Load gateway/function keys into your shell:
+
+```bash
+eval "$(./scripts/aisoc_env.sh)"
+```
+
+Deploy agents:
+
+```bash
+python3 scripts/deploy_foundry_agents.py \
+  --project-url "https://<your-host>.services.ai.azure.com/api/projects/<projectName>" \
+  --model-deployment "gpt-5.4-mini"
+```
+
+Attach write tool (dangerous) only when you explicitly enable it:
+
+```bash
+python3 scripts/deploy_foundry_agents.py \
+  --project-url "https://<your-host>.services.ai.azure.com/api/projects/<projectName>" \
+  --model-deployment "gpt-5.4-mini" \
+  --enable-writes
+```
+
+By default, agents are named with prefix `foundry-aisoc-*`.
 
 ---
 
