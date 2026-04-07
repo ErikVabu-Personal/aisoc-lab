@@ -118,7 +118,9 @@ def foundry_upsert_agent(project_url: str, token: str, agent_name: str, model_de
 
     # Foundry endpoint expects an api-version query parameter.
     # The Foundry REST reference uses api-version=v1 for agents.
-    url = project_url.rstrip("/") + "/agents/" + agent_name + "?api-version=v1"
+    base = project_url.rstrip("/")
+    url_create = base + "/agents?api-version=v1"
+    url_update = base + "/agents/" + agent_name + "?api-version=v1"
 
     payload = {
         "name": agent_name,
@@ -148,19 +150,18 @@ def foundry_upsert_agent(project_url: str, token: str, agent_name: str, model_de
 
     if dry_run:
         print("--- DRY RUN ---")
-        print("PUT", url)
+        print("CREATE POST", url_create)
+        print("UPDATE POST", url_update)
         print(json.dumps(payload, indent=2))
         return
 
-    # Foundry REST reference:
-    # - Create: POST {endpoint}/agents?api-version=v1
-    # - Update: POST {endpoint}/agents/{agent_name}?api-version=v1
-    r = requests.post(
-        url,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json=payload,
-        timeout=60,
-    )
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    # Try update first; if agent doesn't exist, create.
+    r = requests.post(url_update, headers=headers, json=payload, timeout=60)
+    if r.status_code == 404:
+        r = requests.post(url_create, headers=headers, json=payload, timeout=60)
+
     if r.status_code >= 400:
         raise RuntimeError(f"Foundry agent upsert failed for {agent_name}: {r.status_code} {r.text}")
 
