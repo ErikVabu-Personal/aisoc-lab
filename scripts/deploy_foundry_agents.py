@@ -116,7 +116,8 @@ def foundry_upsert_agent(project_url: str, token: str, agent_name: str, model_de
     # NOTE: This is a best-effort payload based on current Foundry agent patterns.
     # If your tenant requires a different schema, run with --dry-run and adjust.
 
-    url = project_url.rstrip("/") + "/agents/" + agent_name
+    # Foundry endpoint expects an api-version query parameter.
+    url = project_url.rstrip("/") + "/agents/" + agent_name + "?api-version=2026-01-15-preview"
 
     payload = {
         "name": agent_name,
