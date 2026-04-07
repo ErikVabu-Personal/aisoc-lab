@@ -180,11 +180,13 @@ Terraform outputs include:
 - `foundry_hub_name`, `foundry_project_name`
 - `foundry_account_id`
 
-> Note: In some tenants, creating Foundry Projects via Terraform/AzAPI can fail with a misleading
-> managed identity error even when identity is enabled. If that happens, use the helper script
-> below to create/update the project via the same API version/payload shape the Azure Portal uses.
+### 3) Create/update the Foundry Project (recommended)
 
-### 3) (If needed) Create/update the Foundry Project via script
+In some tenants, creating Foundry Projects via Terraform/AzAPI can fail with a misleading
+managed identity error even when identity is enabled. The Azure Portal succeeds because it uses
+API version `2026-01-15-preview` and includes additional required fields.
+
+To keep Phase 2 reliable, use the helper script after `terraform apply`:
 
 ```bash
 python3 scripts/deploy_foundry_project.py \
@@ -192,8 +194,24 @@ python3 scripts/deploy_foundry_project.py \
   --resource-group rg-sentinel-test
 ```
 
-This uses ARM `Microsoft.CognitiveServices/accounts/projects` with API version `2026-01-15-preview`
-and includes required fields (location + identity + displayName/description).
+What it does:
+- Uses ARM `Microsoft.CognitiveServices/accounts/projects` with `api-version=2026-01-15-preview`
+- Sends required fields: `location`, `identity=SystemAssigned`, `properties.displayName/description`
+
+### 4) Verify Project provisioning
+
+```bash
+SUB=$(az account show --query id -o tsv)
+RG=rg-sentinel-test
+HUB=$(terraform -chdir=terraform/2-deploy-aisoc output -raw foundry_hub_name)
+PROJ=$(terraform -chdir=terraform/2-deploy-aisoc output -raw foundry_project_name)
+
+az rest --method get \
+  --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.CognitiveServices/accounts/$HUB/projects/$PROJ?api-version=2026-01-15-preview" \
+  -o jsonc | jq -r '.properties.provisioningState'
+```
+
+Expected: `Succeeded`
 
 ---
 
