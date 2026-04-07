@@ -397,6 +397,12 @@ Configure environment variables:
 - `AISOC_READ_KEY`
 - `AISOC_WRITE_KEY`
 
+Recommended: auto-load these from Terraform outputs + Azure CLI:
+
+```bash
+eval "$(./scripts/aisoc_env.sh)"
+```
+
 Run:
 
 ```bash
