@@ -178,7 +178,22 @@ Terraform outputs include:
 - `soc_gateway_function_name`
 - `key_vault_uri`
 - `foundry_hub_name`, `foundry_project_name`
-- `foundry_account_id`, `foundry_project_id`
+- `foundry_account_id`
+
+> Note: In some tenants, creating Foundry Projects via Terraform/AzAPI can fail with a misleading
+> managed identity error even when identity is enabled. If that happens, use the helper script
+> below to create/update the project via the same API version/payload shape the Azure Portal uses.
+
+### 3) (If needed) Create/update the Foundry Project via script
+
+```bash
+python3 scripts/deploy_foundry_project.py \
+  --tfstate terraform/2-deploy-aisoc/terraform.tfstate \
+  --resource-group rg-sentinel-test
+```
+
+This uses ARM `Microsoft.CognitiveServices/accounts/projects` with API version `2026-01-15-preview`
+and includes required fields (location + identity + displayName/description).
 
 ---
 
