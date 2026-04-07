@@ -320,35 +320,35 @@ Use the GitHub Action (Linux build).
 
 ---
 
-## Phase 3 — Deploy Foundry agents (script)
+## Phase 3 — AISOC agents (Microsoft Agent Framework)
 
-Agent resources evolve faster than Terraform providers, so we deploy them via script.
+This repo is moving toward **Microsoft Agent Framework (MAF)** for the agent runtime/orchestration.
+The SOC Gateway remains the tool surface (KQL + Sentinel incidents).
 
-### 1) Run the agent deployment stub
+See: `maf/README.md`.
 
-After Phase 2 completes:
+### Quick start (deterministic plumbing test)
+
+Configure environment variables:
+
+- `AISOC_GATEWAY_BASE_URL` e.g. `https://<functionapp>.azurewebsites.net/api`
+- `AISOC_FUNCTION_CODE` (Function key)
+- `AISOC_READ_KEY`
+- `AISOC_WRITE_KEY`
+
+Run:
 
 ```bash
-python3 scripts/deploy_agents.py --tfstate terraform/2-deploy-aisoc/terraform.tfstate
+cd maf
+python3 -m pip install -e .
+aisoc triage <INCIDENT_ID>
 ```
 
-This prints the resolved config (Foundry hub/project + gateway) and validates required settings.
-
-### 2) Next iterations
-
-- Implement creation/update of 3 agents:
-  - Triage
-  - Investigator
-  - Reporter
-- Wire agent tools to SOC Gateway endpoints:
-  - `POST /api/kql/query`
-  - `GET /api/sentinel/incidents`
-  - `GET /api/sentinel/incidents/{id}`
-  - `PATCH /api/sentinel/incidents/{id}`
+This currently returns a deterministic triage result while we wire in the LLM + MAF workflows.
 
 ---
 
 ## Next step
 
-- Deploy Foundry agents and point their tools at the gateway endpoints.
-- (Planned) Visualize agent activity using PixelAgents fed by Foundry telemetry.
+- Implement LLM-backed MAF agents (triage/investigator/reporter) calling the gateway.
+- Add OpenTelemetry traces so PixelAgents can visualize agent activity.

@@ -1,0 +1,14 @@
+[project]
+name = "aisoc-maf"
+version = "0.1.0"
+description = "AISOC demo agents built with Microsoft Agent Framework"
+requires-python = ">=3.11"
+dependencies = [
+  "requests>=2.32.0",
+]
+
+[project.scripts]
+aisoc = "aisoc_maf.cli:main"
+
+[tool.ruff]
+line-length = 100
