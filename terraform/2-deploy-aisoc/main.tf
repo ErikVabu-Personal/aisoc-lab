@@ -113,9 +113,9 @@ resource "azurerm_linux_function_app" "soc_gateway" {
     # Key vault reference (function uses managed identity to fetch secrets)
     "KEYVAULT_URI" = azurerm_key_vault.kv.vault_uri
 
-    # AISOC gateway authorization keys (set these after apply)
-    "AISOC_READ_KEY"  = ""
-    "AISOC_WRITE_KEY" = ""
+    # AISOC gateway authorization keys (Key Vault references)
+    "AISOC_READ_KEY"  = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.aisoc_read_key.id})"
+    "AISOC_WRITE_KEY" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.aisoc_write_key.id})"
 
     # Optional direct key (NOT recommended); keep disabled by default
     "OPENROUTER_API_KEY" = ""
@@ -158,6 +158,16 @@ output "soc_gateway_principal_id" {
 
 output "key_vault_uri" {
   value = azurerm_key_vault.kv.vault_uri
+}
+
+output "aisoc_read_key_secret_name" {
+  value       = azurerm_key_vault_secret.aisoc_read_key.name
+  description = "Key Vault secret name storing AISOC read key."
+}
+
+output "aisoc_write_key_secret_name" {
+  value       = azurerm_key_vault_secret.aisoc_write_key.name
+  description = "Key Vault secret name storing AISOC write key."
 }
 
 # -----------------------------

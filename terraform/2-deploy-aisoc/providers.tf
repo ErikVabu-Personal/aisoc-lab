@@ -16,6 +16,12 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+
+    # Used to generate gateway auth keys
+    random_password = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 

@@ -260,10 +260,20 @@ The SOC gateway supports a simple extra auth layer on top of the Function key:
 - `AISOC_READ_KEY` — required for read endpoints (KQL + incident list/get)
 - `AISOC_WRITE_KEY` — required for write endpoints (incident update)
 
-Set them as Function App settings (Portal → Function App → Configuration):
+**Default behavior (recommended):** Phase 2 Terraform generates random keys, stores them in **Key Vault**,
+and injects them into the Function App via **Key Vault references**.
 
-- `AISOC_READ_KEY` = some random string
-- `AISOC_WRITE_KEY` = some random string
+Terraform outputs the secret names:
+
+- `aisoc_read_key_secret_name`
+- `aisoc_write_key_secret_name`
+
+To retrieve a key value (example):
+
+```bash
+KV_URI=$(terraform -chdir=terraform/2-deploy-aisoc output -raw key_vault_uri)
+az keyvault secret show --id "${KV_URI}secrets/$(terraform -chdir=terraform/2-deploy-aisoc output -raw aisoc_read_key_secret_name)" --query value -o tsv
+```
 
 Pass them on requests as:
 
