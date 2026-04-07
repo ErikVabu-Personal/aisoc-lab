@@ -34,14 +34,14 @@ class TriageAgent:
         incident = self.tools.get_incident(incident_id)
 
         # 1) Ask LLM for up to 3 KQL queries
-        prompt_plan = f"""
+        prompt_plan = """
 You are a SOC triage agent.
 
 POLICY (always follow):
-{self.policy}
+{policy}
 
 SOP REFERENCE:
-{self.sop}
+{sop}
 
 INCIDENT JSON:
 {incident}
@@ -54,10 +54,14 @@ Guidance:
 - First query should sanity-check that relevant telemetry exists around the time window (avoid overfitting).
 
 Return ONLY JSON with the shape:
-{
-  "queries": [{"name":"...", "query":"...", "timespan":"PT3H"}]
-}
-""".strip()
+{{
+  "queries": [{{"name":"example", "query":"Heartbeat | take 5", "timespan":"PT3H"}}]
+}}
+""".strip().format(
+            policy=self.policy,
+            sop=self.sop,
+            incident=incident,
+        )
 
         plan = self.llm.chat(prompt_plan)
         # openrouter returns OpenAI-style object; extract assistant content
@@ -88,11 +92,11 @@ Return ONLY JSON with the shape:
             results.append({"name": q.get("name"), "timespan": ts, "query": kql, "result": out})
 
         # 3) Ask LLM to produce YAML triage
-        prompt_yaml = f"""
+        prompt_yaml = """
 You are a SOC triage agent.
 
 POLICY (always follow):
-{self.policy}
+{policy}
 
 INCIDENT JSON:
 {incident}
@@ -108,7 +112,11 @@ Hard requirements:
 - Include all required fields from the SOP schema (even if empty lists).
 - If telemetry is limited or queries returned empty, do NOT label as "False Positive" unless you have explicit evidence the alert is broken/noisy.
   Prefer "Suspicious" and list gaps.
-""".strip()
+""".strip().format(
+            policy=self.policy,
+            incident=incident,
+            results=results,
+        )
 
         final = self.llm.chat(prompt_yaml)
         yaml_text = (
