@@ -11,7 +11,7 @@ resource "random_string" "aisoc_read_key" {
   length  = 40
   upper   = true
   lower   = true
-  number  = true
+  numeric = true
   special = false
 }
 
@@ -19,7 +19,7 @@ resource "random_string" "aisoc_write_key" {
   length  = 40
   upper   = true
   lower   = true
-  number  = true
+  numeric = true
   special = false
 }
 
