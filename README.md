@@ -414,7 +414,7 @@ source .venv/bin/activate
 python -m pip install -U pip
 pip install -e .
 
-aisoc triage <INCIDENT_ID>
+python -m aisoc_maf.cli triage <INCIDENT_ID>
 ```
 
 This currently returns a deterministic triage result while we wire in the LLM + MAF workflows.

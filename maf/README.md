@@ -21,7 +21,17 @@ Set environment variables:
 
 > Keys should never be committed. Use local env vars, a `.env` file, or Key Vault.
 
-## Run (placeholder)
+## Run
 
-Coming next:
-- Minimal CLI runner that executes triage/investigation/report workflows.
+After installing into a venv (`pip install -e .`), run:
+
+```bash
+# Always works (module invocation)
+python -m aisoc_maf.cli triage <INCIDENT_ID>
+```
+
+If your environment exposes the entrypoint on PATH, this also works:
+
+```bash
+aisoc triage <INCIDENT_ID>
+```
