@@ -230,7 +230,7 @@ Expected: `Succeeded`
 
 ---
 
-## Deploy the Function code (GitHub Actions)
+## Phase 3 — Deploy the Function code (GitHub Actions)
 
 Phase 2 creates the **Function App infrastructure**, but the app will have **no functions** until you deploy
 code.
@@ -242,10 +242,12 @@ We deploy the Python Function code via GitHub Actions because the dependencies m
 Run (example scope: subscription):
 
 ```bash
+SUB=$(az account show --query id -o tsv)
+
 az ad sp create-for-rbac \
   --name "aisoc-lab-gha" \
   --role Contributor \
-  --scopes /subscriptions/<SUBSCRIPTION_ID> \
+  --scopes "/subscriptions/$SUB" \
   --sdk-auth
 ```
 
