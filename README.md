@@ -401,7 +401,13 @@ Run:
 
 ```bash
 cd maf
-python3 -m pip install -e .
+
+# Debian/Ubuntu note: avoid installing into system Python (PEP 668).
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+pip install -e .
+
 aisoc triage <INCIDENT_ID>
 ```
 
