@@ -483,11 +483,20 @@ az containerapp update -g "$RG" -n "$APP" \
   --image "ghcr.io/erikvabu-personal/aisoc-runner:latest"
 ```
 
-### 4.4 Create the Foundry OpenAPI Tool (manual)
+### 4.4 Create the Foundry OpenAPI Tool(s) (manual)
 
-In Azure AI Foundry:
+In Azure AI Foundry, create **three** OpenAPI tools (one per agent) so PixelAgents can attribute events correctly.
+
+Use these schema files:
+- Triage tool: `runner/openapi.triage.yaml`
+- Investigator tool: `runner/openapi.investigator.yaml`
+- Reporter tool: `runner/openapi.reporter.yaml`
+
+Each schema includes a required header `x-aisoc-agent` with a default value (triage/investigator/reporter).
+
+For each tool:
 1) Go to **Tools** → **Create tool** → **OpenAPI**
-2) Paste the OpenAPI spec from `runner/openapi.yaml` (YAML format)
+2) Paste the OpenAPI spec (YAML format)
 3) Replace the server URL:
    - `https://REPLACE_ME` → your `runner_url` (Terraform output)
 4) Configure authentication:
@@ -497,7 +506,7 @@ In Azure AI Foundry:
    - Value: the runner token (from Key Vault secret `runner_bearer_token_secret_name`)
 
 Notes:
-- Foundry requires `operationId` for each endpoint (already included in `runner/openapi.yaml`).
+- Foundry requires `operationId` for each endpoint (included in these schemas).
 - You do not need to re-import the tool for every runner code change unless endpoints/auth changed.
 
 ### 4.5 Validate the tool end-to-end (manual)

@@ -141,13 +141,14 @@ def tools_execute(
     payload: dict[str, Any],
     authorization: str | None = Header(default=None),
     x_aisoc_runner_key: str | None = Header(default=None, alias="x-aisoc-runner-key"),
+    x_aisoc_agent: str | None = Header(default=None, alias="x-aisoc-agent"),
 ) -> dict[str, Any]:
     _require_bearer(authorization, x_aisoc_runner_key)
 
     tool_name = payload.get("tool_name")
     args = payload.get("arguments") or {}
 
-    agent = payload.get("agent") or os.getenv("DEFAULT_AGENT_NAME", "unknown")
+    agent = x_aisoc_agent or payload.get("agent") or os.getenv("DEFAULT_AGENT_NAME", "unknown")
     started = time.time()
     _emit_pixelagents_event(
         {
