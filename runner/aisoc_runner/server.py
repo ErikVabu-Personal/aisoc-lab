@@ -127,6 +127,11 @@ def tools_execute(
         incident_id = args.get("id") or args.get("incident_id")
         if not incident_id:
             raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id)")
+
+        # Foundry/Sentinel often provide a workspace-scoped ARM Resource ID. SOCGateway expects the incident name (GUID).
+        if isinstance(incident_id, str) and "/incidents/" in incident_id:
+            incident_id = incident_id.split("/incidents/", 1)[1].split("/", 1)[0]
+
         r = requests.get(
             _gw_url(f"sentinel/incidents/{incident_id}"),
             params=_gw_params(),
@@ -144,6 +149,11 @@ def tools_execute(
             raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id)")
         if not isinstance(properties, dict):
             raise HTTPException(status_code=400, detail="Missing arguments.properties (object)")
+
+        # Normalize workspace-scoped ARM Resource IDs to the incident name (GUID)
+        if isinstance(incident_id, str) and "/incidents/" in incident_id:
+            incident_id = incident_id.split("/incidents/", 1)[1].split("/", 1)[0]
+
         r = requests.patch(
             _gw_url(f"sentinel/incidents/{incident_id}"),
             params=_gw_params(),

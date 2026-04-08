@@ -64,7 +64,7 @@
                   },
                   "arguments": {
                     "type": "object",
-                    "description": "Tool arguments. For get_incident/update_incident use {id: <incident ARM id>} (incident_id also accepted)."
+                    "description": "Tool arguments. For get_incident/update_incident use {id: <incident name GUID>} (recommended). If you only have a full ARM Resource ID, pass it as id; the runner will extract the GUID. incident_id is also accepted."
                   }
                 }
               }
