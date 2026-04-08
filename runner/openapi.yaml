@@ -1,67 +1,92 @@
-openapi: 3.0.3
-info:
-  title: AISOC Runner
-  version: 0.1.0
-  description: |
-    AISOC Runner executes tool calls against SOCGateway.
-
-servers:
-  - url: https://REPLACE_ME
-
-components:
-  securitySchemes:
-    runnerKey:
-      type: apiKey
-      in: header
-      name: x-aisoc-runner-key
-
-security:
-  - runnerKey: []
-
-paths:
-  /healthz:
-    get:
-      summary: Health check
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: string
-
-  /tools/execute:
-    post:
-      summary: Execute a tool by name
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [tool_name, arguments]
-              properties:
-                tool_name:
-                  type: string
-                  enum: [kql_query, list_incidents, get_incident, update_incident]
-                arguments:
-                  type: object
-      responses:
-        '200':
-          description: Tool result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  result:
-                    type: object
-        '400':
-          description: Bad request
-        '401':
-          description: Missing token
-        '403':
-          description: Forbidden
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AISOC Runner",
+    "version": "0.1.0",
+    "description": "AISOC Runner executes tool calls against SOCGateway."
+  },
+  "servers": [
+    {
+      "url": "https://REPLACE_ME"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "runnerKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-aisoc-runner-key"
+      }
+    }
+  },
+  "security": [
+    {
+      "runnerKey": []
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "healthz",
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/execute": {
+      "post": {
+        "operationId": "toolsExecute",
+        "summary": "Execute a tool by name",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["tool_name", "arguments"],
+                "properties": {
+                  "tool_name": {
+                    "type": "string",
+                    "enum": ["kql_query", "list_incidents", "get_incident", "update_incident"]
+                  },
+                  "arguments": {"type": "object"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tool result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "result": {"type": "object"}
+                  }
+                }
+              }
+            }
+          },
+          "400": {"description": "Bad request"},
+          "401": {"description": "Missing token"},
+          "403": {"description": "Forbidden"}
+        }
+      }
+    }
+  }
+}
