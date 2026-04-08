@@ -46,6 +46,45 @@ def healthz() -> dict[str, str]:
     return {"ok": "true"}
 
 
+@app.get("/api/agents/state")
+def api_agents_state() -> dict[str, Any]:
+    # Minimal adapter for Pixel Agents UI
+    # Ensure fixed roster exists even before events
+    now = time.time()
+    for name in ("triage", "investigator", "reporter"):
+        AGENTS.setdefault(
+            name,
+            {
+                "agent": name,
+                "state": "idle",
+                "last_event": None,
+                "updated_at": now,
+            },
+        )
+
+    def norm_state(s: str | None) -> str:
+        s = (s or "idle").lower()
+        if s in ("typing", "read", "reading", "walk", "walking"):
+            return "typing" if s == "typing" else "reading"
+        if s in ("error", "failed"):
+            return "error"
+        return "idle"
+
+    agents = []
+    for name in ("triage", "investigator", "reporter"):
+        a = AGENTS.get(name, {})
+        agents.append(
+            {
+                "id": name,
+                "status": norm_state(a.get("state")),
+                "updated_at": a.get("updated_at"),
+                "tool_name": (a.get("last_event") or {}).get("tool_name"),
+            }
+        )
+
+    return {"agents": agents, "ts": now}
+
+
 @app.post("/events")
 async def ingest_event(
     req: Request,
