@@ -56,6 +56,23 @@ def healthz() -> dict[str, str]:
     return {"ok": "true"}
 
 
+@app.get("/debug/config")
+def debug_config(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_bearer(authorization)
+
+    def redacted_len(name: str) -> int:
+        v = os.getenv(name, "")
+        return len(v)
+
+    return {
+        "socgateway_base_url": os.getenv("SOCGATEWAY_BASE_URL", ""),
+        "socgateway_function_code_set": bool(os.getenv("SOCGATEWAY_FUNCTION_CODE", "")),
+        "socgateway_read_key_len": redacted_len("SOCGATEWAY_READ_KEY"),
+        "socgateway_write_key_len": redacted_len("SOCGATEWAY_WRITE_KEY"),
+        "enable_writes": os.getenv("ENABLE_WRITES", "0"),
+    }
+
+
 @app.post("/tools/execute")
 def tools_execute(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> dict[str, Any]:
     _require_bearer(authorization)
