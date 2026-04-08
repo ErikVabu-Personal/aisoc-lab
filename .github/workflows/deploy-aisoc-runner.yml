@@ -6,6 +6,7 @@ on:
     branches: [ main ]
     paths:
       - 'runner/**'
+      - 'pixelagents_web/**'
       - '.github/workflows/deploy-aisoc-runner.yml'
 
 jobs:
