@@ -154,6 +154,9 @@ def index() -> str:
         unknown: {x: 420, y: 360}
       };
 
+      // Lounge area for idle agents
+      const lounge = {x: 140, y: 380};
+
       // Use vendored Pixel Agents character sprites
       const sprites = {
         triage: '/static/assets/characters/char_0.png',
@@ -174,6 +177,9 @@ def index() -> str:
       // TABLE_FRONT reads more like a desk surface in the Pixel Agents pack
       deskImg.src = '/static/assets/furniture/TABLE_FRONT/TABLE_FRONT.png';
 
+      const sofaImg = new Image();
+      sofaImg.src = '/static/assets/furniture/SOFA/SOFA_FRONT.png';
+
       const pcFrames = [
         '/static/assets/furniture/PC/PC_FRONT_OFF.png',
         '/static/assets/furniture/PC/PC_FRONT_ON_1.png',
@@ -181,11 +187,21 @@ def index() -> str:
         '/static/assets/furniture/PC/PC_FRONT_ON_3.png'
       ].map(u => { const i = new Image(); i.src = u; return i; });
 
+      // Agent positions with simple lerp movement
+      const pos = new Map();
+
       function drawOffice() {
         ctx.clearRect(0,0,canvas.width,canvas.height);
         // background
         ctx.fillStyle = '#f7f7fb';
         ctx.fillRect(0,0,canvas.width,canvas.height);
+
+        // lounge
+        if (sofaImg.complete) {
+          ctx.drawImage(sofaImg, lounge.x-70, lounge.y-40, 140, 80);
+        }
+        ctx.fillStyle = '#666';
+        ctx.fillText('lounge', lounge.x-22, lounge.y-64);
 
         // desks + labels
         ctx.font = '12px ui-sans-serif, system-ui';
@@ -214,20 +230,33 @@ def index() -> str:
         // agents
         for (const a of agents.values()) {
           const id = a.agent || 'unknown';
-          const pos = seats[id] || seats.unknown;
+
+          const target = (a.state && a.state !== 'idle') ? (seats[id] || seats.unknown) : lounge;
+          const cur = pos.get(id) || {x: target.x, y: target.y};
+
+          // lerp movement toward target
+          const speed = 0.12;
+          const nx = cur.x + (target.x - cur.x) * speed;
+          const ny = cur.y + (target.y - cur.y) * speed;
+          pos.set(id, {x: nx, y: ny});
 
           const img = spriteImgs[id] || spriteImgs.unknown;
           const size = 64;
           if (img && img.complete) {
-            ctx.drawImage(img, pos.x - size/2, pos.y - size/2 - 6, size, size);
+            ctx.drawImage(img, nx - size/2, ny - size/2 - 6, size, size);
           }
 
           // state bubble
           ctx.fillStyle = a.state === 'typing' ? '#2b6cb0' : (a.state === 'error' ? '#c53030' : '#4a5568');
-          ctx.fillRect(pos.x-30, pos.y-78, 60, 16);
+          ctx.fillRect(nx-30, ny-78, 60, 16);
           ctx.fillStyle = '#fff';
-          ctx.fillText(a.state || 'idle', pos.x-26, pos.y-66);
+          ctx.fillText(a.state || 'idle', nx-26, ny-66);
         }
+      }
+
+      function tick() {
+        drawOffice();
+        requestAnimationFrame(tick);
       }
 
       function render() {
@@ -249,10 +278,13 @@ def index() -> str:
           row.textContent = JSON.stringify(e);
           eventsEl.appendChild(row);
         }
-        drawOffice();
+        // drawOffice is handled by the animation loop
       }
 
       const es = new EventSource('/events/stream');
+      // Start animation loop
+      requestAnimationFrame(tick);
+
       es.onmessage = (msg) => {
         let data;
         try { data = JSON.parse(msg.data); } catch (e) { console.error('Bad SSE JSON payload', msg.data); return; }
