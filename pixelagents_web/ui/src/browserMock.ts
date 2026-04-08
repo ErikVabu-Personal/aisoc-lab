@@ -328,6 +328,8 @@ export function dispatchMockMessages(): void {
   // Remember which lounge tile worked per agent so they stay stable
   const loungeTileForAgent = new Map<string, { col: number; row: number }>();
   const loungeNextIdx = new Map<string, number>();
+  const takenLoungeSeats = new Set<string>();
+  const takenLoungeTiles = new Set<string>();
 
   // Listen for seat resolution events coming from useExtensionMessages handler
   window.addEventListener('message', (ev) => {
@@ -341,6 +343,8 @@ export function dispatchMockMessages(): void {
 
     if (msg.ok) {
       loungeTileForAgent.set(agentName, { col: msg.col, row: msg.row });
+      if (msg.seatId) takenLoungeSeats.add(String(msg.seatId));
+      takenLoungeTiles.add(`${msg.col},${msg.row}`);
     } else {
       // advance index so next attempt tries another tile
       const cur = loungeNextIdx.get(agentName) ?? 0;
@@ -370,10 +374,17 @@ export function dispatchMockMessages(): void {
       return;
     }
 
-    const idx = loungeNextIdx.get(name) ?? 0;
-    const tile = loungeCandidates[Math.min(idx, loungeCandidates.length - 1)];
-    // Ask the engine to resolve/assign a seat at this tile; it will emit agentSeatResolved.
-    dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
+    let idx = loungeNextIdx.get(name) ?? 0;
+    // Find the next candidate tile that isn't already taken
+    while (idx < loungeCandidates.length) {
+      const tile = loungeCandidates[idx];
+      const key = `${tile.col},${tile.row}`;
+      if (!takenLoungeTiles.has(key)) {
+        dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
+        return;
+      }
+      idx++;
+    }
   }
 
   function setStatus(name: string, id: number, status: 'active' | 'waiting'): void {
