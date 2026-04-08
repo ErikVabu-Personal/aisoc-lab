@@ -230,7 +230,7 @@ Expected: `Succeeded`
 
 ---
 
-## Phase 3 — Deploy the Function code (GitHub Actions)
+## Phase 3 — Deploy the SOCGateway Function code (GitHub Actions)
 
 Phase 2 creates the **Function App infrastructure**, but the app will have **no functions** until you deploy
 code.
@@ -425,6 +425,104 @@ This currently returns a deterministic triage result while we wire in the LLM + 
 
 This repo includes a local MAF-based agent harness under `maf/` (useful for development/testing).
 
+## Phase 4 — Deploy AISOC Runner (Azure Container Apps) + Foundry Tool (manual)
+
+This phase deploys the **AISOC Runner** (a small FastAPI service) to Azure Container Apps.
+Foundry uses the runner as an **OpenAPI Tool**, and the runner calls the SOCGateway Function.
+
+**Why it exists:** Foundry Agent Service won’t reliably execute arbitrary HTTP tools the way MCP would.
+The runner provides a stable tool surface (OpenAPI) and performs the outbound calls.
+
+### 4.1 Build & publish the runner image (GitHub Actions)
+
+The workflow **Build + Publish AISOC Runner (GHCR)** builds/pushes a container image to GHCR.
+It does **not** deploy/update your Container App automatically.
+
+It publishes two tags:
+- `ghcr.io/erikvabu-personal/aisoc-runner:latest`
+- `ghcr.io/erikvabu-personal/aisoc-runner:<GITHUB_SHA>`
+
+To build/publish:
+- GitHub → Actions → **Build + Publish AISOC Runner (GHCR)** → Run workflow
+
+### 4.2 Deploy runner infrastructure (Terraform)
+
+```bash
+cd terraform/3-deploy-runner
+cp terraform.tfvars.example terraform.tfvars
+terraform init
+terraform apply
+```
+
+Terraform outputs:
+- `runner_url`
+- `runner_bearer_token_secret_name` (stored in Key Vault)
+
+### 4.3 Deploy/update the running Container App to a specific image tag (manual)
+
+**Important:** Azure Container Apps may keep running an older image behind `:latest`.
+For demos, deploy by **commit SHA tag** (recommended).
+
+1) Get the latest runner image SHA tag from the GitHub Actions run (the commit SHA you want).
+
+2) Update the container app to that SHA tag:
+
+```bash
+RG=$(terraform -chdir=terraform/1-deploy-sentinel output -raw resource_group 2>/dev/null || echo "rg-sentinel-test")
+APP=$(terraform -chdir=terraform/3-deploy-runner output -raw runner_container_app_name 2>/dev/null || echo "ca-aisoc-runner-e7r54h")
+SHA=<GITHUB_SHA>
+
+az containerapp update -g "$RG" -n "$APP" \
+  --image "ghcr.io/erikvabu-personal/aisoc-runner:${SHA}"
+```
+
+If you only have `:latest`, you can update to latest, but prefer SHA for determinism:
+
+```bash
+az containerapp update -g "$RG" -n "$APP" \
+  --image "ghcr.io/erikvabu-personal/aisoc-runner:latest"
+```
+
+### 4.4 Create the Foundry OpenAPI Tool (manual)
+
+In Azure AI Foundry:
+1) Go to **Tools** → **Create tool** → **OpenAPI**
+2) Paste the OpenAPI spec from `runner/openapi.yaml` (YAML format)
+3) Replace the server URL:
+   - `https://REPLACE_ME` → your `runner_url` (Terraform output)
+4) Configure authentication:
+   - Type: **API key**
+   - Location: **Header**
+   - Header name: `x-aisoc-runner-key`
+   - Value: the runner token (from Key Vault secret `runner_bearer_token_secret_name`)
+
+Notes:
+- Foundry requires `operationId` for each endpoint (already included in `runner/openapi.yaml`).
+- You do not need to re-import the tool for every runner code change unless endpoints/auth changed.
+
+### 4.5 Validate the tool end-to-end (manual)
+
+With the tool attached to an agent, run:
+- `POST /tools/execute` with:
+
+```json
+{ "tool_name": "list_incidents", "arguments": {} }
+```
+
+Then:
+
+```json
+{ "tool_name": "get_incident", "arguments": { "incidentNumber": 1 } }
+```
+
+And (writes enabled):
+
+```json
+{ "tool_name": "update_incident", "arguments": { "incidentNumber": 1, "properties": { "status": "Closed" } } }
+```
+
+---
+
 ## Phase 5 — Deploy Foundry Agents (Agent Service)
 
 If you want the agents to run inside **Azure AI Foundry Agent Service**, deploy them with the script below.
@@ -433,7 +531,8 @@ Prereqs:
 - Azure CLI logged in
 - Foundry project exists
 - Model deployment exists (deployment name)
-- Gateway deployed and working
+- SOCGateway deployed and working
+- Runner deployed and Foundry Tool created
 
 Load gateway/function keys into your shell:
 
@@ -464,5 +563,5 @@ By default, agents are named with prefix `foundry-aisoc-*`.
 
 ## Next step
 
-- Implement LLM-backed MAF agents (triage/investigator/reporter) calling the gateway.
+- Implement LLM-backed MAF agents (triage/investigator/reporter) calling the runner tool.
 - Add OpenTelemetry traces so PixelAgents can visualize agent activity.
