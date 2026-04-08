@@ -122,6 +122,15 @@ def index() -> FileResponse:
     return HTMLResponse("PixelAgents UI not built yet. Run the build and redeploy.")
 
 
+# Serve UI assets at root-relative paths (e.g. /assets/...) because the built index.html uses ./assets/...
+UI_DIST_DIR = os.path.join(os.path.dirname(__file__), "ui_dist")
+if os.path.isdir(UI_DIST_DIR):
+    app.mount("/assets", StaticFiles(directory=os.path.join(UI_DIST_DIR, "assets")), name="ui_assets")
+    fonts_dir = os.path.join(UI_DIST_DIR, "fonts")
+    if os.path.isdir(fonts_dir):
+        app.mount("/fonts", StaticFiles(directory=fonts_dir), name="ui_fonts")
+
+
 def main() -> None:
     import uvicorn
 
