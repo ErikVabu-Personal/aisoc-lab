@@ -62,7 +62,10 @@
                     "type": "string",
                     "enum": ["kql_query", "list_incidents", "get_incident", "update_incident"]
                   },
-                  "arguments": {"type": "object"}
+                  "arguments": {
+                    "type": "object",
+                    "description": "Tool arguments. For get_incident/update_incident use {id: <incident ARM id>} (incident_id also accepted)."
+                  }
                 }
               }
             }

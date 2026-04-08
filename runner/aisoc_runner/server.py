@@ -124,9 +124,9 @@ def tools_execute(
         return {"result": r.json()}
 
     if tool_name == "get_incident":
-        incident_id = args.get("id")
+        incident_id = args.get("id") or args.get("incident_id")
         if not incident_id:
-            raise HTTPException(status_code=400, detail="Missing arguments.id")
+            raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id)")
         r = requests.get(
             _gw_url(f"sentinel/incidents/{incident_id}"),
             params=_gw_params(),
@@ -138,10 +138,10 @@ def tools_execute(
         return {"result": r.json()}
 
     if tool_name == "update_incident":
-        incident_id = args.get("id")
+        incident_id = args.get("id") or args.get("incident_id")
         properties = args.get("properties")
         if not incident_id:
-            raise HTTPException(status_code=400, detail="Missing arguments.id")
+            raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id)")
         if not isinstance(properties, dict):
             raise HTTPException(status_code=400, detail="Missing arguments.properties (object)")
         r = requests.patch(
