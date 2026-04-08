@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 from typing import Any, Deque, Dict
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 APP_TITLE = "pixelagents-web"
@@ -24,6 +24,11 @@ app = FastAPI(title=APP_TITLE)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Serve built Pixel Agents webview UI assets (Vite build output) copied into the container
+UI_DIST_DIR = os.path.join(os.path.dirname(__file__), "ui_dist")
+if os.path.isdir(UI_DIST_DIR):
+    app.mount("/ui", StaticFiles(directory=UI_DIST_DIR, html=True), name="ui")
 
 
 def _require_token(x_pixelagents_token: str | None) -> None:
@@ -107,257 +112,14 @@ async def _sleep(seconds: float) -> None:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return """<!doctype html>
-<html>
-  <head>
-    <meta charset=\"utf-8\" />
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-    <title>PixelAgents Web (AISOC)</title>
-    <style>
-      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; margin: 24px; }
-      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-      .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
-      .state { font-weight: 700; }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; font-size: 12px; white-space: pre-wrap; }
-      .small { color: #666; font-size: 12px; }
-    </style>
-  </head>
-  <body>
-    <h1>PixelAgents Web (AISOC demo)</h1>
-    <p class="small">Live view of agent activity. Event source: aisoc-runner → POST /events</p>
+def index() -> FileResponse:
+    # Serve Pixel Agents webview UI build if present
+    dist_index = os.path.join(os.path.dirname(__file__), "ui_dist", "index.html")
+    if os.path.exists(dist_index):
+        return FileResponse(dist_index)
 
-    <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap">
-      <canvas id="office" width="900" height="520" style="border:1px solid #ddd; border-radius:10px;"></canvas>
-      <div style="flex:1; min-width:320px;">
-        <h2>Agents</h2>
-        <div id="agents" class="grid"></div>
-        <h2>Recent events</h2>
-        <div id="events" class="mono" style="max-height:360px; overflow:auto"></div>
-      </div>
-    </div>
-
-    <script>
-      const agentsEl = document.getElementById('agents');
-      const eventsEl = document.getElementById('events');
-      const canvas = document.getElementById('office');
-      const ctx = canvas.getContext('2d');
-
-      const agents = new Map();
-      const events = [];
-
-      // Fixed roster: always show these agents even before events arrive
-      for (const name of ['triage','investigator','reporter']) {
-        agents.set(name, { agent: name, state: 'idle', last_event: null, updated_at: (Date.now()/1000) });
-      }
-
-      // Simple "office" positions
-      const seats = {
-        triage: {x: 140, y: 180},
-        investigator: {x: 420, y: 180},
-        reporter: {x: 700, y: 180},
-        unknown: {x: 420, y: 360}
-      };
-
-      // Lounge area for idle agents
-      const lounge = {x: 140, y: 380};
-      // Where characters should stand/sit relative to the sofa sprite
-      const loungeSeat = {x: lounge.x, y: lounge.y - 34};
-
-      // Character sprite sheets are 112x96: 7 columns x 6 rows of 16x16 tiles
-      const FRAME_W = 16;
-      const FRAME_H = 16;
-      const COLS = 7;
-      // We'll use a simple mapping:
-      // - front idle: row 0, col 0
-      // - front walk: row 0, col 1..2
-      const FRONT_IDLE = {row: 0, col: 0};
-      const FRONT_WALK = [ {row: 0, col: 1}, {row: 0, col: 2} ];
-
-      // Use vendored Pixel Agents character sprites
-      const sprites = {
-        triage: '/static/assets/characters/char_0.png',
-        investigator: '/static/assets/characters/char_2.png',
-        reporter: '/static/assets/characters/char_4.png',
-        unknown: '/static/assets/characters/char_1.png'
-      };
-
-      const spriteImgs = {};
-      for (const [k, url] of Object.entries(sprites)) {
-        const img = new Image();
-        img.onload = () => { /* images load async; animation loop will pick them up */ };
-        img.onerror = () => console.warn('Failed to load sprite', k, url);
-        img.src = url;
-        spriteImgs[k] = img;
-      }
-
-      // Desk + PC furniture
-      const deskImg = new Image();
-      // TABLE_FRONT reads more like a desk surface in the Pixel Agents pack
-      deskImg.onerror = () => console.warn('Failed to load desk');
-      deskImg.src = '/static/assets/furniture/TABLE_FRONT/TABLE_FRONT.png';
-
-      const sofaImg = new Image();
-      sofaImg.onerror = () => console.warn('Failed to load sofa');
-      sofaImg.src = '/static/assets/furniture/SOFA/SOFA_FRONT.png';
-
-      const pcFrames = [
-        '/static/assets/furniture/PC/PC_FRONT_OFF.png',
-        '/static/assets/furniture/PC/PC_FRONT_ON_1.png',
-        '/static/assets/furniture/PC/PC_FRONT_ON_2.png',
-        '/static/assets/furniture/PC/PC_FRONT_ON_3.png'
-      ].map(u => {
-        const i = new Image();
-        i.onerror = () => console.warn('Failed to load pc frame', u);
-        i.src = u;
-        return i;
-      });
-
-      // Agent positions with simple lerp movement
-      const pos = new Map();
-
-      function drawOffice() {
-        ctx.clearRect(0,0,canvas.width,canvas.height);
-        // background
-        ctx.fillStyle = '#f7f7fb';
-        ctx.fillRect(0,0,canvas.width,canvas.height);
-
-        // lounge
-        if (sofaImg.complete) {
-          ctx.drawImage(sofaImg, lounge.x-70, lounge.y-40, 140, 80);
-        }
-        ctx.fillStyle = '#666';
-        ctx.fillText('lounge', lounge.x-22, lounge.y-64);
-
-        // desks + labels
-        ctx.font = '12px ui-sans-serif, system-ui';
-        for (const [name,pos] of Object.entries(seats)) {
-          // desk (only draw when loaded; avoid big gray placeholders)
-          if (deskImg.complete) {
-            ctx.drawImage(deskImg, pos.x-92, pos.y-44, 184, 92);
-          }
-
-          // pc (animate on when typing)
-          const pcX = pos.x - 26;
-          const pcY = pos.y - 58;
-          const pcW = 52;
-          const pcH = 52;
-          const isTyping = (agents.get(name)?.state === 'typing');
-          const frame = isTyping ? (1 + (Math.floor(Date.now()/250) % 3)) : 0;
-          const pc = pcFrames[frame];
-          if (pc && pc.complete) {
-            ctx.drawImage(pc, pcX, pcY, pcW, pcH);
-          }
-
-          ctx.fillStyle = '#666';
-          ctx.fillText(name, pos.x-22, pos.y-64);
-        }
-
-        // agents
-        for (const a of agents.values()) {
-          const id = a.agent || 'unknown';
-
-          const target = (a.state && a.state !== 'idle') ? (seats[id] || seats.unknown) : loungeSeat;
-          const cur = pos.get(id) || {x: target.x, y: target.y};
-
-          // lerp movement toward target
-          const speed = 0.12;
-          const nx = cur.x + (target.x - cur.x) * speed;
-          const ny = cur.y + (target.y - cur.y) * speed;
-          pos.set(id, {x: nx, y: ny});
-
-          const img = spriteImgs[id] || spriteImgs.unknown;
-          const size = 80;
-          const drawX = nx - size/2;
-          const drawY = ny - size/2 - 44; // lift sprite above desk surface
-
-          if (img && img.complete && img.naturalWidth > 0) {
-            // Choose frame: if moving, cycle walk frames; else idle frame
-            const moving = (Math.abs(target.x - nx) + Math.abs(target.y - ny)) > 1.5;
-            const frame = moving ? FRONT_WALK[Math.floor(Date.now()/220) % FRONT_WALK.length] : FRONT_IDLE;
-            const sx = frame.col * FRAME_W;
-            const sy = frame.row * FRAME_H;
-            ctx.imageSmoothingEnabled = false;
-            // Simple outline for contrast
-            ctx.fillStyle = 'rgba(0,0,0,0.15)';
-            ctx.fillRect(drawX-2, drawY-2, size+4, size+4);
-            ctx.drawImage(img, sx, sy, FRAME_W, FRAME_H, drawX, drawY, size, size);
-            ctx.imageSmoothingEnabled = true;
-          } else {
-            // Fallback so agents are always visible even if sprites fail to load
-            ctx.fillStyle = '#2d3748';
-            ctx.beginPath();
-            ctx.arc(nx, ny-48, 18, 0, Math.PI*2);
-            ctx.fill();
-          }
-
-          // state bubble
-          ctx.fillStyle = a.state === 'typing' ? '#2b6cb0' : (a.state === 'error' ? '#c53030' : '#4a5568');
-          ctx.fillRect(nx-34, ny-98, 68, 16);
-          ctx.fillStyle = '#fff';
-          ctx.fillText(a.state || 'idle', nx-30, ny-86);
-        }
-      }
-
-      function tick() {
-        drawOffice();
-        requestAnimationFrame(tick);
-      }
-
-      function render() {
-        agentsEl.innerHTML = '';
-        for (const a of agents.values()) {
-          const div = document.createElement('div');
-          div.className = 'card';
-          div.innerHTML = `
-            <div><strong>${a.agent}</strong></div>
-            <div>State: <span class="state">${a.state}</span></div>
-            <div class="small">Updated: ${new Date(a.updated_at * 1000).toISOString()}</div>
-            <div class="small">Last tool: ${(a.last_event && a.last_event.tool_name) || '-'}</div>
-          `;
-          agentsEl.appendChild(div);
-        }
-        eventsEl.innerHTML = '';
-        for (const e of events.slice(-80)) {
-          const row = document.createElement('div');
-          row.textContent = JSON.stringify(e);
-          eventsEl.appendChild(row);
-        }
-        // drawOffice is handled by the animation loop
-      }
-
-      const es = new EventSource('/events/stream');
-      // Start animation loop
-      requestAnimationFrame(tick);
-
-      es.onmessage = (msg) => {
-        let data;
-        try { data = JSON.parse(msg.data); } catch (e) { console.error('Bad SSE JSON payload', msg.data); return; }
-        if (data.type === 'snapshot') {
-          agents.clear();
-          for (const a of data.agents) agents.set(a.agent, a);
-          events.splice(0, events.length, ...data.events);
-          render();
-          return;
-        }
-        if (data.type === 'event') {
-          events.push(data.event);
-          const agent = data.event.agent || 'unknown';
-          agents.set(agent, {
-            agent,
-            state: data.event.state || (agents.get(agent)?.state ?? 'idle'),
-            last_event: data.event,
-            updated_at: data.event.ts || (Date.now()/1000)
-          });
-          render();
-        }
-      };
-
-      // Render once images start loading; subsequent updates come from SSE.
-      setTimeout(() => render(), 250);
-    </script>
-  </body>
-</html>"""
+    # Fallback
+    return HTMLResponse("PixelAgents UI not built yet. Run the build and redeploy.")
 
 
 def main() -> None:
