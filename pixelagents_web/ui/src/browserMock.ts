@@ -286,12 +286,20 @@ export function dispatchMockMessages(): void {
 
   // Hard-coded tile targets for the default layout:
   // Lounge is near the sofa at cols ~13-16, rows ~13-16.
-  const loungeTiles: Record<string, { col: number; row: number }> = {
-    // These should correspond to sofa seat tiles (derived from chair furniture)
-    triage: { col: 14, row: 14 },
-    investigator: { col: 15, row: 14 },
-    reporter: { col: 16, row: 14 },
-  };
+  // Candidate lounge tiles near the sofa cluster. We'll try these in order until a seat exists.
+  const loungeCandidates: Array<{ col: number; row: number }> = [
+    { col: 14, row: 14 },
+    { col: 15, row: 14 },
+    { col: 16, row: 14 },
+    { col: 14, row: 15 },
+    { col: 15, row: 15 },
+    { col: 16, row: 15 },
+    { col: 13, row: 14 },
+    { col: 13, row: 15 },
+  ];
+
+  // Remember which lounge tile worked per agent so they stay stable
+  const loungeTileForAgent = new Map<string, { col: number; row: number }>();
 
   // Desk tiles roughly align with desks/PCs around col 2-7, row 12.
   // We pick walkable tiles in front of each desk.
@@ -302,12 +310,24 @@ export function dispatchMockMessages(): void {
   };
 
   function moveAgentTo(id: number, name: string, active: boolean): void {
-    const tile = active ? (deskTiles[name] ?? deskTiles.triage) : (loungeTiles[name] ?? loungeTiles.triage);
     if (active) {
+      const tile = deskTiles[name] ?? deskTiles.triage;
       dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
-    } else {
-      // Anchor idle agents to a lounge seat so they don't wander
+      return;
+    }
+
+    // Idle: anchor to a lounge seat. Try a remembered tile first, otherwise try candidates.
+    const remembered = loungeTileForAgent.get(name);
+    if (remembered) {
+      dispatch({ type: 'agentAssignSeatAtTile', id, col: remembered.col, row: remembered.row });
+      return;
+    }
+
+    for (const tile of loungeCandidates) {
+      // We can't synchronously know if seat exists; try in order and remember the first one.
       dispatch({ type: 'agentAssignSeatAtTile', id, col: tile.col, row: tile.row });
+      loungeTileForAgent.set(name, tile);
+      break;
     }
   }
 
