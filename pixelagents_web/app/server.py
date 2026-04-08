@@ -72,7 +72,9 @@ async def sse_stream() -> StreamingResponse:
             "events": list(EVENTS)[-200:],
             "ts": time.time(),
         }
-        yield f"data: {json.dumps(snapshot)}\n\n"
+        payload = json.dumps(snapshot)
+        payload = payload.replace("\n", "\\n")
+        yield f"data: {payload}\n\n"
 
         while True:
             # Naive tailing loop (demo-grade). ACA will kill long-idle connections;
@@ -83,7 +85,10 @@ async def sse_stream() -> StreamingResponse:
                 new_events = list(EVENTS)[last_idx:]
                 last_idx = len(EVENTS)
                 for e in new_events:
-                    yield f"data: {json.dumps({'type':'event','event':e})}\n\n"
+                    # Ensure each SSE payload is a single line to keep browser JSON.parse happy
+                    payload = json.dumps({"type": "event", "event": e})
+                    payload = payload.replace("\n", "\\n")
+                    yield f"data: {payload}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -146,7 +151,13 @@ def index() -> str:
 
       const es = new EventSource('/events/stream');
       es.onmessage = (msg) => {
-        const data = JSON.parse(msg.data);
+        let data;
+        try {
+          data = JSON.parse(msg.data);
+        } catch (e) {
+          console.error('Bad SSE JSON payload', msg.data);
+          return;
+        }
         if (data.type === 'snapshot') {
           agents.clear();
           for (const a of data.agents) agents.set(a.agent, a);
