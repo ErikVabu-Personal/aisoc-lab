@@ -265,7 +265,11 @@ export function dispatchMockMessages(): void {
 
   // --- AISOC adapter: poll backend for agent states and translate to Pixel Agents messages ---
   // This replaces the VS Code host/Claude transcript watcher with our runner-driven telemetry.
+  // Important: wait until layout is loaded (assets + seats built) before driving movement.
+  let layoutReady = true;
+
   const nameToId = new Map<string, number>();
+  const lastStatus = new Map<string, string>();
   let nextId = 1;
 
   function ensureAgent(name: string): number {
@@ -298,7 +302,10 @@ export function dispatchMockMessages(): void {
     dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
   }
 
-  function setStatus(id: number, status: 'active' | 'waiting'): void {
+  function setStatus(name: string, id: number, status: 'active' | 'waiting'): void {
+    const prev = lastStatus.get(name);
+    if (prev === status) return;
+    lastStatus.set(name, status);
     dispatch({ type: 'agentStatus', id, status });
   }
 
@@ -323,13 +330,19 @@ export function dispatchMockMessages(): void {
 
         // Map our statuses to Pixel Agents statuses
         // Pixel Agents: status 'active' means working; status 'waiting' shows bubble + idle.
+        if (!layoutReady) return;
+
         if (a.status === 'typing' || a.status === 'reading') {
-          setStatus(id, 'active');
+          setStatus(name, id, 'active');
           moveAgentTo(id, name, true);
           if (a.tool_name) setTool(id, a.tool_name);
+        } else if (a.status === 'error') {
+          // Error → waiting bubble
+          setStatus(name, id, 'waiting');
+          moveAgentTo(id, name, false);
         } else {
-          // idle/error: move to lounge. Use waiting bubble only for errors later.
-          setStatus(id, 'waiting');
+          // Normal idle: no waiting bubble
+          setStatus(name, id, 'active');
           moveAgentTo(id, name, false);
         }
       }
