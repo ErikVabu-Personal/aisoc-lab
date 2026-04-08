@@ -281,6 +281,13 @@ export function dispatchMockMessages(): void {
     id = nextId++;
     nameToId.set(name, id);
     dispatch({ type: 'agentCreated', id, folderName: name });
+
+    // Immediately anchor new agents to a lounge seat so they don't spawn at desks.
+    loungeNextIdx.set(name, 0);
+    const tile = loungeCandidates[0];
+    dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
+    lastMode.set(name, 'lounge');
+
     return id;
   }
 
@@ -424,9 +431,12 @@ export function dispatchMockMessages(): void {
             lastMode.set(name, 'desk');
           }
         } else {
-          // Normal idle
+          // Normal idle: keep them anchored in lounge
           setActive(name, id, false);
           if (wantLounge && lastMode.get(name) !== 'lounge') {
+            // Reset lounge candidate search when returning to lounge
+            loungeNextIdx.set(name, 0);
+            loungeTileForAgent.delete(name);
             moveAgentTo(id, name, false);
             lastMode.set(name, 'lounge');
           }
