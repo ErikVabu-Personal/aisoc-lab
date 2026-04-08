@@ -146,7 +146,12 @@ def index() -> str:
           `;
           agentsEl.appendChild(div);
         }
-        eventsEl.textContent = events.slice(-50).map(e => JSON.stringify(e)).join('\n');
+        eventsEl.innerHTML = '';
+        for (const e of events.slice(-50)) {
+          const row = document.createElement('div');
+          row.textContent = JSON.stringify(e);
+          eventsEl.appendChild(row);
+        }
       }
 
       const es = new EventSource('/events/stream');
