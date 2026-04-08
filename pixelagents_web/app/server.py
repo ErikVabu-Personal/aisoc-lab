@@ -265,7 +265,10 @@ def index() -> str:
           pos.set(id, {x: nx, y: ny});
 
           const img = spriteImgs[id] || spriteImgs.unknown;
-          const size = 64;
+          const size = 80;
+          const drawX = nx - size/2;
+          const drawY = ny - size/2 - 44; // lift sprite above desk surface
+
           if (img && img.complete && img.naturalWidth > 0) {
             // Choose frame: if moving, cycle walk frames; else idle frame
             const moving = (Math.abs(target.x - nx) + Math.abs(target.y - ny)) > 1.5;
@@ -273,21 +276,24 @@ def index() -> str:
             const sx = frame.col * FRAME_W;
             const sy = frame.row * FRAME_H;
             ctx.imageSmoothingEnabled = false;
-            ctx.drawImage(img, sx, sy, FRAME_W, FRAME_H, nx - size/2, ny - size/2 - 6, size, size);
+            // Simple outline for contrast
+            ctx.fillStyle = 'rgba(0,0,0,0.15)';
+            ctx.fillRect(drawX-2, drawY-2, size+4, size+4);
+            ctx.drawImage(img, sx, sy, FRAME_W, FRAME_H, drawX, drawY, size, size);
             ctx.imageSmoothingEnabled = true;
           } else {
             // Fallback so agents are always visible even if sprites fail to load
             ctx.fillStyle = '#2d3748';
             ctx.beginPath();
-            ctx.arc(nx, ny-10, 14, 0, Math.PI*2);
+            ctx.arc(nx, ny-48, 18, 0, Math.PI*2);
             ctx.fill();
           }
 
           // state bubble
           ctx.fillStyle = a.state === 'typing' ? '#2b6cb0' : (a.state === 'error' ? '#c53030' : '#4a5568');
-          ctx.fillRect(nx-30, ny-78, 60, 16);
+          ctx.fillRect(nx-34, ny-98, 68, 16);
           ctx.fillStyle = '#fff';
-          ctx.fillText(a.state || 'idle', nx-26, ny-66);
+          ctx.fillText(a.state || 'idle', nx-30, ny-86);
         }
       }
 
