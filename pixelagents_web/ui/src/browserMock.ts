@@ -336,6 +336,9 @@ export function dispatchMockMessages(): void {
     // If ok, remember the tile for that agent id (reverse lookup)
     const agentName = [...nameToId.entries()].find(([, v]) => v === msg.id)?.[0];
     if (!agentName) return;
+
+    console.log('[AISOC] agentSeatResolved', { agentName, ...msg });
+
     if (msg.ok) {
       loungeTileForAgent.set(agentName, { col: msg.col, row: msg.row });
     } else {

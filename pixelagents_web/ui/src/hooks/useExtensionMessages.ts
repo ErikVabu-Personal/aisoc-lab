@@ -292,7 +292,9 @@ export function useExtensionMessages(
         const id = msg.id as number;
         const col = msg.col as number;
         const row = msg.row as number;
+        const chExists = os.characters.has(id);
         const seatId = os.getSeatAtTile(col, row);
+        console.log('[AISOC] agentResolveSeatAtTile', { id, col, row, chExists, seatId });
         if (seatId) {
           os.reassignSeat(id, seatId);
         }
@@ -306,6 +308,7 @@ export function useExtensionMessages(
               row,
               ok: Boolean(seatId),
               seatId,
+              chExists,
             },
           }),
         );
