@@ -154,8 +154,31 @@ def index() -> str:
         unknown: {x: 420, y: 360}
       };
 
-      const sprite = new Image();
-      sprite.src = '/static/characters.png';
+      // Use vendored Pixel Agents character sprites
+      const sprites = {
+        triage: '/static/assets/characters/char_0.png',
+        investigator: '/static/assets/characters/char_2.png',
+        reporter: '/static/assets/characters/char_4.png',
+        unknown: '/static/assets/characters/char_1.png'
+      };
+
+      const spriteImgs = {};
+      for (const [k, url] of Object.entries(sprites)) {
+        const img = new Image();
+        img.src = url;
+        spriteImgs[k] = img;
+      }
+
+      // Desk + PC furniture
+      const deskImg = new Image();
+      deskImg.src = '/static/assets/furniture/DESK/DESK_FRONT.png';
+
+      const pcFrames = [
+        '/static/assets/furniture/PC/PC_FRONT_OFF.png',
+        '/static/assets/furniture/PC/PC_FRONT_ON_1.png',
+        '/static/assets/furniture/PC/PC_FRONT_ON_2.png',
+        '/static/assets/furniture/PC/PC_FRONT_ON_3.png'
+      ].map(u => { const i = new Image(); i.src = u; return i; });
 
       function drawOffice() {
         ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -163,30 +186,49 @@ def index() -> str:
         ctx.fillStyle = '#f7f7fb';
         ctx.fillRect(0,0,canvas.width,canvas.height);
 
-        // desks
+        // desks + labels
+        ctx.font = '12px ui-sans-serif, system-ui';
         for (const [name,pos] of Object.entries(seats)) {
-          ctx.fillStyle = '#e0e0ea';
-          ctx.fillRect(pos.x-70, pos.y-40, 140, 80);
-          ctx.fillStyle = '#999';
-          ctx.fillText(name, pos.x-20, pos.y-50);
+          // desk
+          if (deskImg.complete) {
+            ctx.drawImage(deskImg, pos.x-72, pos.y-44, 144, 88);
+          } else {
+            ctx.fillStyle = '#e0e0ea';
+            ctx.fillRect(pos.x-70, pos.y-40, 140, 80);
+          }
+
+          // pc (animate on when typing)
+          const pcX = pos.x - 26;
+          const pcY = pos.y - 58;
+          const pcW = 52;
+          const pcH = 52;
+          const isTyping = (agents.get(name)?.state === 'typing');
+          const frame = isTyping ? (1 + (Math.floor(Date.now()/250) % 3)) : 0;
+          const pc = pcFrames[frame];
+          if (pc && pc.complete) {
+            ctx.drawImage(pc, pcX, pcY, pcW, pcH);
+          }
+
+          ctx.fillStyle = '#666';
+          ctx.fillText(name, pos.x-22, pos.y-64);
         }
 
         // agents
         for (const a of agents.values()) {
           const id = a.agent || 'unknown';
           const pos = seats[id] || seats.unknown;
-          // choose frame based on state
-          // characters.png is a sheet; for now just draw the whole image scaled as a placeholder.
-          // We'll refine to true sprite frames next.
-          const size = 48;
-          ctx.drawImage(sprite, 0, 0, 32, 32, pos.x - size/2, pos.y - size/2, size, size);
+
+          const img = spriteImgs[id] || spriteImgs.unknown;
+          const size = 64;
+          if (img && img.complete) {
+            ctx.drawImage(img, pos.x - size/2, pos.y - size/2 - 6, size, size);
+          }
 
           // state bubble
           ctx.fillStyle = a.state === 'typing' ? '#2b6cb0' : (a.state === 'error' ? '#c53030' : '#4a5568');
-          ctx.fillRect(pos.x-26, pos.y-60, 52, 16);
+          ctx.fillRect(pos.x-30, pos.y-78, 60, 16);
           ctx.fillStyle = '#fff';
-          ctx.font = '12px ui-sans-serif, system-ui';
-          ctx.fillText(a.state || 'idle', pos.x-22, pos.y-48);
+          ctx.fillText(a.state || 'idle', pos.x-26, pos.y-66);
         }
       }
 
@@ -236,7 +278,8 @@ def index() -> str:
         }
       };
 
-      sprite.onload = () => render();
+      // Render once images start loading; subsequent updates come from SSE.
+      setTimeout(() => render(), 250);
     </script>
   </body>
 </html>"""
