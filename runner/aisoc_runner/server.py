@@ -113,7 +113,12 @@ def _gw_headers(scope: Literal["read", "write"]) -> dict[str, str]:
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
-    return {"ok": "true"}
+    # Optional build metadata (set at build/deploy time)
+    return {
+        "ok": "true",
+        "git_sha": os.getenv("GIT_SHA", ""),
+        "image": os.getenv("CONTAINER_IMAGE", ""),
+    }
 
 
 @app.get("/debug/config")

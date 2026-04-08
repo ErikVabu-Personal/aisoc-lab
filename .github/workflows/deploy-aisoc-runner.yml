@@ -37,6 +37,8 @@ jobs:
           tags: |
             ghcr.io/erikvabu-personal/aisoc-runner:latest
             ghcr.io/erikvabu-personal/aisoc-runner:${{ github.sha }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
 
   build_pixelagents_web:
     runs-on: ubuntu-latest
