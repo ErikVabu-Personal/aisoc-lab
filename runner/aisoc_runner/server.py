@@ -9,15 +9,24 @@ from fastapi import FastAPI, Header, HTTPException
 app = FastAPI(title="aisoc-runner")
 
 
-def _require_bearer(auth: str | None) -> None:
+def _require_bearer(auth: str | None, api_key: str | None) -> None:
     expected = os.getenv("RUNNER_BEARER_TOKEN", "")
     if not expected:
         raise RuntimeError("Server misconfigured: RUNNER_BEARER_TOKEN missing")
 
-    if not auth or not auth.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
+    # Support either:
+    # - Authorization: Bearer <token>
+    # - x-aisoc-runner-key: <token>  (for Foundry OpenAPI tool connections)
+    token: str | None = None
 
-    token = auth.split(" ", 1)[1]
+    if api_key:
+        token = api_key
+    elif auth and auth.lower().startswith("bearer "):
+        token = auth.split(" ", 1)[1]
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+
     if token != expected:
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -57,8 +66,11 @@ def healthz() -> dict[str, str]:
 
 
 @app.get("/debug/config")
-def debug_config(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    _require_bearer(authorization)
+def debug_config(
+    authorization: str | None = Header(default=None),
+    x_aisoc_runner_key: str | None = Header(default=None, alias="x-aisoc-runner-key"),
+) -> dict[str, Any]:
+    _require_bearer(authorization, x_aisoc_runner_key)
 
     def redacted_len(name: str) -> int:
         v = os.getenv(name, "")
@@ -74,8 +86,12 @@ def debug_config(authorization: str | None = Header(default=None)) -> dict[str, 
 
 
 @app.post("/tools/execute")
-def tools_execute(payload: dict[str, Any], authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    _require_bearer(authorization)
+def tools_execute(
+    payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
+    x_aisoc_runner_key: str | None = Header(default=None, alias="x-aisoc-runner-key"),
+) -> dict[str, Any]:
+    _require_bearer(authorization, x_aisoc_runner_key)
 
     tool_name = payload.get("tool_name")
     args = payload.get("arguments") or {}
