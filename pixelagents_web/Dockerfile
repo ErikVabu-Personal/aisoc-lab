@@ -11,4 +11,4 @@ COPY app /app/app
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["python", "-m", "app.server"]
+CMD ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8080"]
