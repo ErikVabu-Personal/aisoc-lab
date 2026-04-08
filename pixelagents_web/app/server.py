@@ -146,6 +146,11 @@ def index() -> str:
       const agents = new Map();
       const events = [];
 
+      // Fixed roster: always show these agents even before events arrive
+      for (const name of ['triage','investigator','reporter']) {
+        agents.set(name, { agent: name, state: 'idle', last_event: null, updated_at: (Date.now()/1000) });
+      }
+
       // Simple "office" positions
       const seats = {
         triage: {x: 140, y: 180},
@@ -156,6 +161,16 @@ def index() -> str:
 
       // Lounge area for idle agents
       const lounge = {x: 140, y: 380};
+
+      // Character sprite sheets are 112x96: 7 columns x 6 rows of 16x16 tiles
+      const FRAME_W = 16;
+      const FRAME_H = 16;
+      const COLS = 7;
+      // We'll use a simple mapping:
+      // - front idle: row 0, col 0
+      // - front walk: row 0, col 1..2
+      const FRONT_IDLE = {row: 0, col: 0};
+      const FRONT_WALK = [ {row: 0, col: 1}, {row: 0, col: 2} ];
 
       // Use vendored Pixel Agents character sprites
       const sprites = {
@@ -243,7 +258,14 @@ def index() -> str:
           const img = spriteImgs[id] || spriteImgs.unknown;
           const size = 64;
           if (img && img.complete) {
-            ctx.drawImage(img, nx - size/2, ny - size/2 - 6, size, size);
+            // Choose frame: if moving, cycle walk frames; else idle frame
+            const moving = (Math.abs(target.x - nx) + Math.abs(target.y - ny)) > 1.5;
+            const frame = moving ? FRONT_WALK[Math.floor(Date.now()/220) % FRONT_WALK.length] : FRONT_IDLE;
+            const sx = frame.col * FRAME_W;
+            const sy = frame.row * FRAME_H;
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(img, sx, sy, FRAME_W, FRAME_H, nx - size/2, ny - size/2 - 6, size, size);
+            ctx.imageSmoothingEnabled = true;
           }
 
           // state bubble
