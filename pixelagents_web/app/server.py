@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+import json
+import os
+import time
+from collections import defaultdict, deque
+from typing import Any, Deque, Dict
+
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
+
+APP_TITLE = "pixelagents-web"
+
+TOKEN_ENV = "PIXELAGENTS_TOKEN"
+
+# In-memory state (demo-grade). For persistence, back with Redis/Cosmos.
+AGENTS: Dict[str, Dict[str, Any]] = defaultdict(dict)
+EVENTS: Deque[dict[str, Any]] = deque(maxlen=2000)
+
+app = FastAPI(title=APP_TITLE)
+
+
+def _require_token(x_pixelagents_token: str | None) -> None:
+    expected = os.getenv(TOKEN_ENV, "")
+    if not expected:
+        raise RuntimeError(f"Server misconfigured: {TOKEN_ENV} missing")
+    if not x_pixelagents_token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    if x_pixelagents_token != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"ok": "true"}
+
+
+@app.post("/events")
+async def ingest_event(
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, str]:
+    _require_token(x_pixelagents_token)
+
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    body.setdefault("ts", time.time())
+    EVENTS.append(body)
+
+    agent = body.get("agent") or "unknown"
+    # Keep a very small per-agent summary for the UI
+    AGENTS[agent] = {
+        "agent": agent,
+        "state": body.get("state") or AGENTS[agent].get("state") or "idle",
+        "last_event": body,
+        "updated_at": body["ts"],
+    }
+
+    return {"ok": "true"}
+
+
+@app.get("/events/stream")
+async def sse_stream() -> StreamingResponse:
+    async def gen():
+        # SSE: send a snapshot, then follow new events.
+        last_idx = 0
+        snapshot = {
+            "type": "snapshot",
+            "agents": list(AGENTS.values()),
+            "events": list(EVENTS)[-200:],
+            "ts": time.time(),
+        }
+        yield f"data: {json.dumps(snapshot)}\n\n"
+
+        while True:
+            # Naive tailing loop (demo-grade). ACA will kill long-idle connections;
+            # client will reconnect.
+            await _sleep(0.5)
+            if last_idx < len(EVENTS):
+                # Send all new events since last_idx
+                new_events = list(EVENTS)[last_idx:]
+                last_idx = len(EVENTS)
+                for e in new_events:
+                    yield f"data: {json.dumps({'type':'event','event':e})}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+async def _sleep(seconds: float) -> None:
+    # tiny wrapper to avoid importing asyncio at top-level in some environments
+    import asyncio
+
+    await asyncio.sleep(seconds)
+
+
+@app.get("/", response_class=HTMLResponse)
+def index() -> str:
+    return """<!doctype html>
+<html>
+  <head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>PixelAgents Web (AISOC)</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; margin: 24px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+      .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
+      .state { font-weight: 700; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; font-size: 12px; white-space: pre-wrap; }
+      .small { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>PixelAgents Web (AISOC demo)</h1>
+    <p class="small">Live view of agent activity. Event source: aisoc-runner → POST /events</p>
+
+    <h2>Agents</h2>
+    <div id="agents" class="grid"></div>
+
+    <h2>Recent events</h2>
+    <div id="events" class="mono"></div>
+
+    <script>
+      const agentsEl = document.getElementById('agents');
+      const eventsEl = document.getElementById('events');
+      const agents = new Map();
+      const events = [];
+
+      function render() {
+        agentsEl.innerHTML = '';
+        for (const a of agents.values()) {
+          const div = document.createElement('div');
+          div.className = 'card';
+          div.innerHTML = `
+            <div><strong>${a.agent}</strong></div>
+            <div>State: <span class="state">${a.state}</span></div>
+            <div class="small">Updated: ${new Date(a.updated_at * 1000).toISOString()}</div>
+            <div class="small">Last tool: ${(a.last_event && a.last_event.tool_name) || '-'}</div>
+          `;
+          agentsEl.appendChild(div);
+        }
+        eventsEl.textContent = events.slice(-50).map(e => JSON.stringify(e)).join('\n');
+      }
+
+      const es = new EventSource('/events/stream');
+      es.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        if (data.type === 'snapshot') {
+          agents.clear();
+          for (const a of data.agents) agents.set(a.agent, a);
+          events.splice(0, events.length, ...data.events);
+          render();
+          return;
+        }
+        if (data.type === 'event') {
+          events.push(data.event);
+          const agent = data.event.agent || 'unknown';
+          agents.set(agent, {
+            agent,
+            state: data.event.state || (agents.get(agent)?.state ?? 'idle'),
+            last_event: data.event,
+            updated_at: data.event.ts || (Date.now()/1000)
+          });
+          render();
+        }
+      };
+    </script>
+  </body>
+</html>"""
+
+
+def main() -> None:
+    import uvicorn
+
+    port = int(os.getenv("PORT", "8080"))
+    uvicorn.run("app.server:app", host="0.0.0.0", port=port)

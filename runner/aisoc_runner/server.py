@@ -1,10 +1,36 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Literal
 
 import requests
 from fastapi import FastAPI, Header, HTTPException
+
+
+def _emit_pixelagents_event(event: dict[str, Any]) -> None:
+    """Best-effort event emission to PixelAgents Web.
+
+    Configure with:
+      - PIXELAGENTS_URL (e.g. https://<pixelagents-web>/events)
+      - PIXELAGENTS_TOKEN
+
+    Failures are intentionally swallowed to avoid breaking tool execution.
+    """
+    url = os.getenv("PIXELAGENTS_URL", "").strip()
+    token = os.getenv("PIXELAGENTS_TOKEN", "").strip()
+    if not url or not token:
+        return
+
+    try:
+        requests.post(
+            url,
+            headers={"x-pixelagents-token": token, "Content-Type": "application/json"},
+            json=event,
+            timeout=2,
+        )
+    except Exception:
+        return
 
 
 def _extract_incident_guid(value: Any) -> str | None:
@@ -121,144 +147,175 @@ def tools_execute(
     tool_name = payload.get("tool_name")
     args = payload.get("arguments") or {}
 
-    if tool_name == "kql_query":
-        query = args.get("query")
-        timespan = args.get("timespan", "PT1H")
-        if not query:
-            raise HTTPException(status_code=400, detail="Missing arguments.query")
-        r = requests.post(
-            _gw_url("kql/query"),
-            params=_gw_params(),
-            headers=_gw_headers("read"),
-            json={"query": query, "timespan": timespan},
-            timeout=60,
-        )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return {"result": r.json()}
+    agent = payload.get("agent") or os.getenv("DEFAULT_AGENT_NAME", "unknown")
+    started = time.time()
+    _emit_pixelagents_event(
+        {
+            "type": "tool.call.start",
+            "agent": agent,
+            "state": "typing",
+            "tool_name": tool_name,
+            "args_keys": sorted(list(args.keys())) if isinstance(args, dict) else [],
+            "ts": started,
+        }
+    )
 
-    if tool_name == "list_incidents":
-        r = requests.get(
-            _gw_url("sentinel/incidents"),
-            params=_gw_params(),
-            headers=_gw_headers("read"),
-            timeout=60,
-        )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return {"result": r.json()}
+    try:
+        if tool_name == "kql_query":
+            query = args.get("query")
+            timespan = args.get("timespan", "PT1H")
+            if not query:
+                raise HTTPException(status_code=400, detail="Missing arguments.query")
+            r = requests.post(
+                _gw_url("kql/query"),
+                params=_gw_params(),
+                headers=_gw_headers("read"),
+                json={"query": query, "timespan": timespan},
+                timeout=60,
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=r.text)
+            result = {"result": r.json()}
+            return result
 
-    if tool_name == "get_incident":
-        raw_id = args.get("id") or args.get("incident_id")
-        incident_number = args.get("incidentNumber") or args.get("incident_number")
-
-        if incident_number is not None and raw_id is None:
-            # Resolve incidentNumber -> incident name (GUID) via list_incidents
-            try:
-                n = int(incident_number)
-            except Exception:
-                raise HTTPException(status_code=400, detail="arguments.incidentNumber must be an integer")
-
-            lr = requests.get(
+        if tool_name == "list_incidents":
+            r = requests.get(
                 _gw_url("sentinel/incidents"),
                 params=_gw_params(),
                 headers=_gw_headers("read"),
                 timeout=60,
             )
-            if lr.status_code >= 400:
-                raise HTTPException(status_code=lr.status_code, detail=lr.text)
-            data = lr.json()
-            candidates = data.get("value") if isinstance(data, dict) else None
-            if not isinstance(candidates, list):
-                raise HTTPException(status_code=502, detail="Unexpected list_incidents response shape")
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=r.text)
+            result = {"result": r.json()}
+            return result
 
-            match = None
-            for item in candidates:
+        if tool_name == "get_incident":
+            raw_id = args.get("id") or args.get("incident_id")
+            incident_number = args.get("incidentNumber") or args.get("incident_number")
+
+            if incident_number is not None and raw_id is None:
+                # Resolve incidentNumber -> incident name (GUID) via list_incidents
                 try:
-                    props = item.get("properties", {}) if isinstance(item, dict) else {}
-                    if int(props.get("incidentNumber")) == n:
-                        match = item
-                        break
+                    n = int(incident_number)
                 except Exception:
-                    continue
+                    raise HTTPException(status_code=400, detail="arguments.incidentNumber must be an integer")
 
-            if not match:
-                raise HTTPException(status_code=404, detail=f"No incident found with incidentNumber={n}")
+                lr = requests.get(
+                    _gw_url("sentinel/incidents"),
+                    params=_gw_params(),
+                    headers=_gw_headers("read"),
+                    timeout=60,
+                )
+                if lr.status_code >= 400:
+                    raise HTTPException(status_code=lr.status_code, detail=lr.text)
+                data = lr.json()
+                candidates = data.get("value") if isinstance(data, dict) else None
+                if not isinstance(candidates, list):
+                    raise HTTPException(status_code=502, detail="Unexpected list_incidents response shape")
 
-            raw_id = match.get("name") or match.get("id")
+                match = None
+                for item in candidates:
+                    try:
+                        props = item.get("properties", {}) if isinstance(item, dict) else {}
+                        if int(props.get("incidentNumber")) == n:
+                            match = item
+                            break
+                    except Exception:
+                        continue
 
-        incident_id = _extract_incident_guid(raw_id)
-        if not incident_id:
-            raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
+                if not match:
+                    raise HTTPException(status_code=404, detail=f"No incident found with incidentNumber={n}")
 
-        r = requests.get(
-            _gw_url(f"sentinel/incidents/{incident_id}"),
-            params=_gw_params(),
-            headers=_gw_headers("read"),
-            timeout=60,
-        )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return {"result": r.json()}
+                raw_id = match.get("name") or match.get("id")
 
-    if tool_name == "update_incident":
-        raw_id = args.get("id") or args.get("incident_id")
-        incident_number = args.get("incidentNumber") or args.get("incident_number")
-        properties = args.get("properties")
+            incident_id = _extract_incident_guid(raw_id)
+            if not incident_id:
+                raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
 
-        if incident_number is not None and raw_id is None:
-            # Resolve incidentNumber -> incident name (GUID) via list_incidents
-            try:
-                n = int(incident_number)
-            except Exception:
-                raise HTTPException(status_code=400, detail="arguments.incidentNumber must be an integer")
-
-            lr = requests.get(
-                _gw_url("sentinel/incidents"),
+            r = requests.get(
+                _gw_url(f"sentinel/incidents/{incident_id}"),
                 params=_gw_params(),
                 headers=_gw_headers("read"),
                 timeout=60,
             )
-            if lr.status_code >= 400:
-                raise HTTPException(status_code=lr.status_code, detail=lr.text)
-            data = lr.json()
-            candidates = data.get("value") if isinstance(data, dict) else None
-            if not isinstance(candidates, list):
-                raise HTTPException(status_code=502, detail="Unexpected list_incidents response shape")
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=r.text)
+            result = {"result": r.json()}
+            return result
 
-            match = None
-            for item in candidates:
+        if tool_name == "update_incident":
+            raw_id = args.get("id") or args.get("incident_id")
+            incident_number = args.get("incidentNumber") or args.get("incident_number")
+            properties = args.get("properties")
+
+            if incident_number is not None and raw_id is None:
+                # Resolve incidentNumber -> incident name (GUID) via list_incidents
                 try:
-                    props = item.get("properties", {}) if isinstance(item, dict) else {}
-                    if int(props.get("incidentNumber")) == n:
-                        match = item
-                        break
+                    n = int(incident_number)
                 except Exception:
-                    continue
+                    raise HTTPException(status_code=400, detail="arguments.incidentNumber must be an integer")
 
-            if not match:
-                raise HTTPException(status_code=404, detail=f"No incident found with incidentNumber={n}")
+                lr = requests.get(
+                    _gw_url("sentinel/incidents"),
+                    params=_gw_params(),
+                    headers=_gw_headers("read"),
+                    timeout=60,
+                )
+                if lr.status_code >= 400:
+                    raise HTTPException(status_code=lr.status_code, detail=lr.text)
+                data = lr.json()
+                candidates = data.get("value") if isinstance(data, dict) else None
+                if not isinstance(candidates, list):
+                    raise HTTPException(status_code=502, detail="Unexpected list_incidents response shape")
 
-            raw_id = match.get("name") or match.get("id")
+                match = None
+                for item in candidates:
+                    try:
+                        props = item.get("properties", {}) if isinstance(item, dict) else {}
+                        if int(props.get("incidentNumber")) == n:
+                            match = item
+                            break
+                    except Exception:
+                        continue
 
-        incident_id = _extract_incident_guid(raw_id)
-        if not incident_id:
-            raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
-        if not isinstance(properties, dict):
-            raise HTTPException(status_code=400, detail="Missing arguments.properties (object)")
+                if not match:
+                    raise HTTPException(status_code=404, detail=f"No incident found with incidentNumber={n}")
 
-        r = requests.patch(
-            _gw_url(f"sentinel/incidents/{incident_id}"),
-            params=_gw_params(),
-            headers=_gw_headers("write"),
-            json={"properties": properties},
-            timeout=60,
+                raw_id = match.get("name") or match.get("id")
+
+            incident_id = _extract_incident_guid(raw_id)
+            if not incident_id:
+                raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
+            if not isinstance(properties, dict):
+                raise HTTPException(status_code=400, detail="Missing arguments.properties (object)")
+
+            r = requests.patch(
+                _gw_url(f"sentinel/incidents/{incident_id}"),
+                params=_gw_params(),
+                headers=_gw_headers("write"),
+                json={"properties": properties},
+                timeout=60,
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=r.text)
+            result = {"result": r.json()}
+            return result
+
+        raise HTTPException(status_code=400, detail=f"Unknown tool_name: {tool_name}")
+
+    finally:
+        ended = time.time()
+        _emit_pixelagents_event(
+            {
+                "type": "tool.call.end",
+                "agent": agent,
+                "state": "idle",
+                "tool_name": tool_name,
+                "duration_ms": int((ended - started) * 1000),
+                "ts": ended,
+            }
         )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return {"result": r.json()}
-
-    raise HTTPException(status_code=400, detail=f"Unknown tool_name: {tool_name}")
 
 
 if __name__ == "__main__":
