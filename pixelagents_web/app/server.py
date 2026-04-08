@@ -183,6 +183,8 @@ def index() -> str:
       const spriteImgs = {};
       for (const [k, url] of Object.entries(sprites)) {
         const img = new Image();
+        img.onload = () => { /* images load async; animation loop will pick them up */ };
+        img.onerror = () => console.warn('Failed to load sprite', k, url);
         img.src = url;
         spriteImgs[k] = img;
       }
@@ -190,9 +192,11 @@ def index() -> str:
       // Desk + PC furniture
       const deskImg = new Image();
       // TABLE_FRONT reads more like a desk surface in the Pixel Agents pack
+      deskImg.onerror = () => console.warn('Failed to load desk');
       deskImg.src = '/static/assets/furniture/TABLE_FRONT/TABLE_FRONT.png';
 
       const sofaImg = new Image();
+      sofaImg.onerror = () => console.warn('Failed to load sofa');
       sofaImg.src = '/static/assets/furniture/SOFA/SOFA_FRONT.png';
 
       const pcFrames = [
@@ -200,7 +204,12 @@ def index() -> str:
         '/static/assets/furniture/PC/PC_FRONT_ON_1.png',
         '/static/assets/furniture/PC/PC_FRONT_ON_2.png',
         '/static/assets/furniture/PC/PC_FRONT_ON_3.png'
-      ].map(u => { const i = new Image(); i.src = u; return i; });
+      ].map(u => {
+        const i = new Image();
+        i.onerror = () => console.warn('Failed to load pc frame', u);
+        i.src = u;
+        return i;
+      });
 
       // Agent positions with simple lerp movement
       const pos = new Map();
@@ -257,7 +266,7 @@ def index() -> str:
 
           const img = spriteImgs[id] || spriteImgs.unknown;
           const size = 64;
-          if (img && img.complete) {
+          if (img && img.complete && img.naturalWidth > 0) {
             // Choose frame: if moving, cycle walk frames; else idle frame
             const moving = (Math.abs(target.x - nx) + Math.abs(target.y - ny)) > 1.5;
             const frame = moving ? FRONT_WALK[Math.floor(Date.now()/220) % FRONT_WALK.length] : FRONT_IDLE;
@@ -266,6 +275,12 @@ def index() -> str:
             ctx.imageSmoothingEnabled = false;
             ctx.drawImage(img, sx, sy, FRAME_W, FRAME_H, nx - size/2, ny - size/2 - 6, size, size);
             ctx.imageSmoothingEnabled = true;
+          } else {
+            // Fallback so agents are always visible even if sprites fail to load
+            ctx.fillStyle = '#2d3748';
+            ctx.beginPath();
+            ctx.arc(nx, ny-10, 14, 0, Math.PI*2);
+            ctx.fill();
           }
 
           // state bubble
