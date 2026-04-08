@@ -171,7 +171,8 @@ def index() -> str:
 
       // Desk + PC furniture
       const deskImg = new Image();
-      deskImg.src = '/static/assets/furniture/DESK/DESK_FRONT.png';
+      // TABLE_FRONT reads more like a desk surface in the Pixel Agents pack
+      deskImg.src = '/static/assets/furniture/TABLE_FRONT/TABLE_FRONT.png';
 
       const pcFrames = [
         '/static/assets/furniture/PC/PC_FRONT_OFF.png',
@@ -189,12 +190,9 @@ def index() -> str:
         // desks + labels
         ctx.font = '12px ui-sans-serif, system-ui';
         for (const [name,pos] of Object.entries(seats)) {
-          // desk
+          // desk (only draw when loaded; avoid big gray placeholders)
           if (deskImg.complete) {
-            ctx.drawImage(deskImg, pos.x-72, pos.y-44, 144, 88);
-          } else {
-            ctx.fillStyle = '#e0e0ea';
-            ctx.fillRect(pos.x-70, pos.y-40, 140, 80);
+            ctx.drawImage(deskImg, pos.x-92, pos.y-44, 184, 92);
           }
 
           // pc (animate on when typing)
