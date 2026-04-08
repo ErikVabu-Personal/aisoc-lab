@@ -95,8 +95,16 @@ resource "azurerm_container_app" "runner" {
       }
 
       # SOCGATEWAY_FUNCTION_CODE set post-deploy
-      env { name = "SOCGATEWAY_READ_KEY", secret_name = "socgateway-read-key" }
-      env { name = "SOCGATEWAY_WRITE_KEY", secret_name = "socgateway-write-key" }
+
+      env {
+        name        = "SOCGATEWAY_READ_KEY"
+        secret_name = "socgateway-read-key"
+      }
+
+      env {
+        name        = "SOCGATEWAY_WRITE_KEY"
+        secret_name = "socgateway-write-key"
+      }
 
       env {
         name  = "ENABLE_WRITES"
