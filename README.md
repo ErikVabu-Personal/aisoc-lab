@@ -570,7 +570,15 @@ By default, agents are named with prefix `foundry-aisoc-*`.
 
 ---
 
-## Phase 6 — PixelAgents Web (runner-only telemetry)
+## Phase 6 — PixelAgents Web (Foundry/Runner telemetry → Pixel Agents UI)
+
+This repo deploys a standalone Pixel Agents-style web UI (Azure Container Apps) that is driven by AISOC Runner telemetry.
+
+Current implementation notes:
+- PixelAgents Web is a FastAPI service (`pixelagents_web/`) deployed to ACA.
+- It serves the Pixel Agents webview UI build (vendored into `pixelagents_web/app/ui_dist/`).
+- A small adapter polls `GET /api/agents/state` and dispatches Pixel Agents-style `postMessage` events.
+- Movement/seat behavior is still WIP (desk ↔ lounge anchoring); see "Known issues" below.
 
 Pixel Agents (upstream) is a VS Code extension today. For this demo we deploy a minimal **PixelAgents-style web app**
 that visualizes AISOC agent activity based on **runner telemetry only**.
@@ -583,6 +591,13 @@ A GitHub Actions job builds/pushes the container image:
 
 Run:
 - GitHub → Actions → **Build + Publish AISOC Runner (GHCR)**
+
+Important:
+- Because we vendor the UI build output into `pixelagents_web/app/ui_dist/`, any UI changes require:
+  1) running `npm run build` in `pixelagents_web/ui`
+  2) copying output from `pixelagents_web/dist/webview/` → `pixelagents_web/app/ui_dist/`
+  3) committing the updated `ui_dist/`
+  4) rebuilding the container image
 
 ### 6.2 Deploy PixelAgents Web (Terraform)
 
@@ -609,6 +624,20 @@ Now, every call to `POST /tools/execute` will emit:
 
 Open the UI:
 - `${pixelagents_url}/`
+
+### 6.4 Troubleshooting PixelAgents Web
+
+- If the UI is blank and DevTools shows 404s under `/assets/...`:
+  - ensure you deployed a recent image (deploy by SHA tag)
+  - PixelAgents Web serves UI assets at `/assets` and `/fonts`
+
+- If you see tool events but agents do not appear:
+  - verify `/api/agents/state` returns JSON with `triage/investigator/reporter`
+
+### Known issues / WIP
+
+- Lounge seating is not fully deterministic yet: triage reliably anchors to a sofa seat; investigator/reporter may still remain at desks.
+  This is due to Pixel Agents seat assignment contention and timing; we have debug logs in recent builds.
 
 ---
 
