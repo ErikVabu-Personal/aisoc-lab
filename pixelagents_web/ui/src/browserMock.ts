@@ -330,6 +330,7 @@ export function dispatchMockMessages(): void {
   const loungeNextIdx = new Map<string, number>();
   const takenLoungeSeats = new Set<string>();
   const takenLoungeTiles = new Set<string>();
+  const pendingSeatTry = new Map<string, { col: number; row: number }>();
 
   // Listen for seat resolution events coming from useExtensionMessages handler
   window.addEventListener('message', (ev) => {
@@ -342,13 +343,24 @@ export function dispatchMockMessages(): void {
     console.log('[AISOC] agentSeatResolved', { agentName, ...msg });
 
     if (msg.ok) {
+      const seatId = msg.seatId ? String(msg.seatId) : '';
+      if (seatId && takenLoungeSeats.has(seatId)) {
+        // Seat already taken by another agent — keep searching
+        const cur = loungeNextIdx.get(agentName) ?? 0;
+        loungeNextIdx.set(agentName, Math.min(cur + 1, loungeCandidates.length - 1));
+        pendingSeatTry.delete(agentName);
+        return;
+      }
+
       loungeTileForAgent.set(agentName, { col: msg.col, row: msg.row });
-      if (msg.seatId) takenLoungeSeats.add(String(msg.seatId));
+      if (seatId) takenLoungeSeats.add(seatId);
       takenLoungeTiles.add(`${msg.col},${msg.row}`);
+      pendingSeatTry.delete(agentName);
     } else {
       // advance index so next attempt tries another tile
       const cur = loungeNextIdx.get(agentName) ?? 0;
       loungeNextIdx.set(agentName, Math.min(cur + 1, loungeCandidates.length - 1));
+      pendingSeatTry.delete(agentName);
     }
   });
 
@@ -374,12 +386,15 @@ export function dispatchMockMessages(): void {
       return;
     }
 
+    // Avoid spamming resolve requests while one is in-flight
+    if (pendingSeatTry.has(name)) return;
+
     let idx = loungeNextIdx.get(name) ?? 0;
-    // Find the next candidate tile that isn't already taken
     while (idx < loungeCandidates.length) {
       const tile = loungeCandidates[idx];
       const key = `${tile.col},${tile.row}`;
       if (!takenLoungeTiles.has(key)) {
+        pendingSeatTry.set(name, tile);
         dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
         return;
       }
