@@ -309,6 +309,15 @@ export function dispatchMockMessages(): void {
     dispatch({ type: 'agentStatus', id, status });
   }
 
+  function setActive(name: string, id: number, active: boolean): void {
+    const key = `${name}:active`;
+    const prev = lastStatus.get(key);
+    const next = active ? '1' : '0';
+    if (prev === next) return;
+    lastStatus.set(key, next);
+    dispatch({ type: 'agentActive', id, active });
+  }
+
   function setTool(id: number, toolName: string): void {
     // Minimal: show current tool as a running tool item
     const toolId = `aisoc-${toolName}`;
@@ -333,16 +342,17 @@ export function dispatchMockMessages(): void {
         if (!layoutReady) return;
 
         if (a.status === 'typing' || a.status === 'reading') {
-          setStatus(name, id, 'active');
+          setActive(name, id, true);
           moveAgentTo(id, name, true);
           if (a.tool_name) setTool(id, a.tool_name);
         } else if (a.status === 'error') {
           // Error → waiting bubble
           setStatus(name, id, 'waiting');
+          setActive(name, id, false);
           moveAgentTo(id, name, false);
         } else {
-          // Normal idle: no waiting bubble
-          setStatus(name, id, 'active');
+          // Normal idle: inactive + no bubble
+          setActive(name, id, false);
           moveAgentTo(id, name, false);
         }
       }

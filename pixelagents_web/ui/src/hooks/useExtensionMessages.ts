@@ -280,6 +280,15 @@ export function useExtensionMessages(
         const col = msg.col as number;
         const row = msg.row as number;
         os.walkToTile(id, col, row);
+      } else if (msg.type === 'agentActive') {
+        const id = msg.id as number;
+        const active = msg.active as boolean;
+        os.setAgentActive(id, active);
+        if (!active) {
+          // Ensure no bubbles for normal idle
+          os.clearPermissionBubble(id);
+          os.dismissBubble(id);
+        }
       } else if (msg.type === 'agentStatus') {
         const id = msg.id as number;
         const status = msg.status as string;
