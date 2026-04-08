@@ -280,6 +280,14 @@ export function useExtensionMessages(
         const col = msg.col as number;
         const row = msg.row as number;
         os.walkToTile(id, col, row);
+      } else if (msg.type === 'agentAssignSeatAtTile') {
+        const id = msg.id as number;
+        const col = msg.col as number;
+        const row = msg.row as number;
+        const seatId = os.getSeatAtTile(col, row);
+        if (seatId) {
+          os.reassignSeat(id, seatId);
+        }
       } else if (msg.type === 'agentActive') {
         const id = msg.id as number;
         const active = msg.active as boolean;

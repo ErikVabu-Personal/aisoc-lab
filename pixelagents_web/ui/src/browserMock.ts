@@ -287,9 +287,10 @@ export function dispatchMockMessages(): void {
   // Hard-coded tile targets for the default layout:
   // Lounge is near the sofa at cols ~13-16, rows ~13-16.
   const loungeTiles: Record<string, { col: number; row: number }> = {
-    triage: { col: 13, row: 15 },
-    investigator: { col: 14, row: 15 },
-    reporter: { col: 15, row: 15 },
+    // These should correspond to sofa seat tiles (derived from chair furniture)
+    triage: { col: 14, row: 14 },
+    investigator: { col: 15, row: 14 },
+    reporter: { col: 16, row: 14 },
   };
 
   // Desk tiles roughly align with desks/PCs around col 2-7, row 12.
@@ -302,7 +303,12 @@ export function dispatchMockMessages(): void {
 
   function moveAgentTo(id: number, name: string, active: boolean): void {
     const tile = active ? (deskTiles[name] ?? deskTiles.triage) : (loungeTiles[name] ?? loungeTiles.triage);
-    dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
+    if (active) {
+      dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
+    } else {
+      // Anchor idle agents to a lounge seat so they don't wander
+      dispatch({ type: 'agentAssignSeatAtTile', id, col: tile.col, row: tile.row });
+    }
   }
 
   function setStatus(name: string, id: number, status: 'active' | 'waiting'): void {
