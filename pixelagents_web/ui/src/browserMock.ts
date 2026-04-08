@@ -277,6 +277,27 @@ export function dispatchMockMessages(): void {
     return id;
   }
 
+  // Hard-coded tile targets for the default layout:
+  // Lounge is near the sofa at cols ~13-16, rows ~13-16.
+  const loungeTiles: Record<string, { col: number; row: number }> = {
+    triage: { col: 13, row: 15 },
+    investigator: { col: 14, row: 15 },
+    reporter: { col: 15, row: 15 },
+  };
+
+  // Desk tiles roughly align with desks/PCs around col 2-7, row 12.
+  // We pick walkable tiles in front of each desk.
+  const deskTiles: Record<string, { col: number; row: number }> = {
+    triage: { col: 3, row: 13 },
+    investigator: { col: 7, row: 13 },
+    reporter: { col: 5, row: 19 },
+  };
+
+  function moveAgentTo(id: number, name: string, active: boolean): void {
+    const tile = active ? (deskTiles[name] ?? deskTiles.triage) : (loungeTiles[name] ?? loungeTiles.triage);
+    dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
+  }
+
   function setStatus(id: number, status: 'active' | 'waiting'): void {
     dispatch({ type: 'agentStatus', id, status });
   }
@@ -304,10 +325,12 @@ export function dispatchMockMessages(): void {
         // Pixel Agents: status 'active' means working; status 'waiting' shows bubble + idle.
         if (a.status === 'typing' || a.status === 'reading') {
           setStatus(id, 'active');
+          moveAgentTo(id, name, true);
           if (a.tool_name) setTool(id, a.tool_name);
         } else {
-          // idle/error -> waiting (shows bubble). We'll refine later.
+          // idle/error: move to lounge. Use waiting bubble only for errors later.
           setStatus(id, 'waiting');
+          moveAgentTo(id, name, false);
         }
       }
     } catch {
