@@ -561,7 +561,69 @@ By default, agents are named with prefix `foundry-aisoc-*`.
 
 ---
 
+## Demo runbook (Foundry triage → investigator → reporter)
+
+This is a practical checklist to run the demo live.
+
+### A) One-time setup (before demo day)
+
+1) Deploy Phase 1 + Phase 2 + SOCGateway code (above)
+2) Deploy runner (Phase 4) and create the Foundry OpenAPI Tool
+3) Create (or deploy) three Foundry agents:
+   - **Triage**
+   - **Investigator**
+   - **Reporter**
+4) Attach the **AISOC Runner Tool** to all three agents
+5) Decide whether you allow writes:
+   - For a closure demo: set runner `ENABLE_WRITES=1`
+
+### B) Configure “scheduled triage” (manual)
+
+Foundry UI varies, but the concept is the same: configure a schedule/job that runs the triage agent prompt every minute.
+
+1) Open the **Triage agent**
+2) Find **Schedule / Job / Automations** (depending on your Foundry build)
+3) Create a schedule:
+   - Frequency: **every 1 minute**
+   - Prompt:
+
+> "Check the Sentinel incident queue. Call the tool to list incidents. If there is a New incident, select the newest one, then call the tool to get full details for that incident (use incidentNumber or id). Summarize initial triage and hand off as suspicious to the Investigator agent with 2-3 concrete questions and suggested KQL. If there are no New incidents, output exactly: NO_NEW_INCIDENTS."
+
+4) Save and enable the schedule
+
+**Tip:** For demos, consider disabling the schedule right before presenting, then enabling it on stage so the audience sees it “come alive”.
+
+### C) Live demo flow
+
+1) Trigger / wait for triage to pick up an incident
+2) Triage produces:
+   - short summary
+   - why suspicious
+   - the incident identifier (incidentNumber or GUID)
+   - 2–3 suggested KQL checks
+3) Investigator agent:
+   - fetches incident details
+   - runs up to 3 KQL queries
+   - produces a conclusion (TP/FP/inconclusive)
+   - if inconclusive: asks the human for a decision
+4) Reporter agent:
+   - drafts the ticket in a structured format
+   - writes a closure/update back to Sentinel via `update_incident`
+
+### D) Verification checklist (right before demo)
+
+- Runner reachable:
+  - `GET $RUNNER_URL/healthz` returns `{"ok":"true"}`
+- Tool auth works:
+  - `POST /tools/execute` with `list_incidents` succeeds
+- Deep incident fetch works:
+  - `get_incident` works with both `incidentNumber` and a full ARM resource id
+- Writes (if enabled):
+  - `update_incident` can set `status` to `Closed`
+
+---
+
 ## Next step
 
-- Implement LLM-backed MAF agents (triage/investigator/reporter) calling the runner tool.
-- Add OpenTelemetry traces so PixelAgents can visualize agent activity.
+- Add a "Reporter" patch template (exact Sentinel fields) once we standardize which properties are writable in your tenant.
+- Add Foundry/Runner telemetry extraction for PixelAgents.
