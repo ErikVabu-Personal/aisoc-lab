@@ -161,6 +161,8 @@ def index() -> str:
 
       // Lounge area for idle agents
       const lounge = {x: 140, y: 380};
+      // Where characters should stand/sit relative to the sofa sprite
+      const loungeSeat = {x: lounge.x, y: lounge.y - 34};
 
       // Character sprite sheets are 112x96: 7 columns x 6 rows of 16x16 tiles
       const FRAME_W = 16;
@@ -255,7 +257,7 @@ def index() -> str:
         for (const a of agents.values()) {
           const id = a.agent || 'unknown';
 
-          const target = (a.state && a.state !== 'idle') ? (seats[id] || seats.unknown) : lounge;
+          const target = (a.state && a.state !== 'idle') ? (seats[id] || seats.unknown) : loungeSeat;
           const cur = pos.get(id) || {x: target.x, y: target.y};
 
           // lerp movement toward target
