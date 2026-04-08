@@ -561,6 +561,48 @@ By default, agents are named with prefix `foundry-aisoc-*`.
 
 ---
 
+## Phase 6 — PixelAgents Web (runner-only telemetry)
+
+Pixel Agents (upstream) is a VS Code extension today. For this demo we deploy a minimal **PixelAgents-style web app**
+that visualizes AISOC agent activity based on **runner telemetry only**.
+
+### 6.1 Build & publish the PixelAgents Web image (GitHub Actions)
+
+A GitHub Actions job builds/pushes the container image:
+- `ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:latest`
+- `ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:<GITHUB_SHA>`
+
+Run:
+- GitHub → Actions → **Build + Publish AISOC Runner (GHCR)**
+
+### 6.2 Deploy PixelAgents Web (Terraform)
+
+```bash
+cd terraform/4-deploy-pixelagents-web
+terraform init
+terraform apply
+```
+
+Outputs:
+- `pixelagents_url`
+- `pixelagents_token` (sensitive)
+
+### 6.3 Wire AISOC Runner → PixelAgents Web (manual)
+
+Set these environment variables on the **AISOC Runner** Container App:
+
+- `PIXELAGENTS_URL` = `${pixelagents_url}/events`
+- `PIXELAGENTS_TOKEN` = `${pixelagents_token}`
+
+Now, every call to `POST /tools/execute` will emit:
+- `tool.call.start`
+- `tool.call.end`
+
+Open the UI:
+- `${pixelagents_url}/`
+
+---
+
 ## Demo runbook (Foundry triage → investigator → reporter)
 
 This is a practical checklist to run the demo live.
