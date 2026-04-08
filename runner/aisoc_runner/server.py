@@ -125,8 +125,46 @@ def tools_execute(
 
     if tool_name == "get_incident":
         incident_id = args.get("id") or args.get("incident_id")
+        incident_number = args.get("incidentNumber") or args.get("incident_number")
+
+        if incident_number is not None and incident_id is None:
+            # Resolve incidentNumber -> incident name (GUID) via list_incidents
+            try:
+                n = int(incident_number)
+            except Exception:
+                raise HTTPException(status_code=400, detail="arguments.incidentNumber must be an integer")
+
+            lr = requests.get(
+                _gw_url("sentinel/incidents"),
+                params=_gw_params(),
+                headers=_gw_headers("read"),
+                timeout=60,
+            )
+            if lr.status_code >= 400:
+                raise HTTPException(status_code=lr.status_code, detail=lr.text)
+            data = lr.json()
+            candidates = data.get("value") if isinstance(data, dict) else None
+            if not isinstance(candidates, list):
+                raise HTTPException(status_code=502, detail="Unexpected list_incidents response shape")
+
+            match = None
+            for item in candidates:
+                try:
+                    props = item.get("properties", {}) if isinstance(item, dict) else {}
+                    if int(props.get("incidentNumber")) == n:
+                        match = item
+                        break
+                except Exception:
+                    continue
+
+            if not match:
+                raise HTTPException(status_code=404, detail=f"No incident found with incidentNumber={n}")
+
+            # Azure incident 'name' is the GUID expected by SOCGateway get/update
+            incident_id = match.get("name") or match.get("id")
+
         if not incident_id:
-            raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id)")
+            raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
 
         # Foundry/Sentinel often provide a workspace-scoped ARM Resource ID. SOCGateway expects the incident name (GUID).
         if isinstance(incident_id, str) and "/incidents/" in incident_id:
@@ -144,9 +182,46 @@ def tools_execute(
 
     if tool_name == "update_incident":
         incident_id = args.get("id") or args.get("incident_id")
+        incident_number = args.get("incidentNumber") or args.get("incident_number")
         properties = args.get("properties")
+
+        if incident_number is not None and incident_id is None:
+            # Resolve incidentNumber -> incident name (GUID) via list_incidents
+            try:
+                n = int(incident_number)
+            except Exception:
+                raise HTTPException(status_code=400, detail="arguments.incidentNumber must be an integer")
+
+            lr = requests.get(
+                _gw_url("sentinel/incidents"),
+                params=_gw_params(),
+                headers=_gw_headers("read"),
+                timeout=60,
+            )
+            if lr.status_code >= 400:
+                raise HTTPException(status_code=lr.status_code, detail=lr.text)
+            data = lr.json()
+            candidates = data.get("value") if isinstance(data, dict) else None
+            if not isinstance(candidates, list):
+                raise HTTPException(status_code=502, detail="Unexpected list_incidents response shape")
+
+            match = None
+            for item in candidates:
+                try:
+                    props = item.get("properties", {}) if isinstance(item, dict) else {}
+                    if int(props.get("incidentNumber")) == n:
+                        match = item
+                        break
+                except Exception:
+                    continue
+
+            if not match:
+                raise HTTPException(status_code=404, detail=f"No incident found with incidentNumber={n}")
+
+            incident_id = match.get("name") or match.get("id")
+
         if not incident_id:
-            raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id)")
+            raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
         if not isinstance(properties, dict):
             raise HTTPException(status_code=400, detail="Missing arguments.properties (object)")
 
