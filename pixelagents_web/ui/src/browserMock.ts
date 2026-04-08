@@ -275,6 +275,27 @@ export function dispatchMockMessages(): void {
   const lastIdleTs = new Map<string, number>();
   let nextId = 1;
 
+  function anchorToLoungeSoon(name: string, id: number): void {
+    // Retry for a short period: seats/character may not exist yet.
+    const MAX_TRIES = 12;
+    let tries = 0;
+
+    const timer = window.setInterval(() => {
+      // Stop if already anchored
+      if (loungeTileForAgent.has(name)) {
+        window.clearInterval(timer);
+        return;
+      }
+      const idx = loungeNextIdx.get(name) ?? 0;
+      const tile = loungeCandidates[Math.min(idx, loungeCandidates.length - 1)];
+      dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
+      tries++;
+      if (tries >= MAX_TRIES) {
+        window.clearInterval(timer);
+      }
+    }, 300);
+  }
+
   function ensureAgent(name: string): number {
     let id = nameToId.get(name);
     if (id) return id;
@@ -282,11 +303,10 @@ export function dispatchMockMessages(): void {
     nameToId.set(name, id);
     dispatch({ type: 'agentCreated', id, folderName: name });
 
-    // Immediately anchor new agents to a lounge seat so they don't spawn at desks.
+    // Anchor new agents to lounge as soon as layout+seats are ready.
     loungeNextIdx.set(name, 0);
-    const tile = loungeCandidates[0];
-    dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
     lastMode.set(name, 'lounge');
+    anchorToLoungeSoon(name, id);
 
     return id;
   }
