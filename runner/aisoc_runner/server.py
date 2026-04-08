@@ -6,6 +6,31 @@ from typing import Any, Literal
 import requests
 from fastapi import FastAPI, Header, HTTPException
 
+
+def _extract_incident_guid(value: Any) -> str | None:
+    """Extract Sentinel incident GUID from either a GUID string or an ARM resource ID.
+
+    Accepts workspace-scoped incident IDs too (case-insensitive '/incidents/').
+    """
+    if not isinstance(value, str):
+        return None
+
+    s = value.strip()
+    if not s:
+        return None
+
+    lower = s.lower()
+    needle = "/incidents/"
+    if needle in lower:
+        # Find the segment after /incidents/ in a case-insensitive way.
+        idx = lower.index(needle) + len(needle)
+        remainder = s[idx:]
+        guid = remainder.split("/", 1)[0].split("?", 1)[0].strip()
+        return guid or None
+
+    # If it's already a GUID, just return it.
+    return s
+
 app = FastAPI(title="aisoc-runner")
 
 
@@ -124,10 +149,10 @@ def tools_execute(
         return {"result": r.json()}
 
     if tool_name == "get_incident":
-        incident_id = args.get("id") or args.get("incident_id")
+        raw_id = args.get("id") or args.get("incident_id")
         incident_number = args.get("incidentNumber") or args.get("incident_number")
 
-        if incident_number is not None and incident_id is None:
+        if incident_number is not None and raw_id is None:
             # Resolve incidentNumber -> incident name (GUID) via list_incidents
             try:
                 n = int(incident_number)
@@ -160,15 +185,11 @@ def tools_execute(
             if not match:
                 raise HTTPException(status_code=404, detail=f"No incident found with incidentNumber={n}")
 
-            # Azure incident 'name' is the GUID expected by SOCGateway get/update
-            incident_id = match.get("name") or match.get("id")
+            raw_id = match.get("name") or match.get("id")
 
+        incident_id = _extract_incident_guid(raw_id)
         if not incident_id:
             raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
-
-        # Foundry/Sentinel often provide a workspace-scoped ARM Resource ID. SOCGateway expects the incident name (GUID).
-        if isinstance(incident_id, str) and "/incidents/" in incident_id:
-            incident_id = incident_id.split("/incidents/", 1)[1].split("/", 1)[0]
 
         r = requests.get(
             _gw_url(f"sentinel/incidents/{incident_id}"),
@@ -181,11 +202,11 @@ def tools_execute(
         return {"result": r.json()}
 
     if tool_name == "update_incident":
-        incident_id = args.get("id") or args.get("incident_id")
+        raw_id = args.get("id") or args.get("incident_id")
         incident_number = args.get("incidentNumber") or args.get("incident_number")
         properties = args.get("properties")
 
-        if incident_number is not None and incident_id is None:
+        if incident_number is not None and raw_id is None:
             # Resolve incidentNumber -> incident name (GUID) via list_incidents
             try:
                 n = int(incident_number)
@@ -218,16 +239,13 @@ def tools_execute(
             if not match:
                 raise HTTPException(status_code=404, detail=f"No incident found with incidentNumber={n}")
 
-            incident_id = match.get("name") or match.get("id")
+            raw_id = match.get("name") or match.get("id")
 
+        incident_id = _extract_incident_guid(raw_id)
         if not incident_id:
             raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
         if not isinstance(properties, dict):
             raise HTTPException(status_code=400, detail="Missing arguments.properties (object)")
-
-        # Normalize workspace-scoped ARM Resource IDs to the incident name (GUID)
-        if isinstance(incident_id, str) and "/incidents/" in incident_id:
-            incident_id = incident_id.split("/incidents/", 1)[1].split("/", 1)[0]
 
         r = requests.patch(
             _gw_url(f"sentinel/incidents/{incident_id}"),
