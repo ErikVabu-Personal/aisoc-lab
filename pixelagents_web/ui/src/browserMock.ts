@@ -270,6 +270,9 @@ export function dispatchMockMessages(): void {
 
   const nameToId = new Map<string, number>();
   const lastStatus = new Map<string, string>();
+  const lastMode = new Map<string, 'desk' | 'lounge'>();
+  const lastActiveTs = new Map<string, number>();
+  const lastIdleTs = new Map<string, number>();
   let nextId = 1;
 
   function ensureAgent(name: string): number {
@@ -333,27 +336,59 @@ export function dispatchMockMessages(): void {
       const data = (await res.json()) as { agents?: Array<{ id: string; status: string; tool_name?: string | null }> };
       const list = data.agents || [];
 
+      const now = Date.now() / 1000;
+
       for (const a of list) {
         const name = a.id;
         const id = ensureAgent(name);
 
-        // Map our statuses to Pixel Agents statuses
-        // Pixel Agents: status 'active' means working; status 'waiting' shows bubble + idle.
         if (!layoutReady) return;
 
-        if (a.status === 'typing' || a.status === 'reading') {
-          setActive(name, id, true);
-          moveAgentTo(id, name, true);
-          if (a.tool_name) setTool(id, a.tool_name);
-        } else if (a.status === 'error') {
+        const isActive = a.status === 'typing' || a.status === 'reading';
+        const isError = a.status === 'error';
+
+        if (isActive) {
+          lastActiveTs.set(name, now);
+        } else {
+          lastIdleTs.set(name, now);
+        }
+
+        // Hysteresis thresholds (seconds)
+        const ACTIVE_TO_DESK_SEC = 2.0;
+        const IDLE_TO_LOUNGE_SEC = 5.0;
+
+        const lastActive = lastActiveTs.get(name) ?? 0;
+        const lastIdle = lastIdleTs.get(name) ?? 0;
+
+        const wantDesk = isActive && (now - lastIdle) >= ACTIVE_TO_DESK_SEC;
+        const wantLounge = !isActive && !isError && (now - lastActive) >= IDLE_TO_LOUNGE_SEC;
+
+        if (isError) {
           // Error → waiting bubble
           setStatus(name, id, 'waiting');
           setActive(name, id, false);
-          moveAgentTo(id, name, false);
+          // Keep them in lounge during errors
+          if (lastMode.get(name) !== 'lounge') {
+            moveAgentTo(id, name, false);
+            lastMode.set(name, 'lounge');
+          }
+          continue;
+        }
+
+        if (isActive) {
+          setActive(name, id, true);
+          if (a.tool_name) setTool(id, a.tool_name);
+          if (wantDesk && lastMode.get(name) !== 'desk') {
+            moveAgentTo(id, name, true);
+            lastMode.set(name, 'desk');
+          }
         } else {
-          // Normal idle: inactive + no bubble
+          // Normal idle
           setActive(name, id, false);
-          moveAgentTo(id, name, false);
+          if (wantLounge && lastMode.get(name) !== 'lounge') {
+            moveAgentTo(id, name, false);
+            lastMode.set(name, 'lounge');
+          }
         }
       }
     } catch {
