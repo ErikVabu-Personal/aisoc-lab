@@ -300,6 +300,23 @@ export function dispatchMockMessages(): void {
 
   // Remember which lounge tile worked per agent so they stay stable
   const loungeTileForAgent = new Map<string, { col: number; row: number }>();
+  const loungeNextIdx = new Map<string, number>();
+
+  // Listen for seat resolution events coming from useExtensionMessages handler
+  window.addEventListener('message', (ev) => {
+    const msg = (ev as MessageEvent).data as any;
+    if (!msg || msg.type !== 'agentSeatResolved') return;
+    // If ok, remember the tile for that agent id (reverse lookup)
+    const agentName = [...nameToId.entries()].find(([, v]) => v === msg.id)?.[0];
+    if (!agentName) return;
+    if (msg.ok) {
+      loungeTileForAgent.set(agentName, { col: msg.col, row: msg.row });
+    } else {
+      // advance index so next attempt tries another tile
+      const cur = loungeNextIdx.get(agentName) ?? 0;
+      loungeNextIdx.set(agentName, Math.min(cur + 1, loungeCandidates.length - 1));
+    }
+  });
 
   // Desk tiles roughly align with desks/PCs around col 2-7, row 12.
   // We pick walkable tiles in front of each desk.
@@ -323,12 +340,10 @@ export function dispatchMockMessages(): void {
       return;
     }
 
-    for (const tile of loungeCandidates) {
-      // We can't synchronously know if seat exists; try in order and remember the first one.
-      dispatch({ type: 'agentAssignSeatAtTile', id, col: tile.col, row: tile.row });
-      loungeTileForAgent.set(name, tile);
-      break;
-    }
+    const idx = loungeNextIdx.get(name) ?? 0;
+    const tile = loungeCandidates[Math.min(idx, loungeCandidates.length - 1)];
+    // Ask the engine to resolve/assign a seat at this tile; it will emit agentSeatResolved.
+    dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
   }
 
   function setStatus(name: string, id: number, status: 'active' | 'waiting'): void {

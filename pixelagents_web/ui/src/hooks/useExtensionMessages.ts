@@ -288,6 +288,27 @@ export function useExtensionMessages(
         if (seatId) {
           os.reassignSeat(id, seatId);
         }
+      } else if (msg.type === 'agentResolveSeatAtTile') {
+        const id = msg.id as number;
+        const col = msg.col as number;
+        const row = msg.row as number;
+        const seatId = os.getSeatAtTile(col, row);
+        if (seatId) {
+          os.reassignSeat(id, seatId);
+        }
+        // Emit a follow-up message event the browser adapter can listen to
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'agentSeatResolved',
+              id,
+              col,
+              row,
+              ok: Boolean(seatId),
+              seatId,
+            },
+          }),
+        );
       } else if (msg.type === 'agentActive') {
         const id = msg.id as number;
         const active = msg.active as boolean;
