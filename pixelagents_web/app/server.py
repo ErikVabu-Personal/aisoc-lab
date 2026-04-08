@@ -8,6 +8,7 @@ from typing import Any, Deque, Dict
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 APP_TITLE = "pixelagents-web"
 
@@ -18,6 +19,11 @@ AGENTS: Dict[str, Dict[str, Any]] = defaultdict(dict)
 EVENTS: Deque[dict[str, Any]] = deque(maxlen=2000)
 
 app = FastAPI(title=APP_TITLE)
+
+# Serve vendored Pixel Agents assets
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 def _require_token(x_pixelagents_token: str | None) -> None:
@@ -121,17 +127,68 @@ def index() -> str:
     <h1>PixelAgents Web (AISOC demo)</h1>
     <p class="small">Live view of agent activity. Event source: aisoc-runner → POST /events</p>
 
-    <h2>Agents</h2>
-    <div id="agents" class="grid"></div>
-
-    <h2>Recent events</h2>
-    <div id="events" class="mono"></div>
+    <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap">
+      <canvas id="office" width="900" height="520" style="border:1px solid #ddd; border-radius:10px;"></canvas>
+      <div style="flex:1; min-width:320px;">
+        <h2>Agents</h2>
+        <div id="agents" class="grid"></div>
+        <h2>Recent events</h2>
+        <div id="events" class="mono" style="max-height:360px; overflow:auto"></div>
+      </div>
+    </div>
 
     <script>
       const agentsEl = document.getElementById('agents');
       const eventsEl = document.getElementById('events');
+      const canvas = document.getElementById('office');
+      const ctx = canvas.getContext('2d');
+
       const agents = new Map();
       const events = [];
+
+      // Simple "office" positions
+      const seats = {
+        triage: {x: 140, y: 180},
+        investigator: {x: 420, y: 180},
+        reporter: {x: 700, y: 180},
+        unknown: {x: 420, y: 360}
+      };
+
+      const sprite = new Image();
+      sprite.src = '/static/characters.png';
+
+      function drawOffice() {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        // background
+        ctx.fillStyle = '#f7f7fb';
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+
+        // desks
+        for (const [name,pos] of Object.entries(seats)) {
+          ctx.fillStyle = '#e0e0ea';
+          ctx.fillRect(pos.x-70, pos.y-40, 140, 80);
+          ctx.fillStyle = '#999';
+          ctx.fillText(name, pos.x-20, pos.y-50);
+        }
+
+        // agents
+        for (const a of agents.values()) {
+          const id = a.agent || 'unknown';
+          const pos = seats[id] || seats.unknown;
+          // choose frame based on state
+          // characters.png is a sheet; for now just draw the whole image scaled as a placeholder.
+          // We'll refine to true sprite frames next.
+          const size = 48;
+          ctx.drawImage(sprite, 0, 0, 32, 32, pos.x - size/2, pos.y - size/2, size, size);
+
+          // state bubble
+          ctx.fillStyle = a.state === 'typing' ? '#2b6cb0' : (a.state === 'error' ? '#c53030' : '#4a5568');
+          ctx.fillRect(pos.x-26, pos.y-60, 52, 16);
+          ctx.fillStyle = '#fff';
+          ctx.font = '12px ui-sans-serif, system-ui';
+          ctx.fillText(a.state || 'idle', pos.x-22, pos.y-48);
+        }
+      }
 
       function render() {
         agentsEl.innerHTML = '';
@@ -147,22 +204,18 @@ def index() -> str:
           agentsEl.appendChild(div);
         }
         eventsEl.innerHTML = '';
-        for (const e of events.slice(-50)) {
+        for (const e of events.slice(-80)) {
           const row = document.createElement('div');
           row.textContent = JSON.stringify(e);
           eventsEl.appendChild(row);
         }
+        drawOffice();
       }
 
       const es = new EventSource('/events/stream');
       es.onmessage = (msg) => {
         let data;
-        try {
-          data = JSON.parse(msg.data);
-        } catch (e) {
-          console.error('Bad SSE JSON payload', msg.data);
-          return;
-        }
+        try { data = JSON.parse(msg.data); } catch (e) { console.error('Bad SSE JSON payload', msg.data); return; }
         if (data.type === 'snapshot') {
           agents.clear();
           for (const a of data.agents) agents.set(a.agent, a);
@@ -182,6 +235,8 @@ def index() -> str:
           render();
         }
       };
+
+      sprite.onload = () => render();
     </script>
   </body>
 </html>"""
