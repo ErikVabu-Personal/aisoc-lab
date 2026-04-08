@@ -39,6 +39,9 @@ resource "azurerm_key_vault_secret" "runner_token" {
   key_vault_id = data.terraform_remote_state.aisoc.outputs.key_vault_id
 }
 
+# NOTE: Azure Functions function keys are secrets that should not be stored in Terraform state.
+# You will set SOCGATEWAY_FUNCTION_CODE on the Container App after deploy.
+
 # Runner app
 resource "azurerm_container_app" "runner" {
   name                         = "ca-aisoc-runner-${random_string.suffix.result}"
@@ -62,19 +65,16 @@ resource "azurerm_container_app" "runner" {
     value = azurerm_key_vault_secret.runner_token.value
   }
 
-  secret {
-    name  = "socgateway-function-code"
-    value = data.terraform_remote_state.aisoc.outputs.aisoc_function_code
-  }
+  # SOCGATEWAY_FUNCTION_CODE is set post-deploy (avoid putting function keys in TF state)
 
   secret {
     name  = "socgateway-read-key"
-    value = data.terraform_remote_state.aisoc.outputs.aisoc_read_key
+    value = data.terraform_remote_state.aisoc.outputs.aisoc_read_key_value
   }
 
   secret {
     name  = "socgateway-write-key"
-    value = data.terraform_remote_state.aisoc.outputs.aisoc_write_key
+    value = data.terraform_remote_state.aisoc.outputs.aisoc_write_key_value
   }
 
   template {
@@ -94,7 +94,7 @@ resource "azurerm_container_app" "runner" {
         value = "https://${data.terraform_remote_state.aisoc.outputs.soc_gateway_function_name}.azurewebsites.net/api"
       }
 
-      env { name = "SOCGATEWAY_FUNCTION_CODE", secret_name = "socgateway-function-code" }
+      # SOCGATEWAY_FUNCTION_CODE set post-deploy
       env { name = "SOCGATEWAY_READ_KEY", secret_name = "socgateway-read-key" }
       env { name = "SOCGATEWAY_WRITE_KEY", secret_name = "socgateway-write-key" }
 

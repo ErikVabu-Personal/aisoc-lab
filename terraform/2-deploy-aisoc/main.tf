@@ -166,6 +166,11 @@ output "key_vault_uri" {
   value = azurerm_key_vault.kv.vault_uri
 }
 
+output "key_vault_id" {
+  value       = azurerm_key_vault.kv.id
+  description = "Key Vault resource id."
+}
+
 output "aisoc_read_key_secret_name" {
   value       = azurerm_key_vault_secret.aisoc_read_key.name
   description = "Key Vault secret name storing AISOC read key."
@@ -174,6 +179,19 @@ output "aisoc_read_key_secret_name" {
 output "aisoc_write_key_secret_name" {
   value       = azurerm_key_vault_secret.aisoc_write_key.name
   description = "Key Vault secret name storing AISOC write key."
+}
+
+# Convenience outputs for other terraform phases.
+# These are marked sensitive but still end up in the local tfstate.
+# If you want to avoid that entirely, use Key Vault references instead.
+output "aisoc_read_key_value" {
+  value     = random_string.aisoc_read_key.result
+  sensitive = true
+}
+
+output "aisoc_write_key_value" {
+  value     = random_string.aisoc_write_key.result
+  sensitive = true
 }
 
 # -----------------------------
