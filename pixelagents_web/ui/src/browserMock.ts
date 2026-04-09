@@ -321,6 +321,12 @@ export function dispatchMockMessages(): void {
     stopLoungeAnchorRetry(name);
 
     const timer = window.setInterval(() => {
+      // If we switched to desk mode, stop trying to anchor to the lounge.
+      if (lastMode.get(name) === 'desk') {
+        stopLoungeAnchorRetry(name);
+        return;
+      }
+
       // Stop if already anchored
       if (loungeTileForAgent.has(name)) {
         stopLoungeAnchorRetry(name);
