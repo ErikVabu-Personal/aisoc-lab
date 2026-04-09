@@ -298,9 +298,9 @@ export function dispatchMockMessages(): void {
   };
   const lastMode = new Map<string, 'desk' | 'lounge'>();
   const lastActiveTs = new Map<string, number>();
-
-
   const lastIdleTs = new Map<string, number>();
+  // Prevent idle lounge anchoring from snapping agents back while they are walking to a desk.
+  const deskHoldUntil = new Map<string, number>();
   let nextId = 1;
 
   function anchorToLoungeSoon(name: string, id: number): void {
@@ -405,6 +405,8 @@ export function dispatchMockMessages(): void {
     if (active) {
       const tile = deskWalkTargets[name] ?? deskWalkTargets.triage;
       dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
+      // Hold desk mode briefly so the idle loop doesn't immediately re-anchor to lounge mid-walk.
+      deskHoldUntil.set(name, Date.now() / 1000 + 3.0);
       return;
     }
 
@@ -511,7 +513,11 @@ export function dispatchMockMessages(): void {
         } else {
           // Normal idle: keep them anchored in lounge
           setActive(name, id, false);
-          if (wantLounge && lastMode.get(name) !== 'lounge') {
+
+          const holdUntil = deskHoldUntil.get(name) ?? 0;
+          const canReturnToLounge = now >= holdUntil;
+
+          if (wantLounge && canReturnToLounge && lastMode.get(name) !== 'lounge') {
             // Reset lounge candidate search when returning to lounge
             loungeNextIdx.set(name, 0);
             loungeTileForAgent.delete(name);
