@@ -6,6 +6,7 @@ import time
 from collections import defaultdict, deque
 from typing import Any, Deque, Dict
 
+import requests
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +14,10 @@ from fastapi.staticfiles import StaticFiles
 APP_TITLE = "pixelagents-web"
 
 TOKEN_ENV = "PIXELAGENTS_TOKEN"
+
+# Optional: Sentinel incidents panel (read-only) via AISOC Runner
+RUNNER_BASE_URL_ENV = "RUNNER_BASE_URL"  # e.g. https://ca-aisoc-runner-....azurecontainerapps.io
+RUNNER_TOKEN_ENV = "RUNNER_BEARER_TOKEN"  # same value as runner's RUNNER_BEARER_TOKEN
 
 # In-memory state (demo-grade). For persistence, back with Redis/Cosmos.
 AGENTS: Dict[str, Dict[str, Any]] = defaultdict(dict)
@@ -44,6 +49,52 @@ def _require_token(x_pixelagents_token: str | None) -> None:
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"ok": "true"}
+
+
+def _runner_base_url() -> str:
+    base = os.getenv(RUNNER_BASE_URL_ENV, "").strip().rstrip("/")
+    if not base:
+        raise HTTPException(status_code=500, detail=f"{RUNNER_BASE_URL_ENV} missing")
+    return base
+
+
+def _runner_token() -> str:
+    tok = os.getenv(RUNNER_TOKEN_ENV, "").strip()
+    if not tok:
+        raise HTTPException(status_code=500, detail=f"{RUNNER_TOKEN_ENV} missing")
+    return tok
+
+
+@app.get("/api/sentinel/incidents")
+def api_sentinel_incidents(limit: int = 20) -> dict[str, Any]:
+    """Read-only Sentinel incidents via AISOC Runner.
+
+    PixelAgents Web calls runner /tools/execute(tool_name=list_incidents) and returns the raw result.
+    """
+    limit = max(1, min(int(limit), 200))
+
+    url = f"{_runner_base_url()}/tools/execute"
+    headers = {
+        "x-aisoc-runner-key": _runner_token(),
+        "Content-Type": "application/json",
+    }
+    payload = {"tool_name": "list_incidents", "arguments": {}}
+
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Runner unreachable: {e}")
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+
+    data = r.json()
+    # runner response shape: {"result": { ... }}
+    result = data.get("result") if isinstance(data, dict) else None
+    if isinstance(result, dict) and isinstance(result.get("value"), list):
+        result["value"] = result.get("value", [])[:limit]
+
+    return {"result": result, "ts": time.time(), "limit": limit}
 
 
 @app.get("/api/agents/state")
