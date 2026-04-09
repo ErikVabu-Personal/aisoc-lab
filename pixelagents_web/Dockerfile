@@ -9,7 +9,7 @@ WORKDIR /src
 # Note: the repo vendors UI sources but they are not necessarily tracked by git.
 # We copy the entire ui/ directory from the build context.
 COPY ui ./ui
-RUN cd ui && (npm ci || npm install) && npm run build
+RUN cd ui && npm ci && npm run build
 
 FROM python:3.12-slim
 
