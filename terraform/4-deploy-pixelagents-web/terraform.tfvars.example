@@ -1,0 +1,34 @@
+# terraform.tfvars.example — PixelAgents Web (Phase 6)
+
+# Resource group created in Phase 1 (Sentinel baseline)
+resource_group = "rg-sentinel-test"
+
+# Region for the Container App + (optional) Container Apps Environment
+location = "westus"
+
+# Optional: reuse an existing Container Apps Environment ID.
+# Leave empty to create a new one.
+container_app_environment_id = ""
+
+# Container App name for PixelAgents Web
+pixelagents_container_app_name = "ca-pixelagents-web"
+
+# Container image for PixelAgents Web
+# Recommended for demos: deploy by commit SHA tag rather than :latest.
+image = "ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:latest"
+
+# Create a Log Analytics workspace when creating a new ACA environment
+create_log_analytics = true
+
+# --- Sentinel incidents sidebar (optional) ---
+# If set, PixelAgents Web will expose GET /api/sentinel/incidents which calls AISOC Runner.
+# It expects the runner token to come from Key Vault via a KV reference.
+
+# AISOC Runner base URL (no trailing slash)
+runner_base_url = "https://ca-aisoc-runner-e7r54h.ambitiousrock-af66bc6b.westus.azurecontainerapps.io"
+
+# Key Vault name that stores the runner bearer token secret (RBAC)
+key_vault_name = "kv-foundry-soc-go7g52"
+
+# Key Vault secret name for the runner bearer token
+runner_bearer_secret_name = "AISOC-RUNNER-BEARER"
