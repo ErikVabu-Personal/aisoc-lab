@@ -451,7 +451,7 @@ export function dispatchMockMessages(): void {
         }
 
         // Hysteresis thresholds (seconds)
-        const ACTIVE_TO_DESK_SEC = 2.0;
+        const ACTIVE_TO_DESK_SEC = 0.1;
         const IDLE_TO_LOUNGE_SEC = 5.0;
 
         const lastActive = lastActiveTs.get(name) ?? 0;
