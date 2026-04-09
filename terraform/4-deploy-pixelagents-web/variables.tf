@@ -28,6 +28,24 @@ variable "image" {
   default     = "ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:latest"
 }
 
+variable "runner_base_url" {
+  type        = string
+  description = "AISOC Runner base URL (no trailing slash). Used by the Sentinel incidents sidebar."
+  default     = ""
+}
+
+variable "key_vault_name" {
+  type        = string
+  description = "Key Vault name that stores the AISOC runner bearer token secret"
+  default     = ""
+}
+
+variable "runner_bearer_secret_name" {
+  type        = string
+  description = "Key Vault secret name for the AISOC runner bearer token"
+  default     = "AISOC-RUNNER-BEARER"
+}
+
 variable "create_log_analytics" {
   type        = bool
   description = "Create a Log Analytics workspace for ACA (if env is created)"
