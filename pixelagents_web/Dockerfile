@@ -5,11 +5,13 @@
 FROM node:20-bookworm-slim AS ui
 WORKDIR /src
 
+# Install deps first for Docker layer caching
+COPY ui/package.json ui/package-lock.json ./ui/
+RUN cd ui && npm ci
+
 # Build UI
-# Note: the repo vendors UI sources but they are not necessarily tracked by git.
-# We copy the entire ui/ directory from the build context.
 COPY ui ./ui
-RUN cd ui && npm ci && npm run build
+RUN cd ui && npm run build
 
 FROM python:3.12-slim
 
