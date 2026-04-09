@@ -294,6 +294,17 @@ export function dispatchMockMessages(): void {
   (window as any).__aisoc = {
     nameToId,
     dispatch,
+    // Read-only seat lookup helper used by the desk-seat scan.
+    // We mirror the underlying office state lookup by simply asking the extension-message layer
+    // to resolve a seat (which itself checks for seat existence). This helper is best-effort:
+    // it returns the last resolved seat event payload if available.
+    // NOTE: We keep it as a function hook so manual probing is easy in DevTools.
+    getSeatAt: (col: number, row: number) => {
+      // This will be populated by useExtensionMessages' internal state once assets/layout are loaded.
+      // If not available, return null.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (window as any).__aisoc_lastSeatLookup?.(`${col},${row}`) ?? null;
+    },
     walkTo: (id: number, col: number, row: number) => dispatch({ type: 'agentWalkToTile', id, col, row }),
     resolveSeat: (id: number, col: number, row: number) =>
       dispatch({ type: 'agentResolveSeatAtTile', id, col, row }),
