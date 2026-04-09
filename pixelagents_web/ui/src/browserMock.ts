@@ -249,21 +249,6 @@ export function dispatchMockMessages(): void {
     window.dispatchEvent(new MessageEvent('message', { data }));
   }
 
-  // A3: run seat discovery once at startup when the toggle is enabled.
-  // This is *read-only* and should not affect behavior.
-  if (DEBUG_DESK_DISCOVERY) {
-    try {
-      const seats = scanDeskSeats();
-      console.log('[AISOC][desk-scan]', {
-        count: seats.length,
-        bounds: { colMin: 0, colMax: 20, rowMin: 10, rowMax: 22 },
-        seats,
-      });
-    } catch (e) {
-      console.warn('[AISOC][desk-scan] failed', e);
-    }
-  }
-
   // Must match the load order defined in CLAUDE.md:
   // characterSpritesLoaded → floorTilesLoaded → wallTilesLoaded → furnitureAssetsLoaded → layoutLoaded
   dispatch({ type: 'characterSpritesLoaded', characters });
@@ -286,8 +271,6 @@ export function dispatchMockMessages(): void {
   const nameToId = new Map<string, number>();
   const lastStatus = new Map<string, string>();
 
-  // A1: Step-1-only debug toggle (no behavior changes; used by later steps)
-  const DEBUG_DESK_DISCOVERY = true;
 
   // Expose deterministic debug helpers in the browser console (for troubleshooting)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -316,35 +299,6 @@ export function dispatchMockMessages(): void {
   const lastMode = new Map<string, 'desk' | 'lounge'>();
   const lastActiveTs = new Map<string, number>();
 
-  // A2: bounded, read-only seat discovery helper (not invoked yet)
-  function scanDeskSeats(bounds?: {
-    colMin: number;
-    colMax: number;
-    rowMin: number;
-    rowMax: number;
-  }): Array<{ col: number; row: number; seatId: string }> {
-    const { colMin, colMax, rowMin, rowMax } = bounds ?? {
-      colMin: 0,
-      colMax: 20,
-      rowMin: 10,
-      rowMax: 22,
-    };
-
-    const out: Array<{ col: number; row: number; seatId: string }> = [];
-
-    for (let col = colMin; col <= colMax; col++) {
-      for (let row = rowMin; row <= rowMax; row++) {
-        // Delegate to extension message handler seat lookup via our debug surface.
-        // This is read-only: it does not move or assign agents.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const seat = (window as any).__aisoc?.getSeatAt?.(col, row);
-        const seatId = seat?.seatId ?? seat?.id;
-        if (seatId) out.push({ col, row, seatId: String(seatId) });
-      }
-    }
-
-    return out;
-  }
 
   const lastIdleTs = new Map<string, number>();
   let nextId = 1;
@@ -438,31 +392,19 @@ export function dispatchMockMessages(): void {
     }
   });
 
-  // Desk seat tiles (chairs) — assign a seat when active so agents never "work from the sofa".
-  // Based on default layout furniture list:
-  // - Wooden chairs near desks at (3,16)/(3,18) and (7,16)/(7,18)
-  const deskSeatCandidates: Record<string, Array<{ col: number; row: number }>> = {
-    triage: [
-      { col: 3, row: 16 },
-      { col: 3, row: 18 },
-    ],
-    investigator: [
-      { col: 7, row: 16 },
-      { col: 7, row: 18 },
-    ],
-    // Reporter: use an alternate seat near the desks if available; adjust later if needed.
-    reporter: [
-      { col: 3, row: 18 },
-      { col: 7, row: 18 },
-    ],
+  // Desk targets for active agents.
+  // Step 1 (minimal): walk to a deterministic tile near the desk area (standing is OK).
+  // This avoids seat-resolution edge cases while we validate the active→desk pipeline.
+  const deskWalkTargets: Record<string, { col: number; row: number }> = {
+    triage: { col: 3, row: 16 },
+    investigator: { col: 7, row: 16 },
+    reporter: { col: 5, row: 16 },
   };
 
   function moveAgentTo(id: number, name: string, active: boolean): void {
     if (active) {
-      // Resolve/assign a desk chair seat to force working at a desk.
-      const list = deskSeatCandidates[name] ?? deskSeatCandidates.triage;
-      const tile = list[0];
-      dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
+      const tile = deskWalkTargets[name] ?? deskWalkTargets.triage;
+      dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
       return;
     }
 
