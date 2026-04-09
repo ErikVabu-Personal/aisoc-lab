@@ -53,3 +53,10 @@ Last updated: 2026-04-08
    - resolving *three distinct* sofa seatIds and assigning by seatId (not by tile)
    - or adding a proper seat reservation mechanism in OfficeState adapter layer.
 3) Adjust desk targets / seat assignment for active state (use desk chair seats instead of walkToTile).
+
+## Desk seat probe results (A-step pipeline)
+
+- A1–A3 are implemented in `pixelagents_web/ui/src/browserMock.ts` but the toggle is **off by default**.
+- To run the probe, set `DEBUG_DESK_DISCOVERY = true`, load the PixelAgents web UI once, and capture the console log:
+  - `[AISOC][desk-scan] { count, bounds, seats: [...] }`
+- Paste the `seats` list here and we’ll freeze 3 validated desk-seat tiles for triage/investigator/reporter.
