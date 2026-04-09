@@ -429,10 +429,11 @@ export function dispatchMockMessages(): void {
   // To reliably move agents to the desk, we must assign them to a *desk chair seat* (not just walk).
   // Verified desk chair seat for triage: (3,17) resolves to a seatId.
   const deskSeatTargets: Record<string, { col: number; row: number }> = {
+    // Verified desk chair seats:
+    // (3,17), (3,19), (7,17), (7,19)
     triage: { col: 3, row: 17 },
-    // TODO: probe/confirm investigator + reporter chair seat tiles.
     investigator: { col: 7, row: 17 },
-    reporter: { col: 5, row: 17 },
+    reporter: { col: 3, row: 19 },
   };
 
   const deskWalkFallback: Record<string, { col: number; row: number }> = {
