@@ -303,15 +303,27 @@ export function dispatchMockMessages(): void {
   const deskHoldUntil = new Map<string, number>();
   let nextId = 1;
 
+  const loungeAnchorTimerByAgent = new Map<string, number>();
+
+  function stopLoungeAnchorRetry(name: string): void {
+    const t = loungeAnchorTimerByAgent.get(name);
+    if (t) {
+      window.clearInterval(t);
+      loungeAnchorTimerByAgent.delete(name);
+    }
+  }
+
   function anchorToLoungeSoon(name: string, id: number): void {
     // Retry for a short period: seats/character may not exist yet.
     const MAX_TRIES = 12;
     let tries = 0;
 
+    stopLoungeAnchorRetry(name);
+
     const timer = window.setInterval(() => {
       // Stop if already anchored
       if (loungeTileForAgent.has(name)) {
-        window.clearInterval(timer);
+        stopLoungeAnchorRetry(name);
         return;
       }
       const idx = loungeNextIdx.get(name) ?? 0;
@@ -319,9 +331,11 @@ export function dispatchMockMessages(): void {
       dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
       tries++;
       if (tries >= MAX_TRIES) {
-        window.clearInterval(timer);
+        stopLoungeAnchorRetry(name);
       }
     }, 300);
+
+    loungeAnchorTimerByAgent.set(name, timer);
   }
 
   function ensureAgent(name: string): number {
@@ -403,6 +417,9 @@ export function dispatchMockMessages(): void {
 
   function moveAgentTo(id: number, name: string, active: boolean): void {
     if (active) {
+      // If we have an ongoing lounge-anchoring retry loop, stop it; otherwise it can fight desk movement.
+      stopLoungeAnchorRetry(name);
+
       const tile = deskWalkTargets[name] ?? deskWalkTargets.triage;
       dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
       // Hold desk mode briefly so the idle loop doesn't immediately re-anchor to lounge mid-walk.
