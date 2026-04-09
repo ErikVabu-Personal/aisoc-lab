@@ -445,6 +445,12 @@ export function dispatchMockMessages(): void {
       return;
     }
 
+    // HARD STOP: while we consider the agent in desk mode, never emit lounge seat assigns/resolves.
+    // PixelAgents will otherwise "snap" the agent back to its previous lounge seat.
+    if (lastMode.get(name) === 'desk') {
+      return;
+    }
+
     // Idle: anchor to a lounge seat. Try a remembered tile first, otherwise try candidates.
     const remembered = loungeTileForAgent.get(name);
     if (remembered) {
