@@ -249,6 +249,21 @@ export function dispatchMockMessages(): void {
     window.dispatchEvent(new MessageEvent('message', { data }));
   }
 
+  // A3: run seat discovery once at startup when the toggle is enabled.
+  // This is *read-only* and should not affect behavior.
+  if (DEBUG_DESK_DISCOVERY) {
+    try {
+      const seats = scanDeskSeats();
+      console.log('[AISOC][desk-scan]', {
+        count: seats.length,
+        bounds: { colMin: 0, colMax: 20, rowMin: 10, rowMax: 22 },
+        seats,
+      });
+    } catch (e) {
+      console.warn('[AISOC][desk-scan] failed', e);
+    }
+  }
+
   // Must match the load order defined in CLAUDE.md:
   // characterSpritesLoaded → floorTilesLoaded → wallTilesLoaded → furnitureAssetsLoaded → layoutLoaded
   dispatch({ type: 'characterSpritesLoaded', characters });
@@ -270,6 +285,9 @@ export function dispatchMockMessages(): void {
 
   const nameToId = new Map<string, number>();
   const lastStatus = new Map<string, string>();
+
+  // A1: Step-1-only debug toggle (no behavior changes; used by later steps)
+  const DEBUG_DESK_DISCOVERY = true;
 
   // Expose deterministic debug helpers in the browser console (for troubleshooting)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -298,10 +316,7 @@ export function dispatchMockMessages(): void {
   const lastMode = new Map<string, 'desk' | 'lounge'>();
   const lastActiveTs = new Map<string, number>();
 
-  // A1: Step-1-only debug toggle (off by default)
-  const DEBUG_DESK_DISCOVERY = false;
-
-  // A2: bounded, read-only seat discovery helper
+  // A2: bounded, read-only seat discovery helper (not invoked yet)
   function scanDeskSeats(bounds?: {
     colMin: number;
     colMax: number;
@@ -329,21 +344,6 @@ export function dispatchMockMessages(): void {
     }
 
     return out;
-  }
-
-  // A3: run seat discovery once at startup when the toggle is enabled.
-  // This is *read-only* and should not affect behavior.
-  if (DEBUG_DESK_DISCOVERY) {
-    try {
-      const seats = scanDeskSeats();
-      console.log('[AISOC][desk-scan]', {
-        count: seats.length,
-        bounds: { colMin: 0, colMax: 20, rowMin: 10, rowMax: 22 },
-        seats,
-      });
-    } catch (e) {
-      console.warn('[AISOC][desk-scan] failed', e);
-    }
   }
 
   const lastIdleTs = new Map<string, number>();
