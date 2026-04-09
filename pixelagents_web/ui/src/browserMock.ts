@@ -364,18 +364,31 @@ export function dispatchMockMessages(): void {
     }
   });
 
-  // Desk tiles roughly align with desks/PCs around col 2-7, row 12.
-  // We pick walkable tiles in front of each desk.
-  const deskTiles: Record<string, { col: number; row: number }> = {
-    triage: { col: 3, row: 13 },
-    investigator: { col: 7, row: 13 },
-    reporter: { col: 5, row: 19 },
+  // Desk seat tiles (chairs) — assign a seat when active so agents never "work from the sofa".
+  // Based on default layout furniture list:
+  // - Wooden chairs near desks at (3,16)/(3,18) and (7,16)/(7,18)
+  const deskSeatCandidates: Record<string, Array<{ col: number; row: number }>> = {
+    triage: [
+      { col: 3, row: 16 },
+      { col: 3, row: 18 },
+    ],
+    investigator: [
+      { col: 7, row: 16 },
+      { col: 7, row: 18 },
+    ],
+    // Reporter: use an alternate seat near the desks if available; adjust later if needed.
+    reporter: [
+      { col: 3, row: 18 },
+      { col: 7, row: 18 },
+    ],
   };
 
   function moveAgentTo(id: number, name: string, active: boolean): void {
     if (active) {
-      const tile = deskTiles[name] ?? deskTiles.triage;
-      dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
+      // Resolve/assign a desk chair seat to force working at a desk.
+      const list = deskSeatCandidates[name] ?? deskSeatCandidates.triage;
+      const tile = list[0];
+      dispatch({ type: 'agentResolveSeatAtTile', id, col: tile.col, row: tile.row });
       return;
     }
 
