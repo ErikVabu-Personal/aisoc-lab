@@ -62,12 +62,26 @@ def api_agents_state() -> dict[str, Any]:
             },
         )
 
-    def norm_state(s: str | None) -> str:
-        s = (s or "idle").lower()
-        if s in ("typing", "read", "reading", "walk", "walking"):
-            return "typing" if s == "typing" else "reading"
-        if s in ("error", "failed"):
+    cooldown = float(os.getenv("PIXELAGENTS_ACTIVE_COOLDOWN_SEC", "20"))
+
+    def inferred_status(agent_record: dict[str, Any]) -> str:
+        # Option B: infer "agent is working" for a short time after a tool call.
+        # This provides richer animation despite runner-only telemetry.
+        state = (agent_record.get("state") or "idle").lower()
+        last_event = agent_record.get("last_event") or {}
+        last_ts = float(last_event.get("ts") or agent_record.get("updated_at") or 0)
+        age = now - last_ts
+
+        if state in ("error", "failed"):
             return "error"
+
+        if state == "typing":
+            return "typing"
+
+        # Keep "reading" (active) briefly after any tool call end/start.
+        if age <= cooldown:
+            return "reading"
+
         return "idle"
 
     agents = []
@@ -76,13 +90,13 @@ def api_agents_state() -> dict[str, Any]:
         agents.append(
             {
                 "id": name,
-                "status": norm_state(a.get("state")),
+                "status": inferred_status(a),
                 "updated_at": a.get("updated_at"),
                 "tool_name": (a.get("last_event") or {}).get("tool_name"),
             }
         )
 
-    return {"agents": agents, "ts": now}
+    return {"agents": agents, "ts": now, "cooldown_sec": cooldown}
 
 
 @app.post("/events")
