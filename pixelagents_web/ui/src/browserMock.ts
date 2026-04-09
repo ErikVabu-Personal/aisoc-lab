@@ -425,9 +425,17 @@ export function dispatchMockMessages(): void {
   });
 
   // Desk targets for active agents.
-  // Step 1 (minimal): walk to a deterministic tile near the desk area (standing is OK).
-  // This avoids seat-resolution edge cases while we validate the active→desk pipeline.
-  const deskWalkTargets: Record<string, { col: number; row: number }> = {
+  // IMPORTANT: PixelAgents will "snap" an agent back to its last assigned seat.
+  // To reliably move agents to the desk, we must assign them to a *desk chair seat* (not just walk).
+  // Verified desk chair seat for triage: (3,17) resolves to a seatId.
+  const deskSeatTargets: Record<string, { col: number; row: number }> = {
+    triage: { col: 3, row: 17 },
+    // TODO: probe/confirm investigator + reporter chair seat tiles.
+    investigator: { col: 7, row: 17 },
+    reporter: { col: 5, row: 17 },
+  };
+
+  const deskWalkFallback: Record<string, { col: number; row: number }> = {
     triage: { col: 3, row: 16 },
     investigator: { col: 7, row: 16 },
     reporter: { col: 5, row: 16 },
@@ -438,8 +446,14 @@ export function dispatchMockMessages(): void {
       // If we have an ongoing lounge-anchoring retry loop, stop it; otherwise it can fight desk movement.
       stopLoungeAnchorRetry(name);
 
-      const tile = deskWalkTargets[name] ?? deskWalkTargets.triage;
-      dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
+      const seatTile = deskSeatTargets[name] ?? deskSeatTargets.triage;
+      // Assign to a desk chair seat so the engine doesn't snap back to the lounge seat.
+      dispatch({ type: 'agentAssignSeatAtTile', id, col: seatTile.col, row: seatTile.row });
+
+      // If desk seat assignment doesn't exist for this agent/layout yet, walk as a fallback.
+      const fallback = deskWalkFallback[name] ?? deskWalkFallback.triage;
+      dispatch({ type: 'agentWalkToTile', id, col: fallback.col, row: fallback.row });
+
       // Hold desk mode so the polling loop won't re-anchor to lounge mid-walk.
       deskHoldUntil.set(name, Date.now() / 1000 + 10.0);
       return;
