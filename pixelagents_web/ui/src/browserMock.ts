@@ -249,6 +249,7 @@ export function dispatchMockMessages(): void {
     window.dispatchEvent(new MessageEvent('message', { data }));
   }
 
+
   // Must match the load order defined in CLAUDE.md:
   // characterSpritesLoaded → floorTilesLoaded → wallTilesLoaded → furnitureAssetsLoaded → layoutLoaded
   dispatch({ type: 'characterSpritesLoaded', characters });
@@ -270,6 +271,20 @@ export function dispatchMockMessages(): void {
 
   const nameToId = new Map<string, number>();
   const lastStatus = new Map<string, string>();
+
+  // Expose deterministic debug helpers in the browser console (for troubleshooting)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as any).__aisoc = {
+    nameToId,
+    dispatch,
+    walkTo: (id: number, col: number, row: number) => dispatch({ type: 'agentWalkToTile', id, col, row }),
+    resolveSeat: (id: number, col: number, row: number) =>
+      dispatch({ type: 'agentResolveSeatAtTile', id, col, row }),
+    assignSeat: (id: number, col: number, row: number) =>
+      dispatch({ type: 'agentAssignSeatAtTile', id, col, row }),
+    active: (id: number, active: boolean) => dispatch({ type: 'agentActive', id, active }),
+    status: (id: number, status: string) => dispatch({ type: 'agentStatus', id, status }),
+  };
   const lastMode = new Map<string, 'desk' | 'lounge'>();
   const lastActiveTs = new Map<string, number>();
   const lastIdleTs = new Map<string, number>();
