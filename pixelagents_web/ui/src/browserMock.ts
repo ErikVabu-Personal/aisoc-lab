@@ -374,10 +374,22 @@ export function dispatchMockMessages(): void {
   const takenLoungeTiles = new Set<string>();
   const pendingSeatTry = new Map<string, { col: number; row: number }>();
 
-  // Listen for seat resolution events coming from useExtensionMessages handler
+  // Listen for events coming from useExtensionMessages handler
   window.addEventListener('message', (ev) => {
     const msg = (ev as MessageEvent).data as any;
-    if (!msg || msg.type !== 'agentSeatResolved') return;
+    if (!msg) return;
+
+    // Active toggles: force desk movement on active=true.
+    if (msg.type === 'agentActive' && msg.active === true) {
+      const agentName = [...nameToId.entries()].find(([, v]) => v === msg.id)?.[0];
+      if (!agentName) return;
+      moveAgentTo(msg.id, agentName, true);
+      lastMode.set(agentName, 'desk');
+      return;
+    }
+
+    if (msg.type !== 'agentSeatResolved') return;
+
     // If ok, remember the tile for that agent id (reverse lookup)
     const agentName = [...nameToId.entries()].find(([, v]) => v === msg.id)?.[0];
     if (!agentName) return;
