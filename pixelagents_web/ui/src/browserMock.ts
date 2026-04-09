@@ -440,8 +440,8 @@ export function dispatchMockMessages(): void {
 
       const tile = deskWalkTargets[name] ?? deskWalkTargets.triage;
       dispatch({ type: 'agentWalkToTile', id, col: tile.col, row: tile.row });
-      // Hold desk mode briefly so the idle loop doesn't immediately re-anchor to lounge mid-walk.
-      deskHoldUntil.set(name, Date.now() / 1000 + 3.0);
+      // Hold desk mode so the polling loop won't re-anchor to lounge mid-walk.
+      deskHoldUntil.set(name, Date.now() / 1000 + 10.0);
       return;
     }
 
@@ -550,9 +550,14 @@ export function dispatchMockMessages(): void {
           setActive(name, id, false);
 
           const holdUntil = deskHoldUntil.get(name) ?? 0;
-          const canReturnToLounge = now >= holdUntil;
+          const inDeskHold = lastMode.get(name) === 'desk' && now < holdUntil;
 
-          if (wantLounge && canReturnToLounge && lastMode.get(name) !== 'lounge') {
+          // Guard: while we're in desk mode (or recently switched), don't run any lounge anchoring.
+          if (inDeskHold) {
+            continue;
+          }
+
+          if (wantLounge && lastMode.get(name) !== 'lounge') {
             // Reset lounge candidate search when returning to lounge
             loungeNextIdx.set(name, 0);
             loungeTileForAgent.delete(name);
