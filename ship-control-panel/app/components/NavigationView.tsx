@@ -168,16 +168,13 @@ export function NavigationView() {
       // Current ship (red) — ship-like marker
       map.addLayer({
         id: 'ship-point',
-        type: 'symbol',
+        type: 'circle',
         source: 'ship',
-        layout: {
-          'icon-image': 'triangle-11',
-          'icon-size': 1.4,
-          'icon-rotate': 45,
-          'icon-allow-overlap': true,
-        },
         paint: {
-          'icon-color': 'rgba(251,113,133,0.98)',
+          'circle-radius': 7,
+          'circle-color': 'rgba(251,113,133,0.95)',
+          'circle-stroke-color': 'rgba(255,255,255,0.85)',
+          'circle-stroke-width': 2,
         },
       });
 
@@ -195,16 +192,13 @@ export function NavigationView() {
       });
       map.addLayer({
         id: 'others-ships',
-        type: 'symbol',
+        type: 'circle',
         source: 'others',
-        layout: {
-          'icon-image': 'triangle-11',
-          'icon-size': 1.2,
-          'icon-rotate': 45,
-          'icon-allow-overlap': true,
-        },
         paint: {
-          'icon-color': 'rgba(250,204,21,0.95)',
+          'circle-radius': 6,
+          'circle-color': 'rgba(250,204,21,0.95)',
+          'circle-stroke-color': 'rgba(0,0,0,0.35)',
+          'circle-stroke-width': 2,
         },
       });
 
@@ -281,7 +275,8 @@ export function NavigationView() {
       <div className="viewSub">Destination: <b className="mono">{destLabel}</b></div>
 
       <div className="navGrid">
-        <div className="mapWrap">
+        <div>
+          <div className="mapWrap">
           <div ref={mapDivRef} className="map" />
 
           {!mapLoaded ? (
@@ -315,6 +310,22 @@ export function NavigationView() {
           </div>
         </div>
 
+        <div className="collisionUnderMap">
+          <div className="collisionTitle">Collision Detection System</div>
+          <button
+            type="button"
+            className={collisionEnabled ? 'toggle on' : 'toggle off'}
+            onClick={() => setCollisionEnabled((v) => !v)}
+          >
+            {collisionEnabled ? 'Enabled' : 'Disabled'}
+          </button>
+
+          <div className={collisionEnabled ? 'status safe' : 'status disabled'}>
+            <span className={collisionEnabled ? 'safeDot' : 'dangerDot'} /> {collisionEnabled ? 'SAFE' : 'OFFLINE'}
+          </div>
+        </div>
+      </div>
+
         <div className="panel">
           <div className="panelTitle">Helm</div>
 
@@ -335,20 +346,6 @@ export function NavigationView() {
             </div>
           </div>
 
-          <div className="collisionPanel">
-            <div className="collisionTitle">Collision Detection System</div>
-            <button
-              type="button"
-              className={collisionEnabled ? 'toggle on' : 'toggle off'}
-              onClick={() => setCollisionEnabled((v) => !v)}
-            >
-              {collisionEnabled ? 'Enabled' : 'Disabled'}
-            </button>
-
-            <div className={collisionEnabled ? 'status safe' : 'status disabled'}>
-              <span className="safeDot" /> {collisionEnabled ? 'SAFE' : 'OFFLINE'}
-            </div>
-          </div>
         </div>
       </div>
     </div>
