@@ -10,9 +10,34 @@ function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
 
-// Start near Seattle; sail toward Alaska (rough bearing)
+// Start near Seattle; sail toward Alaska.
+// We use a hand-crafted "water-ish" route that stays mostly on sea lanes (demo-only).
 const START: [number, number] = [-122.3321, 47.6062];
 const TARGET: [number, number] = [-135.0, 58.3];
+
+const ROUTE: Array<[number, number]> = [
+  // Seattle → Strait of Juan de Fuca
+  [-122.3321, 47.6062],
+  [-122.65, 47.85],
+  [-123.05, 48.10],
+  [-123.35, 48.25],
+  [-123.75, 48.35],
+
+  // Up Vancouver Island (outside-ish)
+  [-124.4, 48.8],
+  [-125.0, 49.4],
+  [-126.0, 50.4],
+  [-127.1, 51.4],
+  [-128.2, 52.3],
+  [-129.1, 53.1],
+
+  // Gulf of Alaska approach
+  [-130.6, 54.1],
+  [-132.0, 55.2],
+  [-133.2, 56.4],
+  [-134.2, 57.4],
+  [-135.0, 58.3],
+];
 
 export function NavigationView() {
   const [heading, setHeading] = useState(315);
@@ -27,19 +52,39 @@ export function NavigationView() {
   useEffect(() => {
     const t = window.setInterval(() => {
       setPos((p) => {
-        const dx = TARGET[0] - p.lng;
-        const dy = TARGET[1] - p.lat;
+        // Follow the route polyline by moving toward the next waypoint.
+        const coords = ROUTE;
+
+        // Find nearest segment start index (cheap) so we can progress.
+        let idx = 0;
+        let best = Number.POSITIVE_INFINITY;
+        for (let i = 0; i < coords.length; i++) {
+          const dx0 = coords[i][0] - p.lng;
+          const dy0 = coords[i][1] - p.lat;
+          const d0 = dx0 * dx0 + dy0 * dy0;
+          if (d0 < best) {
+            best = d0;
+            idx = i;
+          }
+        }
+        const nextWp = coords[Math.min(idx + 1, coords.length - 1)];
+
+        const dx = nextWp[0] - p.lng;
+        const dy = nextWp[1] - p.lat;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
         // speed factor tuned for demo
         const step = (throttle / 100) * 0.02;
         const next = {
           lng: p.lng + (dx / dist) * step,
           lat: p.lat + (dy / dist) * step,
         };
+
         // crude heading from velocity vector
         const brg = (Math.atan2(dx, dy) * 180) / Math.PI;
         const h = (brg + 360) % 360;
         setHeading(Math.round(h));
+
         return next;
       });
     }, 600);
@@ -78,7 +123,7 @@ export function NavigationView() {
         type: 'geojson',
         data: {
           type: 'Feature',
-          geometry: { type: 'LineString', coordinates: [START, TARGET] },
+          geometry: { type: 'LineString', coordinates: ROUTE },
           properties: {},
         },
       });
@@ -176,7 +221,7 @@ export function NavigationView() {
   return (
     <div className="view">
       <div className="viewTitle">Navigation</div>
-      <div className="viewSub">Interactive world map (MapLibre). Ship starts near Seattle and sails toward Alaska.</div>
+      <div className="viewSub">Destination: <b>ALASKA</b></div>
 
       <div className="navGrid">
         <div className="mapWrap">
