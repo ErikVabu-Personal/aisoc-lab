@@ -26,8 +26,3 @@ foundry_location = "westus"
 # REQUIRED: model choice + deployment name that agents should target
 foundry_model_choice          = "gpt-4.1-mini"
 foundry_model_deployment_name = "gpt-4.1-mini"
-
-# --- Observability / Foundry tracing ---
-# Create a workspace-based Application Insights instance (linked to the Sentinel Log Analytics workspace).
-# This can be used as the target for Foundry/agent tracing exports.
-enable_foundry_app_insights = true
