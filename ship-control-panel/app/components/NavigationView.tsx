@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
 
 import { Compass } from './Compass';
 import { Throttle } from './Throttle';
@@ -47,6 +46,9 @@ export function NavigationView() {
     return () => window.clearInterval(t);
   }, [throttle]);
 
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+
   // Initialize MapLibre once
   useEffect(() => {
     if (!mapDivRef.current || mapRef.current) return;
@@ -61,7 +63,16 @@ export function NavigationView() {
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-left');
 
+    map.on('error', (e) => {
+      // MapLibre error events are a bit loose-typed
+      const msg = (e as any)?.error?.message || (e as any)?.error || (e as any)?.message || 'Map error';
+      console.error('[MapLibre] error', e);
+      setMapError(String(msg));
+    });
+
     map.on('load', () => {
+      setMapLoaded(true);
+      setMapError(null);
       // Route line (Seattle -> Alaska)
       map.addSource('route', {
         type: 'geojson',
@@ -170,6 +181,25 @@ export function NavigationView() {
       <div className="navGrid">
         <div className="mapWrap">
           <div ref={mapDivRef} className="map" />
+
+          {!mapLoaded ? (
+            <div className="mapOverlay">
+              <div className="mapOverlayCard">
+                <div style={{ fontWeight: 900 }}>Loading map…</div>
+                <div style={{ marginTop: 6, opacity: 0.8 }}>If this never finishes, it’s usually a tile/style network issue.</div>
+              </div>
+            </div>
+          ) : null}
+
+          {mapError ? (
+            <div className="mapOverlay">
+              <div className="mapOverlayCard" style={{ borderColor: 'rgba(251,113,133,0.35)' }}>
+                <div style={{ fontWeight: 900, color: 'rgba(255,180,180,0.95)' }}>Map failed to load</div>
+                <div className="mono" style={{ marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 11 }}>{mapError}</div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="mapHud mono">
             <div>POS {pos.lat.toFixed(3)}, {pos.lng.toFixed(3)}</div>
             <div>HDG {heading.toString().padStart(3, '0')}°</div>
