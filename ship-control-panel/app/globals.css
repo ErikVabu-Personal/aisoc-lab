@@ -1,0 +1,193 @@
+:root{
+  --bg0:#030712;
+  --bg1:#041027;
+  --panel: rgba(255,255,255,0.06);
+  --panel2: rgba(255,255,255,0.10);
+  --text:#e6f3ff;
+  --muted: rgba(230,243,255,0.72);
+  --accent:#22d3ee;
+  --accent2:#60a5fa;
+  --danger:#fb7185;
+  --ok:#34d399;
+  --ring: rgba(34,211,238,0.35);
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  color:var(--text);
+  background:
+    radial-gradient(1200px 700px at 20% 10%, rgba(34,211,238,0.14), transparent 55%),
+    radial-gradient(900px 600px at 80% 20%, rgba(96,165,250,0.12), transparent 55%),
+    radial-gradient(1200px 900px at 50% 100%, rgba(2,132,199,0.10), transparent 60%),
+    linear-gradient(180deg, var(--bg0), var(--bg1));
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+}
+
+a{color:inherit}
+
+.wrap{
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+}
+
+.shell{
+  width: min(980px, 100%);
+  display:grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap:20px;
+}
+
+@media (max-width: 860px){
+  .shell{grid-template-columns:1fr}
+}
+
+.card{
+  background: var(--panel);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.02) inset,
+    0 20px 60px rgba(0,0,0,0.45);
+  backdrop-filter: blur(10px);
+}
+
+.holo{
+  position:relative;
+  overflow:hidden;
+}
+
+.holo::before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  background:
+    radial-gradient(600px 220px at 30% 20%, rgba(34,211,238,0.18), transparent 60%),
+    radial-gradient(500px 180px at 70% 80%, rgba(96,165,250,0.16), transparent 60%);
+  filter: blur(8px);
+  opacity:0.9;
+  pointer-events:none;
+}
+
+.title{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  font-weight:800;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+}
+
+.badge{
+  font-size:12px;
+  padding:4px 10px;
+  border-radius:999px;
+  background: rgba(34,211,238,0.12);
+  border:1px solid rgba(34,211,238,0.25);
+  color: rgba(230,243,255,0.92);
+}
+
+.sub{
+  color: var(--muted);
+  margin-top:8px;
+  line-height:1.4;
+}
+
+.grid{
+  display:grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap:12px;
+  margin-top:14px;
+}
+
+.kpi{
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.kpiLabel{color: rgba(230,243,255,0.7); font-size:12px}
+.kpiValue{font-size:20px; font-weight:800; margin-top:4px}
+
+.hr{
+  height:1px;
+  background: rgba(255,255,255,0.10);
+  margin:16px 0;
+}
+
+.form{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-top:14px;
+}
+
+.input{
+  width:100%;
+  padding:12px 12px;
+  border-radius:12px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.22);
+  color: var(--text);
+  outline:none;
+}
+.input:focus{box-shadow:0 0 0 4px var(--ring); border-color: rgba(34,211,238,0.35)}
+
+.btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  border-radius: 12px;
+  border: 1px solid rgba(34,211,238,0.35);
+  background: linear-gradient(180deg, rgba(34,211,238,0.18), rgba(96,165,250,0.10));
+  color: rgba(230,243,255,0.95);
+  padding: 12px 12px;
+  font-weight: 800;
+  cursor:pointer;
+}
+.btn:hover{filter:brightness(1.08)}
+.btn:active{transform: translateY(1px)}
+
+.err{
+  color: rgba(255,180,180,0.95);
+  background: rgba(251,113,133,0.10);
+  border: 1px solid rgba(251,113,133,0.25);
+  padding:10px;
+  border-radius: 12px;
+}
+
+.nav{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+}
+
+.pill{
+  font-size:12px;
+  padding:6px 10px;
+  border-radius:999px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(230,243,255,0.85);
+}
+
+.panelGrid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:12px;
+  margin-top:12px;
+}
+
+.bigPanel{
+  grid-column: 1 / -1;
+}
+
+.mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}

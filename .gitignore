@@ -18,3 +18,8 @@ Thumbs.db
 __pycache__/
 *.pyc
 
+
+# ship control panel
+ship-control-panel/node_modules
+ship-control-panel/.next
+ship-control-panel/.env*
