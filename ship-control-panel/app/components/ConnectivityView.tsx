@@ -12,9 +12,17 @@ function clamp(n: number, a: number, b: number) {
 export function ConnectivityView() {
   const [enabled, setEnabled] = useState(true);
   const [samples, setSamples] = useState<Sample[]>([]);
+  const [signal, setSignal] = useState(0.82);
 
   useEffect(() => {
     const t = window.setInterval(() => {
+      // signal level drifts slightly (real-time feel)
+      setSignal((s) => {
+        const base = enabled ? 0.82 : 0.18;
+        const next = clamp(base + (Math.random() - 0.5) * 0.12, 0, 1);
+        return 0.7 * s + 0.3 * next;
+      });
+
       setSamples((prev) => {
         const now = Date.now();
         const baseDl = enabled ? 180 : 8;
@@ -26,7 +34,7 @@ export function ConnectivityView() {
         const next = [...prev, { t: now, dl, ul, rtt, jitter }].slice(-30);
         return next;
       });
-    }, 1200);
+    }, 900);
     return () => window.clearInterval(t);
   }, [enabled]);
 
@@ -55,7 +63,7 @@ export function ConnectivityView() {
           </div>
 
           <div className="uplink" aria-hidden>
-            <div className={enabled ? 'beam on' : 'beam'} />
+            <SignalBars level={signal} enabled={enabled} />
             <div className={enabled ? 'sat on' : 'sat'}>STARLINK</div>
           </div>
         </div>
@@ -81,6 +89,26 @@ export function ConnectivityView() {
           <div className="sub" style={{ marginTop: 6 }}>UL (Mbps)</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SignalBars({ level, enabled }: { level: number; enabled: boolean }) {
+  const bars = 18;
+  const onCount = Math.max(1, Math.min(bars, Math.round(level * bars)));
+  return (
+    <div className={enabled ? 'sigBars on' : 'sigBars'}>
+      {Array.from({ length: bars }).map((_, i) => {
+        const h = 12 + (i / (bars - 1)) * 54;
+        const on = i < onCount;
+        return (
+          <div
+            key={i}
+            className={on ? 'sigBar on' : 'sigBar'}
+            style={{ height: `${h}px` }}
+          />
+        );
+      })}
     </div>
   );
 }
