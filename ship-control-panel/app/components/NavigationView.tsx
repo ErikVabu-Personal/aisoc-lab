@@ -7,6 +7,26 @@ import { Compass } from './Compass';
 import { Throttle } from './Throttle';
 import { BarMeter, Gauge } from './Instruments';
 
+type OtherShip = { lng: number; lat: number; id: string };
+
+function rand(min: number, max: number) {
+  return min + Math.random() * (max - min);
+}
+
+function makeOtherShips(): OtherShip[] {
+  // Place ships well offshore (west of the coast) to avoid land.
+  // Bounding box roughly Pacific NW / Gulf of Alaska waters.
+  const ships: OtherShip[] = [];
+  for (let i = 0; i < 8; i++) {
+    ships.push({
+      id: `s${i + 1}`,
+      lng: rand(-145, -132),
+      lat: rand(44, 58),
+    });
+  }
+  return ships;
+}
+
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
@@ -28,6 +48,10 @@ export function NavigationView() {
 
   const [dest, setDest] = useState<LngLat>({ lng: DEFAULT_DEST[0], lat: DEFAULT_DEST[1] });
   const destLabel = `${fmtCoord(dest.lat)}, ${fmtCoord(dest.lng)}`;
+
+  const [collisionEnabled, setCollisionEnabled] = useState(true);
+
+  const otherShips = useMemo(() => makeOtherShips(), []);
 
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapDivRef = useRef<HTMLDivElement | null>(null);
@@ -141,49 +165,46 @@ export function NavigationView() {
         },
       });
 
+      // Current ship (red) — ship-like marker
       map.addLayer({
         id: 'ship-point',
-        type: 'circle',
+        type: 'symbol',
         source: 'ship',
+        layout: {
+          'icon-image': 'triangle-11',
+          'icon-size': 1.4,
+          'icon-rotate': 45,
+          'icon-allow-overlap': true,
+        },
         paint: {
-          'circle-radius': 7,
-          'circle-color': 'rgba(251,113,133,0.95)',
-          'circle-stroke-color': 'rgba(255,255,255,0.85)',
-          'circle-stroke-width': 2,
+          'icon-color': 'rgba(251,113,133,0.98)',
         },
       });
 
-      // Other ships (yellow)
-      const others: Array<[number, number]> = [
-        [-124.7, 48.7],
-        [-126.0, 50.2],
-        [-127.5, 51.1],
-        [-128.6, 52.0],
-        [-130.0, 53.0],
-        [-131.5, 54.4],
-        [-133.0, 55.8],
-        [-134.5, 57.2],
-      ];
+      // Other ships (yellow) — use a ship-like marker (rotated diamond)
       map.addSource('others', {
         type: 'geojson',
         data: {
           type: 'FeatureCollection',
-          features: others.map((c) => ({
+          features: otherShips.map((s) => ({
             type: 'Feature',
-            geometry: { type: 'Point', coordinates: c },
-            properties: {},
+            geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
+            properties: { id: s.id },
           })),
         },
       });
       map.addLayer({
-        id: 'others-points',
-        type: 'circle',
+        id: 'others-ships',
+        type: 'symbol',
         source: 'others',
+        layout: {
+          'icon-image': 'triangle-11',
+          'icon-size': 1.2,
+          'icon-rotate': 45,
+          'icon-allow-overlap': true,
+        },
         paint: {
-          'circle-radius': 6,
-          'circle-color': 'rgba(250,204,21,0.95)',
-          'circle-stroke-color': 'rgba(0,0,0,0.35)',
-          'circle-stroke-width': 2,
+          'icon-color': 'rgba(250,204,21,0.95)',
         },
       });
 
@@ -288,9 +309,6 @@ export function NavigationView() {
             <div>THR {throttle}%</div>
           </div>
 
-          <div className="collision mono">
-            <span className="safeDot" /> SAFE
-          </div>
 
           <div className="compassWrap">
             <Compass heading={heading} />
@@ -317,8 +335,19 @@ export function NavigationView() {
             </div>
           </div>
 
-          <div className="hint" style={{ marginTop: 10 }}>
-            Next: real route planning, AIS contacts, and collision alerts.
+          <div className="collisionPanel">
+            <div className="collisionTitle">Collision Detection System</div>
+            <button
+              type="button"
+              className={collisionEnabled ? 'toggle on' : 'toggle off'}
+              onClick={() => setCollisionEnabled((v) => !v)}
+            >
+              {collisionEnabled ? 'Enabled' : 'Disabled'}
+            </button>
+
+            <div className={collisionEnabled ? 'status safe' : 'status disabled'}>
+              <span className="safeDot" /> {collisionEnabled ? 'SAFE' : 'OFFLINE'}
+            </div>
           </div>
         </div>
       </div>

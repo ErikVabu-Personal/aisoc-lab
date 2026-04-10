@@ -15,6 +15,7 @@ export function Throttle({
     <div className="throttle">
       <div className="thLabel">{label}</div>
       <div className="thBody">
+        {/* Invisible slider on top for drag/touch */}
         <input
           className="thSlider"
           type="range"
@@ -24,9 +25,10 @@ export function Throttle({
           onChange={(e) => onChange(parseInt(e.target.value, 10))}
         />
         <div className="thTrack" />
-        <div className="thHandle" style={{ bottom: `${value}%` }} />
+        <div className="thHandle" style={{ bottom: `${value}%` }}>
+          <div className="thVal mono">{value}%</div>
+        </div>
       </div>
-      <div className="thRead mono">{value}%</div>
     </div>
   );
 }
