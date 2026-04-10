@@ -60,6 +60,10 @@ enable_sentinel_mde_connector = false
 # Sentinel scheduled analytics rule (lab)
 enable_scheduled_rule_tpm_wmi = true
 
+# --- Demo target app: Ship Control Panel (Next.js on ACA)
+# Default uses :latest, but for deterministic demos use a commit SHA tag from GHCR.
+# ship_control_panel_image = "ghcr.io/erikvabu-personal/aisoc-ship-control-panel:<GITHUB_SHA>"
+
 # Optional: auto shutdown time (HHMM) or null
 auto_shutdown_time     = "1900"
 auto_shutdown_timezone = "Romance Standard Time"

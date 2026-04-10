@@ -152,3 +152,11 @@ variable "auto_shutdown_timezone" {
   type        = string
   default     = "Romance Standard Time"
 }
+
+# --- Demo target app: Ship Control Panel (Next.js on ACA) ---
+
+variable "ship_control_panel_image" {
+  description = "Container image for the Ship Control Panel (Next.js). Build via GH Actions and deploy by SHA for determinism."
+  type        = string
+  default     = "ghcr.io/erikvabu-personal/aisoc-ship-control-panel:latest"
+}

@@ -6,6 +6,11 @@ output "log_analytics_workspace_id" {
   value = azurerm_log_analytics_workspace.law.id
 }
 
+output "ship_control_panel_url" {
+  value       = "https://${azurerm_container_app.shipcp.ingress[0].fqdn}"
+  description = "URL for the Ship Control Panel (Next.js) Container App."
+}
+
 output "log_analytics_workspace_name" {
   value = azurerm_log_analytics_workspace.law.name
 }
