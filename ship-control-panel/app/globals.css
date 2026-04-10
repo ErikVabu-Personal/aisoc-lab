@@ -314,7 +314,7 @@ a{color:inherit}
 /* Connectivity visuals */
 .uplink{margin-top:12px; height:86px; position:relative; border-radius:12px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.18); overflow:hidden}
 
-.sigBars{position:absolute; left:12px; top:12px; bottom:12px; right:110px; display:flex; align-items:flex-end; gap:6px; opacity:0.7}
+.sigBars{position:absolute; left:12px; top:12px; bottom:12px; right:12px; display:flex; align-items:flex-end; gap:6px; opacity:0.7; padding-right:110px}
 .sigBars.on{opacity:1}
 .sigBar{width:8px; border-radius:6px; background: rgba(255,255,255,0.10); border:1px solid rgba(255,255,255,0.12)}
 .sigBar.on{background: rgba(34,211,238,0.18); border-color: rgba(34,211,238,0.30); box-shadow: 0 0 18px rgba(34,211,238,0.12)}

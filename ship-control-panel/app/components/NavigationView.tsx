@@ -191,23 +191,78 @@ export function NavigationView() {
         },
       });
 
-      // Current ship (red) — ship-like marker
-      // Current ship (red)
-      map.addLayer({
-        id: 'ship-point',
-        type: 'symbol',
-        source: 'ship',
-        layout: {
-          'icon-image': 'ship-icon',
-          'icon-size': 0.4,
-          'icon-allow-overlap': true,
-        },
-        paint: {
-          'icon-color': 'rgba(251,113,133,0.98)',
-        },
-      });
+      // Current ship (red) + other ships (yellow)
+      // Use circles as a reliable fallback if the custom icon fails to register.
+      const hasShipIcon = () => {
+        try {
+          return map.hasImage('ship-icon');
+        } catch {
+          return false;
+        }
+      };
 
-      // Other ships (yellow) — use a ship-like marker (rotated diamond)
+      const ensureShipLayers = () => {
+        // Remove existing layers if they exist (idempotent)
+        for (const id of ['ship-point', 'others-ships']) {
+          if (map.getLayer(id)) map.removeLayer(id);
+        }
+
+        if (hasShipIcon()) {
+          map.addLayer({
+            id: 'ship-point',
+            type: 'symbol',
+            source: 'ship',
+            layout: {
+              'icon-image': 'ship-icon',
+              'icon-size': 0.4,
+              'icon-allow-overlap': true,
+            },
+            paint: {
+              'icon-color': 'rgba(251,113,133,0.98)',
+            },
+          });
+
+          map.addLayer({
+            id: 'others-ships',
+            type: 'symbol',
+            source: 'others',
+            layout: {
+              'icon-image': 'ship-icon',
+              'icon-size': 0.35,
+              'icon-allow-overlap': true,
+            },
+            paint: {
+              'icon-color': 'rgba(250,204,21,0.95)',
+            },
+          });
+        } else {
+          map.addLayer({
+            id: 'ship-point',
+            type: 'circle',
+            source: 'ship',
+            paint: {
+              'circle-radius': 7,
+              'circle-color': 'rgba(251,113,133,0.95)',
+              'circle-stroke-color': 'rgba(255,255,255,0.85)',
+              'circle-stroke-width': 2,
+            },
+          });
+
+          map.addLayer({
+            id: 'others-ships',
+            type: 'circle',
+            source: 'others',
+            paint: {
+              'circle-radius': 6,
+              'circle-color': 'rgba(250,204,21,0.95)',
+              'circle-stroke-color': 'rgba(0,0,0,0.35)',
+              'circle-stroke-width': 2,
+            },
+          });
+        }
+      };
+
+      // Other ships source
       map.addSource('others', {
         type: 'geojson',
         data: {
@@ -219,18 +274,20 @@ export function NavigationView() {
           })),
         },
       });
-      map.addLayer({
-        id: 'others-ships',
-        type: 'symbol',
-        source: 'others',
-        layout: {
-          'icon-image': 'ship-icon',
-          'icon-size': 0.35,
-          'icon-allow-overlap': true,
-        },
-        paint: {
-          'icon-color': 'rgba(250,204,21,0.95)',
-        },
+
+      ensureShipLayers();
+
+      // If the style requests the ship icon later, add it and re-install symbol layers.
+      map.on('styleimagemissing', (e: any) => {
+        if (e?.id !== 'ship-icon') return;
+        // icon registration happens elsewhere; just re-check and rebuild layers on next tick
+        window.setTimeout(() => {
+          try {
+            ensureShipLayers();
+          } catch {
+            // ignore
+          }
+        }, 0);
       });
 
       // Heading vector (line forward)
