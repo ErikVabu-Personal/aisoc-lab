@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { isAuthed } from '../lib/auth';
 import { logoutAction } from './login/actions';
+import { ControlPanelClient } from './components/ControlPanelClient';
 
 export default async function ControlPanelPage() {
   if (!(await isAuthed())) {
@@ -27,56 +28,10 @@ export default async function ControlPanelPage() {
         </div>
 
         <div className="sub">
-          Placeholder control panel. Next: wire up modules (navigation, propulsion, comms, alarms) and add live widgets.
+          Modules are simulated. We’ll wire these to real telemetry later.
         </div>
 
-        <div className="panelGrid">
-          <div className="kpi">
-            <div className="kpiLabel">Heading</div>
-            <div className="kpiValue mono">271°</div>
-          </div>
-          <div className="kpi">
-            <div className="kpiLabel">Speed</div>
-            <div className="kpiValue mono">12.4 kn</div>
-          </div>
-          <div className="kpi">
-            <div className="kpiLabel">Depth</div>
-            <div className="kpiValue mono">34 m</div>
-          </div>
-          <div className="kpi">
-            <div className="kpiLabel">Radar</div>
-            <div className="kpiValue mono">STANDBY</div>
-          </div>
-
-          <div className="kpi bigPanel" style={{ minHeight: 240 }}>
-            <div className="kpiLabel">Bridge Systems</div>
-            <div className="kpiValue" style={{ fontSize: 16, marginTop: 8 }}>
-              Modules (placeholder)
-            </div>
-            <div className="sub" style={{ marginTop: 8 }}>
-              • Navigation
-              <br />• Propulsion
-              <br />• Communications
-              <br />• Ballast / Stability
-              <br />• Power &amp; Aux
-              <br />• Alerting
-            </div>
-          </div>
-
-          <div className="kpi" style={{ minHeight: 180 }}>
-            <div className="kpiLabel">Alerts</div>
-            <div className="sub" style={{ marginTop: 8 }}>
-              No active alerts.
-            </div>
-          </div>
-
-          <div className="kpi" style={{ minHeight: 180 }}>
-            <div className="kpiLabel">Comms</div>
-            <div className="sub" style={{ marginTop: 8 }}>
-              Channel: VHF-16 (monitor)
-            </div>
-          </div>
-        </div>
+        <ControlPanelClient />
       </div>
     </div>
   );

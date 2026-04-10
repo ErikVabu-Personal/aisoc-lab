@@ -213,4 +213,56 @@ a{color:inherit}
   grid-column: 1 / -1;
 }
 
+/* Tabs + views */
+.tabs{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap}
+.tab{
+  border-radius: 999px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.04);
+  color: rgba(230,243,255,0.88);
+  cursor:pointer;
+  font-weight: 800;
+}
+.tab.active{border-color: rgba(34,211,238,0.40); background: rgba(34,211,238,0.10)}
+
+.view{margin-top:6px}
+.viewTitle{font-size:14px; font-weight:900; letter-spacing:0.04em}
+.viewSub{margin-top:6px; color: rgba(230,243,255,0.68)}
+
+.navGrid{display:grid; grid-template-columns: 1.2fr 0.8fr; gap:12px; margin-top:12px}
+@media (max-width: 980px){ .navGrid{grid-template-columns:1fr} }
+
+.sea{position:relative; height:360px; border-radius:14px; overflow:hidden; border:1px solid rgba(255,255,255,0.10);
+  background: radial-gradient(800px 380px at 30% 25%, rgba(34,211,238,0.14), transparent 60%),
+              linear-gradient(180deg, rgba(2,6,23,0.2), rgba(3,7,18,0.65));
+}
+.seaGrid{position:absolute; inset:0; background-image: linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-size: 40px 40px; opacity:0.35}
+.seaWaves{position:absolute; inset:0; background: radial-gradient(900px 500px at 50% 120%, rgba(34,211,238,0.18), transparent 55%);
+  opacity:0.9; animation: drift 6s ease-in-out infinite alternate}
+@keyframes drift{from{transform: translateY(0px)} to {transform: translateY(-8px)}}
+
+.ship{position:absolute; left:50%; top:50%; width:44px; height:44px}
+.shipBody{position:absolute; left:50%; top:50%; width:10px; height:28px; transform: translate(-50%,-50%);
+  background: rgba(230,243,255,0.85); border-radius: 7px; box-shadow:0 0 18px rgba(34,211,238,0.22)}
+.shipNose{position:absolute; left:50%; top:6px; width:0; height:0; transform: translateX(-50%);
+  border-left:8px solid transparent; border-right:8px solid transparent; border-bottom:12px solid rgba(230,243,255,0.9)}
+
+.hud{position:absolute; left:12px; bottom:12px; padding:10px 12px; border-radius:12px;
+  background: rgba(0,0,0,0.28); border:1px solid rgba(255,255,255,0.12);}
+
+.panel{border-radius:14px; padding:12px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.22)}
+.panelTitle{font-weight:900; margin-bottom:10px}
+.ctl{display:grid; grid-template-columns: 110px 1fr 70px; align-items:center; gap:10px; margin:10px 0; color: rgba(230,243,255,0.85)}
+.ctl input[type="range"]{width:100%}
+
+.engineRoom{margin-top:12px; border-radius:14px; border:1px solid rgba(255,255,255,0.10); padding:12px; overflow:hidden}
+.engineGrid{display:grid; grid-template-columns: repeat(3, 1fr); gap:12px}
+@media (max-width: 980px){ .engineGrid{grid-template-columns:1fr} }
+.engineCard{border-radius:14px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.22); padding:12px}
+.engineTop{display:flex; justify-content:space-between; align-items:center; gap:10px}
+.engineName{font-weight:900; letter-spacing:0.02em}
+.engineMetrics{display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px}
+
 .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
