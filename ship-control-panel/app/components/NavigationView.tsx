@@ -5,6 +5,7 @@ import maplibregl from 'maplibre-gl';
 
 import { Compass } from './Compass';
 import { Throttle } from './Throttle';
+import { BarMeter, Gauge } from './Instruments';
 
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
@@ -18,25 +19,22 @@ const TARGET: [number, number] = [-135.0, 58.3];
 const ROUTE: Array<[number, number]> = [
   // Seattle → Strait of Juan de Fuca
   [-122.3321, 47.6062],
-  [-122.65, 47.85],
-  [-123.05, 48.10],
+  [-122.90, 48.05],
   [-123.35, 48.25],
-  [-123.75, 48.35],
+  [-123.80, 48.45],
+  [-124.35, 48.80],
 
-  // Up Vancouver Island (outside-ish)
-  [-124.4, 48.8],
-  [-125.0, 49.4],
-  [-126.0, 50.4],
-  [-127.1, 51.4],
-  [-128.2, 52.3],
-  [-129.1, 53.1],
+  // Offshore Pacific (stay west of Vancouver Island)
+  [-125.20, 49.60],
+  [-126.30, 50.60],
+  [-127.60, 51.70],
+  [-129.00, 52.90],
 
-  // Gulf of Alaska approach
-  [-130.6, 54.1],
-  [-132.0, 55.2],
-  [-133.2, 56.4],
-  [-134.2, 57.4],
-  [-135.0, 58.3],
+  // Approach toward Haida Gwaii / Gulf of Alaska
+  [-130.80, 54.30],
+  [-132.50, 55.80],
+  [-134.00, 57.00],
+  [-135.00, 58.30],
 ];
 
 export function NavigationView() {
@@ -259,7 +257,22 @@ export function NavigationView() {
         <div className="panel">
           <div className="panelTitle">Helm</div>
 
-          <Throttle label="Speed / Throttle" value={throttle} onChange={(v) => setThrottle(clamp(v, 0, 100))} />
+          <div className="helmGrid">
+            <Throttle label="Speed / Throttle" value={throttle} onChange={(v) => setThrottle(clamp(v, 0, 100))} />
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="kpi">
+                <Gauge label="Fuel" value={82} min={0} max={100} unit="%" />
+              </div>
+              <div className="kpi">
+                <BarMeter label="Wind" value={38} max={100} />
+              </div>
+              <div className="kpi">
+                <BarMeter label="Depth" value={64} max={100} />
+                <div className="gSub mono" style={{ marginTop: 6 }}>~ 64 m</div>
+              </div>
+            </div>
+          </div>
 
           <div className="hint" style={{ marginTop: 10 }}>
             Next: real route planning, AIS contacts, and collision alerts.

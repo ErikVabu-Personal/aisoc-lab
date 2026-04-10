@@ -280,6 +280,9 @@ a{color:inherit}
 .ctl{display:grid; grid-template-columns: 110px 1fr 70px; align-items:center; gap:10px; margin:10px 0; color: rgba(230,243,255,0.85)}
 .ctl input[type="range"]{width:100%}
 
+.helmGrid{display:grid; grid-template-columns: auto 1fr; gap:12px; align-items:start}
+@media (max-width: 980px){ .helmGrid{grid-template-columns:1fr} }
+
 .engineRoom{margin-top:12px; border-radius:14px; border:1px solid rgba(255,255,255,0.10); padding:12px; overflow:hidden}
 .engineGrid{display:grid; grid-template-columns: repeat(3, 1fr); gap:12px}
 @media (max-width: 980px){ .engineGrid{grid-template-columns:1fr} }
