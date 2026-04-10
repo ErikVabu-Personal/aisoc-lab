@@ -5,6 +5,8 @@ import { Tabs, type TabKey } from './Tabs';
 import { NavigationView } from './NavigationView';
 import { EngineRoomView } from './EngineRoomView';
 import { PlaceholderView } from './PlaceholderView';
+import { ClimateView } from './ClimateView';
+import { ConnectivityView } from './ConnectivityView';
 
 export function ControlPanelClient() {
   const [tab, setTab] = useState<TabKey>('nav');
@@ -17,6 +19,8 @@ export function ControlPanelClient() {
         {tab === 'engine' ? <EngineRoomView /> : null}
         {tab === 'stabilizers' ? <PlaceholderView title="Stabilizers" /> : null}
         {tab === 'entertainment' ? <PlaceholderView title="Entertainment" /> : null}
+        {tab === 'climate' ? <ClimateView /> : null}
+        {tab === 'connectivity' ? <ConnectivityView /> : null}
       </div>
     </>
   );
