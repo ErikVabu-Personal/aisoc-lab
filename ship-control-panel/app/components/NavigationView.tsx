@@ -6,6 +6,7 @@ import maplibregl from 'maplibre-gl';
 import { Compass } from './Compass';
 import { Throttle } from './Throttle';
 import { BarMeter, Gauge } from './Instruments';
+import { SHIP_SVG } from './shipIcon';
 
 type OtherShip = { lng: number; lat: number; id: string };
 
@@ -15,12 +16,12 @@ function rand(min: number, max: number) {
 
 function makeOtherShips(): OtherShip[] {
   // Place ships well offshore (west of the coast) to avoid land.
-  // Bounding box roughly Pacific NW / Gulf of Alaska waters.
+  // Push further west than before.
   const ships: OtherShip[] = [];
   for (let i = 0; i < 8; i++) {
     ships.push({
       id: `s${i + 1}`,
-      lng: rand(-145, -132),
+      lng: rand(-150, -136),
       lat: rand(44, 58),
     });
   }
@@ -112,6 +113,18 @@ export function NavigationView() {
     map.on('load', () => {
       setMapLoaded(true);
       setMapError(null);
+
+      // Register a simple ship icon for symbol layers
+      try {
+        const svg = SHIP_SVG.replace('currentColor', '#ffffff');
+        const img = new Image();
+        img.onload = () => {
+          if (!map.hasImage('ship-icon')) map.addImage('ship-icon', img, { pixelRatio: 2 });
+        };
+        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      } catch {
+        // ignore
+      }
       // Destination marker (draggable)
       map.addSource('dest', {
         type: 'geojson',
@@ -166,15 +179,18 @@ export function NavigationView() {
       });
 
       // Current ship (red) — ship-like marker
+      // Current ship (red)
       map.addLayer({
         id: 'ship-point',
-        type: 'circle',
+        type: 'symbol',
         source: 'ship',
+        layout: {
+          'icon-image': 'ship-icon',
+          'icon-size': 0.4,
+          'icon-allow-overlap': true,
+        },
         paint: {
-          'circle-radius': 7,
-          'circle-color': 'rgba(251,113,133,0.95)',
-          'circle-stroke-color': 'rgba(255,255,255,0.85)',
-          'circle-stroke-width': 2,
+          'icon-color': 'rgba(251,113,133,0.98)',
         },
       });
 
@@ -192,13 +208,15 @@ export function NavigationView() {
       });
       map.addLayer({
         id: 'others-ships',
-        type: 'circle',
+        type: 'symbol',
         source: 'others',
+        layout: {
+          'icon-image': 'ship-icon',
+          'icon-size': 0.35,
+          'icon-allow-overlap': true,
+        },
         paint: {
-          'circle-radius': 6,
-          'circle-color': 'rgba(250,204,21,0.95)',
-          'circle-stroke-color': 'rgba(0,0,0,0.35)',
-          'circle-stroke-width': 2,
+          'icon-color': 'rgba(250,204,21,0.95)',
         },
       });
 
