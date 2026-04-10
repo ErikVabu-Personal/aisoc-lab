@@ -264,7 +264,7 @@ a{color:inherit}
 /* Throttle */
 .throttle{display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:end}
 .thLabel{grid-column:1 / -1; font-weight:900}
-.thBody{position:relative; width:74px; height:220px; border-radius:14px; border:1px solid rgba(255,255,255,0.14);
+.thBody{position:relative; width:74px; height:320px; border-radius:14px; border:1px solid rgba(255,255,255,0.14);
   background: rgba(0,0,0,0.20); overflow:hidden}
 .thTrack{position:absolute; left:50%; top:10px; bottom:10px; width:10px; transform: translateX(-50%);
   border-radius:999px; background: rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.10)}
@@ -272,8 +272,16 @@ a{color:inherit}
   border-radius:12px; background: linear-gradient(180deg, rgba(34,211,238,0.22), rgba(96,165,250,0.12));
   border:1px solid rgba(34,211,238,0.35); box-shadow: 0 10px 30px rgba(0,0,0,0.40)}
 .thRead{width:64px; text-align:right; opacity:0.9}
-.thSlider{position:absolute; inset:0; transform: rotate(-90deg) translateX(-220px); transform-origin: top left;
-  width:220px; height:74px; opacity:0; cursor:pointer;}
+.thSlider{position:absolute; inset:0; transform: rotate(-90deg) translateX(-320px); transform-origin: top left;
+  width:320px; height:74px; opacity:0; cursor:pointer;}
+
+.destHandle{width:14px; height:14px; border-radius:999px; background: rgba(34,211,238,0.95); border:2px solid rgba(255,255,255,0.9);
+  box-shadow: 0 0 0 6px rgba(34,211,238,0.18), 0 12px 30px rgba(0,0,0,0.35);}
+
+.collision{position:absolute; left:12px; top:12px; z-index:4; padding:6px 10px; border-radius:999px;
+  background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.28); color: rgba(209,250,229,0.95);
+  display:flex; align-items:center; gap:8px;}
+.safeDot{width:8px; height:8px; border-radius:999px; background: rgba(52,211,153,0.95); box-shadow: 0 0 14px rgba(52,211,153,0.35)}
 
 .panel{border-radius:14px; padding:12px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.22)}
 .panelTitle{font-weight:900; margin-bottom:10px}

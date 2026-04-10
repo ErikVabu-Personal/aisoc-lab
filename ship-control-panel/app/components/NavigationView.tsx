@@ -11,64 +11,36 @@ function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
 
-// Start near Seattle; sail toward Alaska.
-// We use a hand-crafted "water-ish" route that stays mostly on sea lanes (demo-only).
+// Start near Seattle.
 const START: [number, number] = [-122.3321, 47.6062];
-const TARGET: [number, number] = [-135.0, 58.3];
+const DEFAULT_DEST: [number, number] = [-135.0, 58.3];
 
-const ROUTE: Array<[number, number]> = [
-  // Seattle → Strait of Juan de Fuca
-  [-122.3321, 47.6062],
-  [-122.90, 48.05],
-  [-123.35, 48.25],
-  [-123.80, 48.45],
-  [-124.35, 48.80],
+type LngLat = { lng: number; lat: number };
 
-  // Offshore Pacific (stay west of Vancouver Island)
-  [-125.20, 49.60],
-  [-126.30, 50.60],
-  [-127.60, 51.70],
-  [-129.00, 52.90],
-
-  // Approach toward Haida Gwaii / Gulf of Alaska
-  [-130.80, 54.30],
-  [-132.50, 55.80],
-  [-134.00, 57.00],
-  [-135.00, 58.30],
-];
+function fmtCoord(n: number) {
+  const s = n.toFixed(3);
+  return s === '-0.000' ? '0.000' : s;
+}
 
 export function NavigationView() {
   const [heading, setHeading] = useState(315);
   const [throttle, setThrottle] = useState(35);
 
+  const [dest, setDest] = useState<LngLat>({ lng: DEFAULT_DEST[0], lat: DEFAULT_DEST[1] });
+  const destLabel = `${fmtCoord(dest.lat)}, ${fmtCoord(dest.lng)}`;
+
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapDivRef = useRef<HTMLDivElement | null>(null);
 
-  const [pos, setPos] = useState<{ lng: number; lat: number }>({ lng: START[0], lat: START[1] });
+  const [pos, setPos] = useState<LngLat>({ lng: START[0], lat: START[1] });
 
-  // Move ship gradually toward Alaska; throttle controls speed.
+  // Move ship gradually toward destination; throttle controls speed.
   useEffect(() => {
     const t = window.setInterval(() => {
       setPos((p) => {
         // Follow the route polyline by moving toward the next waypoint.
-        const coords = ROUTE;
-
-        // Find nearest segment start index (cheap) so we can progress.
-        let idx = 0;
-        let best = Number.POSITIVE_INFINITY;
-        for (let i = 0; i < coords.length; i++) {
-          const dx0 = coords[i][0] - p.lng;
-          const dy0 = coords[i][1] - p.lat;
-          const d0 = dx0 * dx0 + dy0 * dy0;
-          if (d0 < best) {
-            best = d0;
-            idx = i;
-          }
-        }
-        const nextWp = coords[Math.min(idx + 1, coords.length - 1)];
-
-        const dx = nextWp[0] - p.lng;
-        const dy = nextWp[1] - p.lat;
+        const dx = dest.lng - p.lng;
+        const dy = dest.lat - p.lat;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
 
         // speed factor tuned for demo
@@ -116,24 +88,47 @@ export function NavigationView() {
     map.on('load', () => {
       setMapLoaded(true);
       setMapError(null);
-      // Route line (Seattle -> Alaska)
-      map.addSource('route', {
+      // Destination marker (draggable)
+      map.addSource('dest', {
         type: 'geojson',
         data: {
           type: 'Feature',
-          geometry: { type: 'LineString', coordinates: ROUTE },
+          geometry: { type: 'Point', coordinates: [dest.lng, dest.lat] },
           properties: {},
         },
       });
+
       map.addLayer({
-        id: 'route-line',
-        type: 'line',
-        source: 'route',
+        id: 'dest-point',
+        type: 'circle',
+        source: 'dest',
         paint: {
-          'line-color': 'rgba(34,211,238,0.75)',
-          'line-width': 4,
-          'line-blur': 0.5,
+          'circle-radius': 7,
+          'circle-color': 'rgba(34,211,238,0.0)',
+          'circle-stroke-color': 'rgba(34,211,238,0.95)',
+          'circle-stroke-width': 3,
         },
+      });
+
+      map.addLayer({
+        id: 'dest-glow',
+        type: 'circle',
+        source: 'dest',
+        paint: {
+          'circle-radius': 18,
+          'circle-color': 'rgba(34,211,238,0.12)',
+        },
+      });
+
+      // Draggable HTML marker handle for destination
+      const el = document.createElement('div');
+      el.className = 'destHandle';
+      const mk = new maplibregl.Marker({ element: el, draggable: true })
+        .setLngLat([dest.lng, dest.lat])
+        .addTo(map);
+      mk.on('dragend', () => {
+        const ll = mk.getLngLat();
+        setDest({ lng: ll.lng, lat: ll.lat });
       });
 
       // Ship position
@@ -151,10 +146,44 @@ export function NavigationView() {
         type: 'circle',
         source: 'ship',
         paint: {
+          'circle-radius': 7,
+          'circle-color': 'rgba(251,113,133,0.95)',
+          'circle-stroke-color': 'rgba(255,255,255,0.85)',
+          'circle-stroke-width': 2,
+        },
+      });
+
+      // Other ships (yellow)
+      const others: Array<[number, number]> = [
+        [-124.7, 48.7],
+        [-126.0, 50.2],
+        [-127.5, 51.1],
+        [-128.6, 52.0],
+        [-130.0, 53.0],
+        [-131.5, 54.4],
+        [-133.0, 55.8],
+        [-134.5, 57.2],
+      ];
+      map.addSource('others', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: others.map((c) => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: c },
+            properties: {},
+          })),
+        },
+      });
+      map.addLayer({
+        id: 'others-points',
+        type: 'circle',
+        source: 'others',
+        paint: {
           'circle-radius': 6,
-          'circle-color': 'rgba(230,243,255,0.95)',
-          'circle-stroke-color': 'rgba(34,211,238,0.65)',
-          'circle-stroke-width': 3,
+          'circle-color': 'rgba(250,204,21,0.95)',
+          'circle-stroke-color': 'rgba(0,0,0,0.35)',
+          'circle-stroke-width': 2,
         },
       });
 
@@ -187,7 +216,7 @@ export function NavigationView() {
     };
   }, []);
 
-  // Update ship + heading on map
+  // Update ship + heading + destination on map
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -197,6 +226,15 @@ export function NavigationView() {
       ship.setData({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [pos.lng, pos.lat] },
+        properties: {},
+      });
+    }
+
+    const destSrc = map.getSource('dest') as maplibregl.GeoJSONSource | undefined;
+    if (destSrc) {
+      destSrc.setData({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [dest.lng, dest.lat] },
         properties: {},
       });
     }
@@ -214,12 +252,12 @@ export function NavigationView() {
         properties: {},
       });
     }
-  }, [pos, heading]);
+  }, [pos, heading, dest]);
 
   return (
     <div className="view">
       <div className="viewTitle">Navigation</div>
-      <div className="viewSub">Destination: <b>ALASKA</b></div>
+      <div className="viewSub">Destination: <b className="mono">{destLabel}</b></div>
 
       <div className="navGrid">
         <div className="mapWrap">
@@ -245,8 +283,13 @@ export function NavigationView() {
 
           <div className="mapHud mono">
             <div>POS {pos.lat.toFixed(3)}, {pos.lng.toFixed(3)}</div>
+            <div>DST {dest.lat.toFixed(3)}, {dest.lng.toFixed(3)}</div>
             <div>HDG {heading.toString().padStart(3, '0')}°</div>
             <div>THR {throttle}%</div>
+          </div>
+
+          <div className="collision mono">
+            <span className="safeDot" /> SAFE
           </div>
 
           <div className="compassWrap">
