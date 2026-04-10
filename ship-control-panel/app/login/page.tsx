@@ -1,4 +1,5 @@
 import { loginAction } from './actions';
+import { BarMeter, Gauge, LockStatus, SeaState } from '../components/Instruments';
 
 export default async function LoginPage({
   searchParams,
@@ -22,20 +23,16 @@ export default async function LoginPage({
 
           <div className="grid">
             <div className="kpi">
-              <div className="kpiLabel">Hull Integrity</div>
-              <div className="kpiValue">98%</div>
+              <BarMeter label="Hull Integrity" value={98} />
             </div>
             <div className="kpi">
-              <div className="kpiLabel">Reactor Output</div>
-              <div className="kpiValue">1.2 GW</div>
+              <Gauge label="Reactor Output" value={72} min={0} max={100} unit="%" />
             </div>
             <div className="kpi">
-              <div className="kpiLabel">Nav Status</div>
-              <div className="kpiValue">LOCKED</div>
+              <LockStatus label="Nav Status" locked={true} />
             </div>
             <div className="kpi">
-              <div className="kpiLabel">Sea State</div>
-              <div className="kpiValue">CALM</div>
+              <SeaState label="Sea State" level="CALM" />
             </div>
           </div>
 

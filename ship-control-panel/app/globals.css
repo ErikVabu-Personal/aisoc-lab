@@ -115,6 +115,29 @@ a{color:inherit}
 .kpiLabel{color: rgba(230,243,255,0.7); font-size:12px}
 .kpiValue{font-size:20px; font-weight:800; margin-top:4px}
 
+/* Instruments */
+.inst{display:flex; flex-direction:column; gap:6px}
+.instLabel{color: rgba(230,243,255,0.72); font-size:12px}
+.gWrap{display:flex; align-items:center; gap:10px}
+.gValue{display:flex; flex-direction:column; gap:2px}
+.gNum{font-size:18px; font-weight:900}
+.gUnit{font-size:12px; opacity:0.75; margin-left:6px}
+.gSub{color: rgba(230,243,255,0.62); font-size:11px}
+
+.bar{height:12px; border-radius:999px; background: rgba(255,255,255,0.08); overflow:hidden; border:1px solid rgba(255,255,255,0.12)}
+.barFill{height:100%; border-radius:999px; box-shadow: 0 0 18px rgba(34,211,238,0.20)}
+
+.lock{width:64px; height:64px; position:relative; margin-top:2px; filter: drop-shadow(0 10px 22px rgba(0,0,0,0.35));}
+.lock .shackle{position:absolute; left:14px; top:3px; width:36px; height:30px; border:6px solid rgba(230,243,255,0.75); border-bottom:none; border-radius:18px 18px 0 0;}
+.lock.unlocked .shackle{transform: rotate(-18deg) translateX(-6px); transform-origin: left bottom;}
+.lock .body{position:absolute; left:10px; top:26px; width:44px; height:34px; border-radius:10px; background: rgba(34,211,238,0.14); border:1px solid rgba(34,211,238,0.32);}
+.lock.locked .body{background: rgba(52,211,153,0.12); border-color: rgba(52,211,153,0.35);}
+.lock .keyhole{position:absolute; left:19px; top:10px; width:6px; height:12px; border-radius:3px; background: rgba(230,243,255,0.75); box-shadow: 0 0 0 2px rgba(0,0,0,0.18) inset;}
+
+.waves{display:flex; gap:6px; align-items:flex-end; height:34px}
+.wave{width:10px; height:10px; border-radius:6px; background: rgba(255,255,255,0.10); border:1px solid rgba(255,255,255,0.12)}
+.wave.on{height:28px; background: rgba(34,211,238,0.16); border-color: rgba(34,211,238,0.30); box-shadow: 0 0 18px rgba(34,211,238,0.14)}
+
 .hr{
   height:1px;
   background: rgba(255,255,255,0.10);
