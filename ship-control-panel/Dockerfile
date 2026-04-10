@@ -18,6 +18,9 @@ ENV NODE_ENV=production
 # Next standalone output
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+
+# public/ may be empty. Ensure it exists so COPY won't fail.
+RUN mkdir -p ./public
 COPY --from=builder /app/public ./public
 
 EXPOSE 3000
