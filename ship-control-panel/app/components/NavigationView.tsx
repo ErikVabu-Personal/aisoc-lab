@@ -114,14 +114,27 @@ export function NavigationView() {
       setMapLoaded(true);
       setMapError(null);
 
-      // Register a simple ship icon for symbol layers
+      // Provide a ship icon for symbol layers (robust against style reloads)
       try {
         const svg = SHIP_SVG.replace('currentColor', '#ffffff');
         const img = new Image();
         img.onload = () => {
-          if (!map.hasImage('ship-icon')) map.addImage('ship-icon', img, { pixelRatio: 2 });
+          try {
+            if (!map.hasImage('ship-icon')) map.addImage('ship-icon', img, { pixelRatio: 2 });
+          } catch (e) {
+            console.error('[MapLibre] addImage failed', e);
+          }
         };
         img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+
+        map.on('styleimagemissing', (e: any) => {
+          if (e?.id !== 'ship-icon') return;
+          try {
+            if (!map.hasImage('ship-icon')) map.addImage('ship-icon', img, { pixelRatio: 2 });
+          } catch (err) {
+            console.error('[MapLibre] addImage (styleimagemissing) failed', err);
+          }
+        });
       } catch {
         // ignore
       }
