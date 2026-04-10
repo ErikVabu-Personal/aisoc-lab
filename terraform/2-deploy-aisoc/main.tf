@@ -19,7 +19,26 @@ locals {
   sa_name        = "safoundrysoc${random_string.suffix.result}" # must be lowercase
   func_name      = "func-${local.foundry_prefix}-${random_string.suffix.result}"
 
+  # Workspace-based App Insights (for Foundry tracing)
+  appi_name = "appi-${local.foundry_prefix}-${random_string.suffix.result}"
+
   location_effective = var.location_override != null ? var.location_override : data.terraform_remote_state.sentinel.outputs.selected_location
+}
+
+# -----------------------------
+# Observability: Application Insights (workspace-based)
+# -----------------------------
+
+resource "azurerm_application_insights" "foundry" {
+  count               = var.enable_foundry_app_insights ? 1 : 0
+  name                = local.appi_name
+  location            = local.location_effective
+  resource_group_name = data.terraform_remote_state.sentinel.outputs.resource_group
+
+  application_type = "web"
+  workspace_id     = data.terraform_remote_state.sentinel.outputs.log_analytics_workspace_id
+
+  tags = local.tags
 }
 
 # Storage account for Function App
@@ -231,4 +250,24 @@ output "foundry_model_choice" {
 output "foundry_model_deployment_name" {
   value       = var.foundry_model_deployment_name
   description = "Desired Foundry model deployment name that agents should target."
+}
+
+# -----------------------------
+# Observability outputs
+# -----------------------------
+
+output "foundry_app_insights_name" {
+  value       = var.enable_foundry_app_insights ? azurerm_application_insights.foundry[0].name : null
+  description = "Application Insights name created to back Foundry tracing/telemetry."
+}
+
+output "foundry_app_insights_id" {
+  value       = var.enable_foundry_app_insights ? azurerm_application_insights.foundry[0].id : null
+  description = "Application Insights resource id."
+}
+
+output "foundry_app_insights_connection_string" {
+  value       = var.enable_foundry_app_insights ? azurerm_application_insights.foundry[0].connection_string : null
+  description = "Application Insights connection string (if needed by exporters)."
+  sensitive   = true
 }

@@ -56,3 +56,13 @@ variable "foundry_manage_project_in_terraform" {
   type        = bool
   default     = false
 }
+
+# -----------------------------
+# Observability / Tracing
+# -----------------------------
+
+variable "enable_foundry_app_insights" {
+  description = "Create an Application Insights resource to back Foundry tracing/telemetry (workspace-based, using Sentinel LAW)."
+  type        = bool
+  default     = true
+}
