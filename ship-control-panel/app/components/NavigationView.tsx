@@ -48,7 +48,7 @@ export function NavigationView() {
   const { state, loading, post } = useAppState();
 
   const [heading, setHeading] = useState(315);
-  const [throttle, setThrottle] = useState(35);
+  const throttle = state?.navigation?.throttle ?? 35;
 
   const [dest, setDest] = useState<LngLat>({ lng: DEFAULT_DEST[0], lat: DEFAULT_DEST[1] });
   const destLabel = `${fmtCoord(dest.lat)}, ${fmtCoord(dest.lng)}`;
@@ -422,7 +422,11 @@ export function NavigationView() {
           <div className="panelTitle">Helm</div>
 
           <div className="helmGrid">
-            <Throttle label="Speed / Throttle" value={throttle} onChange={(v) => setThrottle(clamp(v, 0, 100))} />
+            <Throttle
+              label="Speed / Throttle"
+              value={throttle}
+              onChange={(v) => post('setThrottle', { throttle: clamp(v, 0, 100) }).catch(() => {})}
+            />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div className="kpi">
