@@ -14,11 +14,11 @@ export default async function LoginPage({
       <div className="shell">
         <div className="card holo">
           <div className="title">
-            <span className="badge">DEMO</span>
-            <span>AEGIR // SHIP SYSTEMS</span>
+            <span className="badge">AEGIR</span>
+            <span>SHIP SYSTEMS</span>
           </div>
           <div className="sub">
-            Nautical control interface — authorized crew only. This is a placeholder UI for a SOC demo.
+            Nautical control interface — authorized crew only.
           </div>
 
           <div className="grid">
@@ -65,7 +65,7 @@ export default async function LoginPage({
           </form>
 
           <div className="sub" style={{ marginTop: 10 }}>
-            Demo authentication only — do not reuse this pattern in production.
+            &nbsp;
           </div>
         </div>
       </div>

@@ -18,7 +18,6 @@ export default async function ControlPanelPage() {
           </div>
 
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <div className="pill mono">MODE: SIMULATION</div>
             <form action={logoutAction}>
               <button className="btn" type="submit" style={{ padding: '10px 12px' }}>
                 Logout
@@ -27,9 +26,6 @@ export default async function ControlPanelPage() {
           </div>
         </div>
 
-        <div className="sub">
-          Modules are simulated. We’ll wire these to real telemetry later.
-        </div>
 
         <ControlPanelClient />
       </div>
