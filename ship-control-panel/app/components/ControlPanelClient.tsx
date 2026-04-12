@@ -8,6 +8,7 @@ import { PlaceholderView } from './PlaceholderView';
 import { ClimateView } from './ClimateView';
 import { ConnectivityView } from './ConnectivityView';
 import { AnchorView } from './AnchorView';
+import { EntertainmentView } from './EntertainmentView';
 
 export function ControlPanelClient() {
   const [tab, setTab] = useState<TabKey>('nav');
@@ -19,7 +20,7 @@ export function ControlPanelClient() {
         {tab === 'nav' ? <NavigationView /> : null}
         {tab === 'engine' ? <EngineRoomView /> : null}
         {tab === 'stabilizers' ? <AnchorView /> : null}
-        {tab === 'entertainment' ? <PlaceholderView title="Entertainment" /> : null}
+        {tab === 'entertainment' ? <EntertainmentView /> : null}
         {tab === 'climate' ? <ClimateView /> : null}
         {tab === 'connectivity' ? <ConnectivityView /> : null}
       </div>
