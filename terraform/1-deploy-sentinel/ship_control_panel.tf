@@ -54,6 +54,18 @@ resource "azurerm_container_app" "shipcp" {
         name  = "HOSTNAME"
         value = "0.0.0.0"
       }
+
+      # Application Insights (workspace-based) for reliable log/telemetry ingestion
+      env {
+        name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        value = azurerm_application_insights.shipcp.connection_string
+      }
+
+      # Azure Monitor OpenTelemetry (recommended for logs/traces/metrics)
+      env {
+        name  = "OTEL_SERVICE_NAME"
+        value = "ship-control-panel"
+      }
     }
   }
 

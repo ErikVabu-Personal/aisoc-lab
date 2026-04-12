@@ -26,4 +26,4 @@ COPY --from=builder /app/public ./public
 EXPOSE 3000
 ENV PORT=3000
 
-CMD ["node", "server.js"]
+CMD ["node", "-r", "./otel.js", "server.js"]
