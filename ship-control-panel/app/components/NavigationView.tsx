@@ -50,7 +50,7 @@ export function NavigationView() {
   const [heading, setHeading] = useState(315);
   const throttle = state?.navigation?.throttle ?? 35;
 
-  const [dest, setDest] = useState<LngLat>({ lng: DEFAULT_DEST[0], lat: DEFAULT_DEST[1] });
+  const dest = (state?.navigation?.destination as LngLat) ?? { lng: DEFAULT_DEST[0], lat: DEFAULT_DEST[1] };
   const destLabel = `${fmtCoord(dest.lat)}, ${fmtCoord(dest.lng)}`;
 
   const collisionEnabled = state?.collision?.enabled ?? true;
@@ -181,7 +181,7 @@ export function NavigationView() {
         .addTo(map);
       mk.on('dragend', () => {
         const ll = mk.getLngLat();
-        setDest({ lng: ll.lng, lat: ll.lat });
+        post('setDestination', { lng: ll.lng, lat: ll.lat }).catch(() => {});
       });
 
       // Ship position

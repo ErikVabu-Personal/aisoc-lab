@@ -45,6 +45,7 @@ type AppState = {
   // Navigation/helm
   navigation: {
     throttle: number; // 0..100
+    destination: { lng: number; lat: number };
   };
 
   // Climate (per-room)
@@ -86,7 +87,7 @@ const DEFAULT_STATE: AppState = {
   stabilizers: { mode: 'AUTO', seaState: 3, finPortDeg: 4, finStbdDeg: -4 },
   connectivity: { enabled: true, signal: 0.82 },
   collision: { enabled: true },
-  navigation: { throttle: 35 },
+  navigation: { throttle: 35, destination: { lng: -135.0, lat: 58.3 } },
   climate: {
     rooms: {
       Ballroom: { enabled: true, targetC: 21, fan: 'AUTO' },
@@ -235,6 +236,27 @@ export async function POST(req: Request) {
     };
     setState(next);
     logEvent('navigation.throttle', { from: prev.navigation, to: next.navigation });
+    return NextResponse.json(next);
+  }
+
+  if (action === 'setDestination') {
+    next = {
+      ...prev,
+      navigation: {
+        ...prev.navigation,
+        destination: {
+          ...prev.navigation.destination,
+          ...(payload ?? {}),
+        },
+      },
+      version: (prev.version ?? 0) + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    setState(next);
+    logEvent('navigation.destination', {
+      from: prev.navigation.destination,
+      to: next.navigation.destination,
+    });
     return NextResponse.json(next);
   }
 
