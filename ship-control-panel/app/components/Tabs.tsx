@@ -14,7 +14,7 @@ export function Tabs({
   const items: Array<{ k: TabKey; label: string }> = [
     { k: 'nav', label: 'Navigation' },
     { k: 'engine', label: 'Engine room' },
-    { k: 'stabilizers', label: 'Stabilizers' },
+    { k: 'stabilizers', label: 'Anchor' },
     { k: 'entertainment', label: 'Entertainment' },
     { k: 'climate', label: 'Climate' },
     { k: 'connectivity', label: 'Connectivity' },
