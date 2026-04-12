@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { StabilizersPanel as StabilizersInline } from './StabilizersPanel';
 
 type AnchorState = 'HOME' | 'PAYING_OUT' | 'HOLDING' | 'DRAGGING';
 
@@ -99,7 +100,7 @@ export function AnchorView() {
 
       <div className="panelGrid" style={{ marginTop: 12 }}>
         <div className="kpi bigPanel">
-          <div className="panelTitle">Status</div>
+          <div className="panelTitle">Anchor + Stabilizers</div>
           <div className="anchorRow">
             {states.map((s) => {
               const active = s.k === state;
@@ -124,6 +125,13 @@ export function AnchorView() {
             </div>
             {lastAction ? <div className="pill mono">LAST: {lastAction}</div> : null}
           </div>
+
+          <div className="hr" />
+
+          {/* Stabilizers panel (typical ship stabilizer indicators; simulated) */}
+          {/** Loaded inline to keep the demo self-contained */}
+          {/* eslint-disable-next-line @typescript-eslint/no-use-before-define */}
+          <StabilizersInline />
         </div>
 
         <div className="kpi">

@@ -307,6 +307,23 @@ a{color:inherit}
 .anchorDesc{color: rgba(230,243,255,0.65); font-size:12px; margin-top:2px}
 .anchorMeta{display:flex; gap:10px; flex-wrap:wrap}
 .pill.warn{border-color: rgba(251,113,133,0.35); background: rgba(251,113,133,0.10)}
+.pill.ok{border-color: rgba(16,185,129,0.35); background: rgba(16,185,129,0.10)}
+.pill.danger{border-color: rgba(251,113,133,0.40); background: rgba(251,113,133,0.10)}
+
+/* Stabilizers */
+.stabGrid{display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px}
+@media (max-width: 980px){ .stabGrid{grid-template-columns:1fr} }
+.stabCard{border-radius:14px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.18); padding:12px}
+.stabTitle{font-weight:900}
+.stabModes{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px}
+.finRow{display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px}
+.fin{display:flex; flex-direction:column; gap:8px; align-items:center; padding:12px; border-radius:14px; border:1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.03)}
+.finLabel{font-weight:900; opacity:0.85}
+.finGauge{width:110px; height:60px; border-radius: 999px 999px 14px 14px; border:1px solid rgba(255,255,255,0.10);
+  background: radial-gradient(220px 100px at 50% 80%, rgba(34,211,238,0.14), transparent 60%), rgba(0,0,0,0.18);
+  position:relative; overflow:hidden}
+.finNeedle{position:absolute; left:50%; bottom:10px; width:2px; height:44px; background: rgba(230,243,255,0.85);
+  transform-origin: bottom center; box-shadow: 0 0 14px rgba(34,211,238,0.18)}
 
 .panel{border-radius:14px; padding:12px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.22)}
 .panelTitle{font-weight:900; margin-bottom:10px}
