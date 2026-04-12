@@ -26,7 +26,13 @@ if (!process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
       }),
     );
   } catch (e) {
-    const code = (e && typeof e === 'object' && 'code' in e ? (e as any).code : undefined) ?? undefined;
+    let code: any = undefined;
+    try {
+      code = (e as any)?.code;
+    } catch {
+      // ignore
+    }
+
     // eslint-disable-next-line no-console
     console.warn(
       JSON.stringify({
