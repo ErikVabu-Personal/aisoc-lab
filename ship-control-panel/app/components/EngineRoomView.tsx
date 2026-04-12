@@ -94,7 +94,13 @@ export function EngineRoomView() {
 
   function setEngine(id: string, patch: Partial<Engine>) {
     setEngines((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
-    logEvent('engine.change', { engineId: id, patch });
+
+    if (typeof patch.clutch === 'boolean') {
+      logEvent('engine.clutch', { engineId: id, clutch: patch.clutch });
+    }
+    if (typeof patch.fuelMix === 'number') {
+      logEvent('engine.fuelMix', { engineId: id, fuelMix: patch.fuelMix });
+    }
   }
 
   const anyAlarm = engines.some((e) => e.alarm !== 'NONE');
