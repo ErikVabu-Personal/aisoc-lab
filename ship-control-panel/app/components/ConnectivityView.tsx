@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Gauge } from './Instruments';
+import { useAppState } from './useAppState';
 
 type Sample = { t: number; dl: number; ul: number; rtt: number; jitter: number };
 
@@ -10,18 +11,18 @@ function clamp(n: number, a: number, b: number) {
 }
 
 export function ConnectivityView() {
-  const [enabled, setEnabled] = useState(true);
+  const { state, loading, post } = useAppState();
   const [samples, setSamples] = useState<Sample[]>([]);
-  const [signal, setSignal] = useState(0.82);
+
+  const enabled = !!state?.connectivity?.enabled;
+  const signal = typeof state?.connectivity?.signal === 'number' ? state.connectivity.signal : 0.82;
 
   useEffect(() => {
     const t = window.setInterval(() => {
-      // signal level drifts slightly (real-time feel)
-      setSignal((s) => {
-        const base = enabled ? 0.82 : 0.18;
-        const next = clamp(base + (Math.random() - 0.5) * 0.12, 0, 1);
-        return 0.7 * s + 0.3 * next;
-      });
+      // signal level drifts slightly (real-time feel) - stored server-side
+      const base = enabled ? 0.82 : 0.18;
+      const nextSignal = clamp(base + (Math.random() - 0.5) * 0.12, 0, 1);
+      post('setConnectivity', { signal: nextSignal }).catch(() => {});
 
       setSamples((prev) => {
         const now = Date.now();
@@ -36,7 +37,7 @@ export function ConnectivityView() {
       });
     }, 900);
     return () => window.clearInterval(t);
-  }, [enabled]);
+  }, [enabled, post]);
 
   const last = samples[samples.length - 1];
   const status = enabled ? 'CONNECTED' : 'DEGRADED';
@@ -56,7 +57,8 @@ export function ConnectivityView() {
             <button
               type="button"
               className={enabled ? 'toggle on' : 'toggle off'}
-              onClick={() => setEnabled((v) => !v)}
+              onClick={() => post('setConnectivity', { enabled: !enabled }).catch(() => {})}
+              disabled={loading}
             >
               {enabled ? 'Enabled' : 'Disabled'}
             </button>

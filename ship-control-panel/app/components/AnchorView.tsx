@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { StabilizersPanel as StabilizersInline } from './StabilizersPanel';
+import { useAppState } from './useAppState';
 
 type AnchorState = 'HOME' | 'PAYING_OUT' | 'HOLDING' | 'DRAGGING';
 
@@ -34,38 +35,35 @@ function iconFor(s: AnchorState): string {
 }
 
 export function AnchorView() {
-  const [state, setState] = useState<AnchorState>('HOME');
-  const [chainPct, setChainPct] = useState(0); // 0..100
+  const { state: app, loading, post } = useAppState();
+  const state = (app?.anchor?.state as AnchorState) ?? 'HOME';
+  const chainPct = typeof app?.anchor?.chainPct === 'number' ? app.anchor.chainPct : 0;
   const [lastAction, setLastAction] = useState<string>('');
 
-  // Simulate transitions
+  // Simulate transitions (server-side state)
   useEffect(() => {
     if (state === 'PAYING_OUT') {
       const t = window.setInterval(() => {
-        setChainPct((p) => {
-          const next = Math.min(100, p + 4);
-          if (next >= 100) {
-            setState('HOLDING');
-          }
-          return next;
-        });
+        const next = Math.min(100, chainPct + 4);
+        const nextState: AnchorState = next >= 100 ? 'HOLDING' : 'PAYING_OUT';
+        post('setAnchorState', { chainPct: next, state: nextState }).catch(() => {});
       }, 400);
       return () => window.clearInterval(t);
     }
     return;
-  }, [state]);
+  }, [state, chainPct, post]);
 
-  // Occasional dragging event while holding (demo)
+  // Occasional dragging event while holding (demo) - server-side
   useEffect(() => {
     if (state !== 'HOLDING') return;
     const t = window.setInterval(() => {
       if (Math.random() < 0.08) {
-        setState('DRAGGING');
+        post('setAnchorState', { state: 'DRAGGING' }).catch(() => {});
         setLastAction('Drag detected');
       }
     }, 1500);
     return () => window.clearInterval(t);
-  }, [state]);
+  }, [state, post]);
 
   const states: Array<{ k: AnchorState; label: string; desc: string }> = useMemo(
     () => [
@@ -80,17 +78,15 @@ export function AnchorView() {
   function drop() {
     setLastAction('Drop');
     if (state === 'HOME') {
-      setChainPct(0);
-      setState('PAYING_OUT');
+      post('setAnchorState', { chainPct: 0, state: 'PAYING_OUT' }).catch(() => {});
     } else if (state === 'HOLDING' || state === 'DRAGGING') {
-      setState('HOLDING');
+      post('setAnchorState', { state: 'HOLDING' }).catch(() => {});
     }
   }
 
   function heave() {
     setLastAction('Heave in');
-    setChainPct(0);
-    setState('HOME');
+    post('setAnchorState', { chainPct: 0, state: 'HOME' }).catch(() => {});
   }
 
   return (
@@ -134,10 +130,10 @@ export function AnchorView() {
           </div>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-            <button className="btn" type="button" onClick={drop}>
+            <button className="btn" type="button" onClick={drop} disabled={loading}>
               Pay out (drop)
             </button>
-            <button className="btn" type="button" onClick={heave}>
+            <button className="btn" type="button" onClick={heave} disabled={loading}>
               Heave in
             </button>
           </div>

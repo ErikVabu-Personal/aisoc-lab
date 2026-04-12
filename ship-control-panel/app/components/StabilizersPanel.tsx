@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
+import { useAppState } from './useAppState';
 
 type Mode = 'OFF' | 'STANDBY' | 'AUTO' | 'MANUAL';
 
@@ -14,54 +15,52 @@ function clamp(n: number, a: number, b: number) {
 }
 
 export function StabilizersPanel() {
-  const [mode, setMode] = useState<Mode>('AUTO');
-  const [seaState, setSeaState] = useState(3); // 0..6
-  const [rollDeg, setRollDeg] = useState(2.4);
-  const [rollReduction, setRollReduction] = useState(62);
-  const [fins, setFins] = useState<Fin[]>([
-    { side: 'PORT', angleDeg: 4 },
-    { side: 'STBD', angleDeg: -4 },
-  ]);
+  const { state, loading, post } = useAppState();
 
-  // Simulate roll and fin response
+  const mode = (state?.stabilizers?.mode as Mode) ?? 'AUTO';
+  const seaState = typeof state?.stabilizers?.seaState === 'number' ? state.stabilizers.seaState : 3;
+  const fins: Fin[] = [
+    { side: 'PORT', angleDeg: typeof state?.stabilizers?.finPortDeg === 'number' ? state.stabilizers.finPortDeg : 4 },
+    { side: 'STBD', angleDeg: typeof state?.stabilizers?.finStbdDeg === 'number' ? state.stabilizers.finStbdDeg : -4 },
+  ];
+
+  // derived live indicators (still simulated client-side)
+  const rollDeg = clamp(
+    (mode === 'OFF' ? 7 : mode === 'STANDBY' ? 5 : 3) +
+      Math.sin(Date.now() / 900) * (1 + seaState / 4) +
+      (Math.random() - 0.5) * 0.6,
+    0,
+    18,
+  );
+
+  const rollReduction = clamp(
+    mode === 'AUTO'
+      ? 70 - rollDeg * 2.2 + (Math.random() - 0.5) * 6
+      : mode === 'MANUAL'
+        ? 35 - rollDeg * 1.2 + (Math.random() - 0.5) * 6
+        : mode === 'STANDBY'
+          ? 20 - rollDeg * 0.8 + (Math.random() - 0.5) * 4
+          : 0,
+    0,
+    95,
+  );
+
+  // AUTO mode drives fin angles server-side; keep it gentle (demo)
   useEffect(() => {
+    if (mode !== 'AUTO') return;
     const t = window.setInterval(() => {
-      const baseRoll = mode === 'OFF' ? 7 : mode === 'STANDBY' ? 5 : 3;
+      const baseRoll = 3;
       const wave = Math.sin(Date.now() / 900) * (1 + seaState / 4);
-      const noise = (Math.random() - 0.5) * 0.6;
-      const nextRoll = clamp(baseRoll + wave + noise, 0, 18);
-      setRollDeg(nextRoll);
-
-      if (mode === 'AUTO') {
-        const target = clamp(-nextRoll * 1.2, -25, 25);
-        setFins([
-          { side: 'PORT', angleDeg: clamp(target, -25, 25) },
-          { side: 'STBD', angleDeg: clamp(-target, -25, 25) },
-        ]);
-        setRollReduction(clamp(70 - nextRoll * 2.2 + (Math.random() - 0.5) * 6, 10, 95));
-      } else if (mode === 'STANDBY') {
-        setFins([
-          { side: 'PORT', angleDeg: 0 },
-          { side: 'STBD', angleDeg: 0 },
-        ]);
-        setRollReduction(clamp(20 - nextRoll * 0.8 + (Math.random() - 0.5) * 4, 0, 40));
-      } else if (mode === 'OFF') {
-        setFins([
-          { side: 'PORT', angleDeg: 0 },
-          { side: 'STBD', angleDeg: 0 },
-        ]);
-        setRollReduction(0);
-      } else {
-        // MANUAL: keep fins as user sets
-        setRollReduction(clamp(35 - nextRoll * 1.2 + (Math.random() - 0.5) * 6, 0, 60));
-      }
-    }, 700);
-
+      const nextRoll = clamp(baseRoll + wave + (Math.random() - 0.5) * 0.6, 0, 18);
+      const target = clamp(-nextRoll * 1.2, -25, 25);
+      post('setStabilizers', { finPortDeg: clamp(target, -25, 25), finStbdDeg: clamp(-target, -25, 25) }).catch(() => {});
+    }, 1200);
     return () => window.clearInterval(t);
-  }, [mode, seaState]);
+  }, [mode, seaState, post]);
 
   function setFin(side: 'PORT' | 'STBD', angleDeg: number) {
-    setFins((prev) => prev.map((f) => (f.side === side ? { ...f, angleDeg } : f)));
+    if (side === 'PORT') post('setStabilizers', { finPortDeg: angleDeg }).catch(() => {});
+    else post('setStabilizers', { finStbdDeg: angleDeg }).catch(() => {});
   }
 
   const port = fins.find((f) => f.side === 'PORT')!;
@@ -94,7 +93,8 @@ export function StabilizersPanel() {
                 key={m}
                 type="button"
                 className={mode === m ? 'tab active' : 'tab'}
-                onClick={() => setMode(m)}
+                onClick={() => post('setStabilizers', { mode: m }).catch(() => {})}
+                disabled={loading}
               >
                 {m}
               </button>
@@ -108,7 +108,7 @@ export function StabilizersPanel() {
               min={0}
               max={6}
               value={seaState}
-              onChange={(e) => setSeaState(parseInt(e.target.value, 10))}
+              onChange={(e) => post('setStabilizers', { seaState: parseInt(e.target.value, 10) }).catch(() => {})}
             />
             <span className="mono">{seaState}/6</span>
           </label>
