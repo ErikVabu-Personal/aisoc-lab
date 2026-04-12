@@ -100,7 +100,7 @@ export function AnchorView() {
 
       <div className="panelGrid" style={{ marginTop: 12 }}>
         <div className="kpi bigPanel">
-          <div className="panelTitle">Anchor + Stabilizers</div>
+          <div className="panelTitle">Anchor</div>
           <div className="anchorRow">
             {states.map((s) => {
               const active = s.k === state;
@@ -125,13 +125,6 @@ export function AnchorView() {
             </div>
             {lastAction ? <div className="pill mono">LAST: {lastAction}</div> : null}
           </div>
-
-          <div className="hr" />
-
-          {/* Stabilizers panel (typical ship stabilizer indicators; simulated) */}
-          {/** Loaded inline to keep the demo self-contained */}
-          {/* eslint-disable-next-line @typescript-eslint/no-use-before-define */}
-          <StabilizersInline />
         </div>
 
         <div className="kpi">
@@ -152,6 +145,10 @@ export function AnchorView() {
           <div className="sub" style={{ marginTop: 12, opacity: 0.75 }}>
             Note: we can rename “Heave in” to “Retrieve” if you prefer.
           </div>
+        </div>
+
+        <div className="kpi bigPanel">
+          <StabilizersInline />
         </div>
       </div>
     </div>
