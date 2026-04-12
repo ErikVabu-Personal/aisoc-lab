@@ -19,6 +19,10 @@ ENV NODE_ENV=production
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
+# Ensure runtime dependencies exist. Next standalone output includes a node_modules
+# folder, but keeping this explicit avoids missing-module issues in ACA.
+COPY --from=builder /app/node_modules ./node_modules
+
 # OTEL bootstrap (must be present at runtime because CMD uses `-r ./otel.js`)
 COPY --from=builder /app/otel.js ./otel.js
 
