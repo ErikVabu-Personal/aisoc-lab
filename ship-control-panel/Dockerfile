@@ -19,6 +19,9 @@ ENV NODE_ENV=production
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
+# OTEL bootstrap (must be present at runtime because CMD uses `-r ./otel.js`)
+COPY --from=builder /app/otel.js ./otel.js
+
 # public/ may be empty. Ensure it exists so COPY won't fail.
 RUN mkdir -p ./public
 COPY --from=builder /app/public ./public
