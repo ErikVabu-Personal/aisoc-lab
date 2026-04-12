@@ -22,8 +22,11 @@ export async function setAuthed(): Promise<void> {
   store.set(COOKIE_NAME, '1', {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    // In Azure Container Apps you're always behind HTTPS at the edge.
+    // Setting secure=true avoids cookies being dropped/ignored.
+    secure: true,
     path: '/',
+    maxAge: 60 * 60 * 12, // 12h demo session
   });
 }
 
@@ -32,7 +35,7 @@ export async function clearAuthed(): Promise<void> {
   store.set(COOKIE_NAME, '0', {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,
     path: '/',
     maxAge: 0,
   });
