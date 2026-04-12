@@ -26,9 +26,9 @@ if (!process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
       }),
     );
   } catch (e) {
-    let code: any = undefined;
+    let code = undefined;
     try {
-      code = (e as any)?.code;
+      code = e && typeof e === 'object' ? e.code : undefined;
     } catch {
       // ignore
     }
