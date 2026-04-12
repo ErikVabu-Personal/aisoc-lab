@@ -7,6 +7,7 @@ import { Compass } from './Compass';
 import { Throttle } from './Throttle';
 import { BarMeter, Gauge } from './Instruments';
 import { SHIP_SVG } from './shipIcon';
+import { useAppState } from './useAppState';
 
 type OtherShip = { lng: number; lat: number; id: string };
 
@@ -44,13 +45,15 @@ function fmtCoord(n: number) {
 }
 
 export function NavigationView() {
+  const { state, loading, post } = useAppState();
+
   const [heading, setHeading] = useState(315);
   const [throttle, setThrottle] = useState(35);
 
   const [dest, setDest] = useState<LngLat>({ lng: DEFAULT_DEST[0], lat: DEFAULT_DEST[1] });
   const destLabel = `${fmtCoord(dest.lat)}, ${fmtCoord(dest.lng)}`;
 
-  const [collisionEnabled, setCollisionEnabled] = useState(true);
+  const collisionEnabled = state?.collision?.enabled ?? true;
 
   const otherShips = useMemo(() => makeOtherShips(), []);
 
@@ -403,7 +406,8 @@ export function NavigationView() {
           <button
             type="button"
             className={collisionEnabled ? 'toggle on' : 'toggle off'}
-            onClick={() => setCollisionEnabled((v) => !v)}
+            onClick={() => post('setCollision', { enabled: !collisionEnabled }).catch(() => {})}
+            disabled={loading}
           >
             {collisionEnabled ? 'Enabled' : 'Disabled'}
           </button>

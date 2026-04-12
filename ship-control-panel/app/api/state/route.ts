@@ -37,6 +37,11 @@ type AppState = {
     signal: number; // 0..1
   };
 
+  // Collision detection
+  collision: {
+    enabled: boolean;
+  };
+
   // Climate (per-room)
   climate: {
     rooms: Record<
@@ -75,6 +80,7 @@ const DEFAULT_STATE: AppState = {
   anchor: { state: 'HOME', chainPct: 0 },
   stabilizers: { mode: 'AUTO', seaState: 3, finPortDeg: 4, finStbdDeg: -4 },
   connectivity: { enabled: true, signal: 0.82 },
+  collision: { enabled: true },
   climate: {
     rooms: {
       Ballroom: { enabled: true, targetC: 21, fan: 'AUTO' },
@@ -193,6 +199,21 @@ export async function POST(req: Request) {
     };
     setState(next);
     logEvent('connectivity', { from: prev.connectivity, to: next.connectivity });
+    return NextResponse.json(next);
+  }
+
+  if (action === 'setCollision') {
+    next = {
+      ...prev,
+      collision: {
+        ...prev.collision,
+        ...payload,
+      },
+      version: (prev.version ?? 0) + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    setState(next);
+    logEvent('collision', { from: prev.collision, to: next.collision });
     return NextResponse.json(next);
   }
 
