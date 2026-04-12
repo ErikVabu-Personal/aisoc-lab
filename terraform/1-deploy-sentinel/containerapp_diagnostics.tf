@@ -21,8 +21,7 @@ resource "azurerm_monitor_diagnostic_setting" "shipcp" {
   }
 
   # Metrics are optional but useful.
-  metric {
+  enabled_metric {
     category = "AllMetrics"
-    enabled  = true
   }
 }
