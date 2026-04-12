@@ -145,6 +145,21 @@ function logEvent(event: string, detail: any) {
   );
 }
 
+function diffKeys(prev: any, next: any, allowedKeys?: string[]) {
+  const keys = allowedKeys ?? Array.from(new Set([...
+    Object.keys(prev ?? {}),
+    ...Object.keys(next ?? {}),
+  ]));
+
+  const changed: string[] = [];
+  for (const k of keys) {
+    const a = prev?.[k];
+    const b = next?.[k];
+    if (JSON.stringify(a) !== JSON.stringify(b)) changed.push(k);
+  }
+  return changed;
+}
+
 export async function GET() {
   return NextResponse.json(getState());
 }
@@ -190,7 +205,8 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     };
     setState(next);
-    logEvent('anchor.state', { from: prev.anchor, to: next.anchor });
+    const changed = diffKeys(prev.anchor, next.anchor, ['state', 'chainPct']);
+    if (changed.length) logEvent('anchor', { changed, from: prev.anchor, to: next.anchor });
     return NextResponse.json(next);
   }
 
@@ -205,7 +221,10 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     };
     setState(next);
-    logEvent('connectivity', { from: prev.connectivity, to: next.connectivity });
+    const changed = diffKeys(prev.connectivity, next.connectivity, ['enabled', 'signal']);
+    // Avoid noisy signal drift spam; only log enable/disable changes.
+    const changedNoSignal = changed.filter((k) => k !== 'signal');
+    if (changedNoSignal.length) logEvent('connectivity', { changed: changedNoSignal, from: prev.connectivity, to: next.connectivity });
     return NextResponse.json(next);
   }
 
@@ -220,7 +239,8 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     };
     setState(next);
-    logEvent('collision', { from: prev.collision, to: next.collision });
+    const changed = diffKeys(prev.collision, next.collision, ['enabled']);
+    if (changed.length) logEvent('collision', { changed, from: prev.collision, to: next.collision });
     return NextResponse.json(next);
   }
 
@@ -235,7 +255,8 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     };
     setState(next);
-    logEvent('navigation.throttle', { from: prev.navigation, to: next.navigation });
+    const changed = diffKeys(prev.navigation, next.navigation, ['throttle']);
+    if (changed.length) logEvent('navigation.throttle', { changed, from: prev.navigation, to: next.navigation });
     return NextResponse.json(next);
   }
 
@@ -253,10 +274,14 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     };
     setState(next);
-    logEvent('navigation.destination', {
-      from: prev.navigation.destination,
-      to: next.navigation.destination,
-    });
+    const changed = diffKeys(prev.navigation.destination, next.navigation.destination, ['lng', 'lat']);
+    if (changed.length) {
+      logEvent('navigation.destination', {
+        changed,
+        from: prev.navigation.destination,
+        to: next.navigation.destination,
+      });
+    }
     return NextResponse.json(next);
   }
 
@@ -271,7 +296,8 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     };
     setState(next);
-    logEvent('entertainment', { keys: Object.keys(payload ?? {}) });
+    const changed = diffKeys(prev.entertainment, next.entertainment, Object.keys(payload ?? {}));
+    if (changed.length) logEvent('entertainment', { changed, from: prev.entertainment, to: next.entertainment });
     return NextResponse.json(next);
   }
 
@@ -286,13 +312,20 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     };
     setState(next);
-    logEvent('stabilizers', { from: prev.stabilizers, to: next.stabilizers });
+    const changed = diffKeys(prev.stabilizers, next.stabilizers, Object.keys(payload ?? {}));
+    // Only log user changes (mode/seaState/manual fin sliders). AUTO fin drift can be noisy.
+    const noisy = ['finPortDeg', 'finStbdDeg'];
+    const changedNoisy = changed.filter((k) => !noisy.includes(k) || (payload && k in payload && prev.stabilizers?.[k] !== payload[k]));
+    if (changedNoisy.length) logEvent('stabilizers', { changed: changedNoisy, from: prev.stabilizers, to: next.stabilizers });
     return NextResponse.json(next);
   }
 
   if (action === 'setClimateRoom') {
     const { room, patch } = payload ?? {};
     if (!room) return NextResponse.json({ error: 'room required' }, { status: 400 });
+
+    const prevRoom = prev.climate.rooms?.[room] ?? { enabled: true, targetC: 21, fan: 'AUTO' };
+
     next = {
       ...prev,
       climate: {
@@ -300,7 +333,7 @@ export async function POST(req: Request) {
         rooms: {
           ...prev.climate.rooms,
           [room]: {
-            ...(prev.climate.rooms?.[room] ?? { enabled: true, targetC: 21, fan: 'AUTO' }),
+            ...prevRoom,
             ...(patch ?? {}),
           },
         },
@@ -309,7 +342,10 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     };
     setState(next);
-    logEvent('climate.room', { room, patch });
+
+    const nextRoom = next.climate.rooms?.[room];
+    const changed = diffKeys(prevRoom, nextRoom, Object.keys(patch ?? {}));
+    if (changed.length) logEvent('climate', { room, changed, from: prevRoom, to: nextRoom });
     return NextResponse.json(next);
   }
 
