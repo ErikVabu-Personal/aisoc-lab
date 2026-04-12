@@ -44,13 +44,13 @@ output "application_insights_id" {
 output "application_insights_connection_string" {
   value       = azurerm_application_insights.shipcp.connection_string
   description = "Application Insights connection string injected into the Ship Control Panel container."
-  sensitive   = false
+  sensitive   = true
 }
 
 output "application_insights_instrumentation_key" {
   value       = azurerm_application_insights.shipcp.instrumentation_key
   description = "Application Insights instrumentation key (legacy; still useful for troubleshooting)."
-  sensitive   = false
+  sensitive   = true
 }
 
 output "log_analytics_workspace_name" {
