@@ -129,15 +129,18 @@ export function EngineRoomView() {
               <div className="engineName">Fuel Levels</div>
             </div>
             <div className="engineMetrics" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-              {tanks.map((t) => (
-                <div key={t.id} className="kpi">
-                  <div className="kpiLabel">{t.label}</div>
-                  <div className="bar" style={{ marginTop: 10 }}>
-                    <div className="barFill" style={{ width: `${t.level}%` }} />
+              {tanks.map((t) => {
+                const c = t.level > 60 ? 'rgba(52,211,153,0.90)' : t.level > 30 ? 'rgba(250,204,21,0.90)' : 'rgba(251,113,133,0.92)';
+                return (
+                  <div key={t.id} className="kpi">
+                    <div className="kpiLabel">{t.label}</div>
+                    <div className="bar" style={{ marginTop: 10 }}>
+                      <div className="barFill" style={{ width: `${t.level}%`, background: c, boxShadow: `0 0 18px ${c.replace('0.90', '0.22').replace('0.92', '0.22')}` }} />
+                    </div>
+                    <div className="sub mono" style={{ marginTop: 6 }}>{t.level.toFixed(0)}%</div>
                   </div>
-                  <div className="sub mono" style={{ marginTop: 6 }}>{t.level.toFixed(0)}%</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
