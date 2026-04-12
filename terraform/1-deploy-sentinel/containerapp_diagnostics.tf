@@ -12,13 +12,13 @@ resource "azurerm_monitor_diagnostic_setting" "shipcp" {
   log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
 
   # Categories vary slightly across provider/API versions; these are the common ones.
-  enabled_log {
-    category = "ContainerAppConsoleLogs"
-  }
-
-  enabled_log {
-    category = "ContainerAppSystemLogs"
-  }
+  # NOTE: Diagnostic categories differ by region/provider/API.
+  # Some subscriptions expose these as "ContainerAppConsoleLogs"/"ContainerAppSystemLogs",
+  # others as "ContainerAppConsoleLogs"/"ContainerAppSystemLogs" or without the "ContainerApp" prefix.
+  # The error you hit indicates this environment does NOT support "ContainerAppConsoleLogs".
+  # The most broadly supported categories for Container Apps are the plain ones:
+  enabled_log { category = "ConsoleLogs" }
+  enabled_log { category = "SystemLogs" }
 
   # Metrics are optional but useful.
   enabled_metric {
