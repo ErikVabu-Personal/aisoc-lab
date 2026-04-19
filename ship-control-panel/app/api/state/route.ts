@@ -132,7 +132,15 @@ function setState(next: AppState) {
   g.__SCP_STATE__ = next;
 }
 
-function logEvent(event: string, detail: any) {
+function reqMeta(req: Request) {
+  const h = req.headers;
+  return {
+    clientIp: h.get('x-forwarded-for') ?? h.get('x-real-ip') ?? null,
+    userAgent: h.get('user-agent') ?? null,
+  };
+}
+
+function logEvent(event: string, detail: any, meta?: any) {
   // Structured log line for Sentinel/Log Analytics ingestion.
   // Keep it one-line JSON.
   console.log(
@@ -140,6 +148,7 @@ function logEvent(event: string, detail: any) {
       time: new Date().toISOString(),
       service: 'ship-control-panel',
       event,
+      meta: meta ?? null,
       detail,
     }),
   );
@@ -167,6 +176,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   const body = await req.json().catch(() => ({}));
   const prev = getState();
+  const meta = reqMeta(req);
 
   // shallow merge at top-level; callers should send full sub-objects they change
   const next: AppState = {
@@ -178,10 +188,14 @@ export async function PATCH(req: Request) {
 
   setState(next);
 
-  logEvent('state.changed', {
-    version: next.version,
-    keys: Object.keys(body ?? {}),
-  });
+  logEvent(
+    'state.changed',
+    {
+      version: next.version,
+      keys: Object.keys(body ?? {}),
+    },
+    meta,
+  );
 
   return NextResponse.json(next);
 }
@@ -191,6 +205,7 @@ export async function POST(req: Request) {
   // action-style endpoint for fine-grained changes + better logs
   const { action, payload } = body ?? {};
 
+  const meta = reqMeta(req);
   const prev = getState();
   let next = prev;
 
@@ -206,7 +221,7 @@ export async function POST(req: Request) {
     };
     setState(next);
     const changed = diffKeys(prev.anchor, next.anchor, ['state', 'chainPct']);
-    if (changed.length) logEvent('anchor', { changed, from: prev.anchor, to: next.anchor });
+    if (changed.length) logEvent('anchor', { changed, from: prev.anchor, to: next.anchor }, meta);
     return NextResponse.json(next);
   }
 
@@ -224,7 +239,7 @@ export async function POST(req: Request) {
     const changed = diffKeys(prev.connectivity, next.connectivity, ['enabled', 'signal']);
     // Avoid noisy signal drift spam; only log enable/disable changes.
     const changedNoSignal = changed.filter((k) => k !== 'signal');
-    if (changedNoSignal.length) logEvent('connectivity', { changed: changedNoSignal, from: prev.connectivity, to: next.connectivity });
+    if (changedNoSignal.length) logEvent('connectivity', { changed: changedNoSignal, from: prev.connectivity, to: next.connectivity }, meta);
     return NextResponse.json(next);
   }
 
@@ -240,7 +255,7 @@ export async function POST(req: Request) {
     };
     setState(next);
     const changed = diffKeys(prev.collision, next.collision, ['enabled']);
-    if (changed.length) logEvent('collision', { changed, from: prev.collision, to: next.collision });
+    if (changed.length) logEvent('collision', { changed, from: prev.collision, to: next.collision }, meta);
     return NextResponse.json(next);
   }
 
@@ -256,7 +271,7 @@ export async function POST(req: Request) {
     };
     setState(next);
     const changed = diffKeys(prev.navigation, next.navigation, ['throttle']);
-    if (changed.length) logEvent('navigation.throttle', { changed, from: prev.navigation, to: next.navigation });
+    if (changed.length) logEvent('navigation.throttle', { changed, from: prev.navigation, to: next.navigation }, meta);
     return NextResponse.json(next);
   }
 
@@ -276,11 +291,15 @@ export async function POST(req: Request) {
     setState(next);
     const changed = diffKeys(prev.navigation.destination, next.navigation.destination, ['lng', 'lat']);
     if (changed.length) {
-      logEvent('navigation.destination', {
-        changed,
-        from: prev.navigation.destination,
-        to: next.navigation.destination,
-      });
+      logEvent(
+        'navigation.destination',
+        {
+          changed,
+          from: prev.navigation.destination,
+          to: next.navigation.destination,
+        },
+        meta,
+      );
     }
     return NextResponse.json(next);
   }
@@ -297,7 +316,7 @@ export async function POST(req: Request) {
     };
     setState(next);
     const changed = diffKeys(prev.entertainment, next.entertainment, Object.keys(payload ?? {}));
-    if (changed.length) logEvent('entertainment', { changed, from: prev.entertainment, to: next.entertainment });
+    if (changed.length) logEvent('entertainment', { changed, from: prev.entertainment, to: next.entertainment }, meta);
     return NextResponse.json(next);
   }
 
@@ -316,7 +335,7 @@ export async function POST(req: Request) {
     // Only log user changes (mode/seaState/manual fin sliders). AUTO fin drift can be noisy.
     const noisy = ['finPortDeg', 'finStbdDeg'];
     const changedNoisy = changed.filter((k) => !noisy.includes(k) || (payload && k in payload && prev.stabilizers?.[k] !== payload[k]));
-    if (changedNoisy.length) logEvent('stabilizers', { changed: changedNoisy, from: prev.stabilizers, to: next.stabilizers });
+    if (changedNoisy.length) logEvent('stabilizers', { changed: changedNoisy, from: prev.stabilizers, to: next.stabilizers }, meta);
     return NextResponse.json(next);
   }
 
@@ -345,7 +364,7 @@ export async function POST(req: Request) {
 
     const nextRoom = next.climate.rooms?.[room];
     const changed = diffKeys(prevRoom, nextRoom, Object.keys(patch ?? {}));
-    if (changed.length) logEvent('climate', { room, changed, from: prevRoom, to: nextRoom });
+    if (changed.length) logEvent('climate', { room, changed, from: prevRoom, to: nextRoom }, meta);
     return NextResponse.json(next);
   }
 
