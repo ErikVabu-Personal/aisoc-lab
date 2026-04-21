@@ -146,7 +146,28 @@ def main() -> int:
     # Typical pattern is something like POST {foundry_api}/agents
     # Foundry data-plane requires an explicit api-version query parameter.
     # We use a conservative default that should work for the current Foundry Agents API.
-    api_ver = "2025-04-01-preview"
+    # Discover supported api-version values for this endpoint
+    def probe_versions(versions: list[str]) -> str:
+        token_probe = az_token("https://ai.azure.com/")
+        for v in versions:
+            u = f"{foundry_api}/agents?api-version={v}"
+            try:
+                rr = requests.get(u, headers={"Authorization": f"Bearer {token_probe}"}, timeout=30)
+                if rr.status_code != 400 or "API version not supported" not in rr.text:
+                    # If it's anything else (200/401/403/404), we at least know api-version is accepted.
+                    return v
+            except Exception:
+                continue
+        return versions[0]
+
+    api_ver = probe_versions([
+        "2025-05-01-preview",
+        "2025-06-01-preview",
+        "2025-07-01-preview",
+        "2025-08-01-preview",
+        "2025-09-01-preview",
+        "2025-10-01-preview",
+    ])
     url = f"{foundry_api}/agents?api-version={api_ver}"
     print(f"POST {url}")
 
