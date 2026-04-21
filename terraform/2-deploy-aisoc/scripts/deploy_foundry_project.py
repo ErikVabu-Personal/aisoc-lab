@@ -93,7 +93,7 @@ def main() -> int:
     # Use the original Terraform output name from main.tf
     hub_id = get_val(tf, "foundry_account_id")
     project_name = get_val(tf, "foundry_project_name")
-    api_version = get_val(tf, "foundry_api_version") or "2025-10-01-preview"
+    api_version = get_val(tf, "foundry_api_version") or "2025-06-01"
 
     project_url = f"https://management.azure.com{hub_id}/projects/{project_name}?api-version={api_version}"
 
@@ -109,7 +109,12 @@ def main() -> int:
     print(f"Creating Foundry project '{project_name}' under hub {hub_id}...")
     body = {
         "location": get_val(tf, "foundry_location"),
-        "properties": {},
+        "sku": {"name": "S0"},
+        "identity": {"type": "SystemAssigned"},
+        "properties": {
+            "displayName": project_name,
+            "description": "AISOC demo project",
+        },
     }
 
     # PUT create

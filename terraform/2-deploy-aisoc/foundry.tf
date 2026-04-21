@@ -25,9 +25,9 @@ locals {
 locals {
   foundry_rg_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${data.terraform_remote_state.sentinel.outputs.resource_group}"
 
-  # Keep apiVersion pinned to one supported by common AzAPI provider schemas.
-  # Note: some regions/subscriptions may still reject project creation with a generic error.
-  foundry_api_version = "2025-10-01-preview"
+  # Match Microsoft Learn doc for Foundry AzAPI resources.
+  # This significantly reduces flaky 500s from the control plane.
+  foundry_api_version = "2025-06-01"
 
   # Auto-generate globally-unique-ish names if not provided.
   # (Cognitive Services account names must be unique and follow specific rules.)
@@ -40,23 +40,24 @@ locals {
 }
 
 resource "azapi_resource" "foundry_account" {
-  type      = "Microsoft.CognitiveServices/accounts@${local.foundry_api_version}"
-  name      = local.foundry_hub_name_effective
-  location  = local.foundry_location_effective
-  parent_id = local.foundry_rg_id
-
-  # Azure requires a managed identity for certain AI/AMLRP-backed configurations.
-  identity {
-    type = "SystemAssigned"
-  }
+  type                      = "Microsoft.CognitiveServices/accounts@${local.foundry_api_version}"
+  name                      = local.foundry_hub_name_effective
+  location                  = local.foundry_location_effective
+  parent_id                 = local.foundry_rg_id
+  schema_validation_enabled = false
 
   body = {
     kind = "AIServices"
     sku  = { name = "S0" }
+
+    identity = {
+      type = "SystemAssigned"
+    }
+
     properties = {
-      # Keep minimal; expand if your tenant requires specific network/auth settings.
-      customSubDomainName    = local.foundry_custom_subdomain
-      allowProjectManagement = true
+      disableLocalAuth        = false
+      allowProjectManagement  = true
+      customSubDomainName     = local.foundry_custom_subdomain
     }
   }
 }
@@ -73,8 +74,19 @@ resource "azapi_resource" "foundry_project" {
   # Be explicit: ensure account creation/update is fully applied before project.
   depends_on = [azapi_resource.foundry_account]
 
+  location                  = local.foundry_location_effective
+  schema_validation_enabled = false
+
   body = {
-    location   = local.foundry_location_effective
-    properties = {}
+    sku = { name = "S0" }
+
+    identity = {
+      type = "SystemAssigned"
+    }
+
+    properties = {
+      displayName = local.foundry_project_name_effective
+      description = "AISOC demo project"
+    }
   }
 }
