@@ -182,8 +182,11 @@ def main() -> int:
         # Use dict-based tool definition per MSFT docs (more robust across SDK versions)
         # Use dict-based tool definition per MSFT docs (more robust across SDK versions).
         #
-        # NOTE: Foundry has been picky about field casing here. In practice the service
-        # expects `securityScheme` (camelCase), not `security_scheme` (snake_case).
+        # Unfortunately, different Foundry/SDK versions disagree on the casing of the
+        # auth block. The service error you hit is explicit about needing
+        # `security_scheme`, so we send BOTH forms to satisfy strict validators while
+        # still working with UIs that expect camelCase.
+        auth_security = {"project_connection_id": conn_id}
         tool = {
             "type": "openapi",
             "openapi": {
@@ -192,9 +195,10 @@ def main() -> int:
                 "spec": spec,
                 "auth": {
                     "type": "project_connection",
-                    "securityScheme": {
-                        "project_connection_id": conn_id,
-                    },
+                    # snake_case (required by some validators)
+                    "security_scheme": auth_security,
+                    # camelCase (expected by some portal surfaces)
+                    "securityScheme": auth_security,
                 },
             },
         }
