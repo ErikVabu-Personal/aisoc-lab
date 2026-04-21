@@ -101,7 +101,8 @@ def main() -> int:
     print(f"Runner bearer secret name (KV): {runner_secret_name}")
 
     # Retrieve runner bearer token from Key Vault (CLI). KV name is output as key_vault_name.
-    kv_name = get_val(tf, "key_vault_name")
+    # Prefer dedicated output if present; fall back to existing/older output name.
+    kv_name = tf.get("key_vault_name", {}).get("value") or get_val(tf, "key_vault_id").split("/")[-1]
     runner_bearer = run([
         "az",
         "keyvault",
