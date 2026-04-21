@@ -1,3 +1,8 @@
+output "runner_name" {
+  value       = azurerm_container_app.runner.name
+  description = "Runner Container App resource name."
+}
+
 output "runner_url" {
   value       = "https://${azurerm_container_app.runner.ingress[0].fqdn}"
   description = "Runner base URL (public)"
