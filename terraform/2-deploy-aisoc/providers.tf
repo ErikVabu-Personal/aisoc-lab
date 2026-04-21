@@ -20,7 +20,18 @@ terraform {
 }
 
 provider "azurerm" {
-  features {}
+  features {
+    key_vault {
+      # Many tenants enforce policies that block purge operations.
+      # Disable purge-on-destroy so `terraform destroy` works reliably.
+      purge_soft_deleted_secrets_on_destroy      = false
+      purge_soft_deleted_keys_on_destroy         = false
+      purge_soft_deleted_certificates_on_destroy = false
+
+      # If a secret was soft-deleted, allow Terraform to recover it on the next apply.
+      recover_soft_deleted_secrets = true
+    }
+  }
 }
 
 provider "azapi" {}
