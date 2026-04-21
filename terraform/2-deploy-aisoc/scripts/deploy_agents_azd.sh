@@ -69,6 +69,18 @@ if [[ -z "$ACR_SERVER" || "$ACR_SERVER" == "null" ]]; then
 fi
 export AZURE_CONTAINER_REGISTRY_ENDPOINT="$ACR_SERVER"
 
+# Persist env var into the default azd environment file (best-effort)
+ENV_DIR="$root/.azure/2-deploy-aisoc-dev"
+if [[ -d "$ENV_DIR" ]]; then
+  ENV_FILE="$ENV_DIR/.env"
+  if [[ -f "$ENV_FILE" ]]; then
+    # remove any existing line
+    grep -v '^AZURE_CONTAINER_REGISTRY_ENDPOINT=' "$ENV_FILE" >"$ENV_FILE.tmp" || true
+    mv "$ENV_FILE.tmp" "$ENV_FILE"
+    echo "AZURE_CONTAINER_REGISTRY_ENDPOINT=$AZURE_CONTAINER_REGISTRY_ENDPOINT" >>"$ENV_FILE"
+  fi
+fi
+
 # Initialize (non-interactive)
 azd ai agent init "$AGENT_DIR" \
   --environment "$ENV_NAME" \
@@ -79,5 +91,5 @@ azd ai agent init "$AGENT_DIR" \
 echo "Initialized azd agent project in $AGENT_DIR"
 
 echo "\nNEXT STEP: deploy hosted agent (no provision):"
-echo "- cd $AGENT_DIR"
+echo "- cd $root"
 echo "- run: azd deploy 2-deploy-aisoc"
