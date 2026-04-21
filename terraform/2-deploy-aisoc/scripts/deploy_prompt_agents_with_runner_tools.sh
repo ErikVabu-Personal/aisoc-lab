@@ -29,27 +29,13 @@ CONN_NAME="aisoc-runner-key"
 if ! az cognitiveservices account project connection show \
   -g "$RG" -n "$HUB" --project-name "$PROJ" --connection-name "$CONN_NAME" >/dev/null 2>&1; then
 
-  TMP_FILE="/tmp/${CONN_NAME}.connection.json"
-  cat >"$TMP_FILE" <<EOF
-{
-  "type": "CustomKeys",
-  "displayName": "AISOC Runner Key",
-  "target": "${AISOC_RUNNER_URL}",
-  "customKeys": {
-    "x-aisoc-runner-key": "${AISOC_RUNNER_BEARER}"
-  }
-}
-EOF
-
-  az cognitiveservices account project connection create \
-    -g "$RG" \
-    -n "$HUB" \
-    --project-name "$PROJ" \
-    --connection-name "$CONN_NAME" \
-    --file "$TMP_FILE" \
-    >/dev/null
-
-  echo "Created Foundry project connection: $CONN_NAME"
+  echo "ERROR: Foundry project connection '$CONN_NAME' not found." >&2
+  echo "Create it once in Foundry UI (Project -> Connections -> Add -> Custom keys)" >&2
+  echo "  Name:   $CONN_NAME" >&2
+  echo "  Key:    x-aisoc-runner-key" >&2
+  echo "  Value:  <runner bearer token>" >&2
+  echo "Then re-run this script." >&2
+  exit 4
 fi
 
 python3 scripts/deploy_prompt_agents_with_runner_tools.py
