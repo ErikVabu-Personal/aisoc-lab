@@ -20,8 +20,8 @@ resource "azapi_resource" "foundry_model_deployment" {
 
   body = {
     sku = {
-      name     = "Standard"
-      capacity = 1
+      name     = var.foundry_model_sku_name
+      capacity = var.foundry_model_sku_capacity
     }
 
     properties = {

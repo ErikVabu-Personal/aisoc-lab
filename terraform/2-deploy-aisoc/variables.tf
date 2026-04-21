@@ -57,6 +57,18 @@ variable "foundry_model_version" {
   default     = null
 }
 
+variable "foundry_model_sku_name" {
+  description = "SKU name for the deployment (e.g. Standard, GlobalStandard)."
+  type        = string
+  default     = "Standard"
+}
+
+variable "foundry_model_sku_capacity" {
+  description = "SKU capacity for the deployment."
+  type        = number
+  default     = 1
+}
+
 variable "foundry_manage_project_in_terraform" {
   description = "If true, attempt to create the Foundry project via AzAPI in Terraform."
   type        = bool
