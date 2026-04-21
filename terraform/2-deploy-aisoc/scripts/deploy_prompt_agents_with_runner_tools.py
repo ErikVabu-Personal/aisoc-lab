@@ -138,10 +138,6 @@ def main() -> int:
         from azure.ai.projects import AIProjectClient
         from azure.ai.projects.models import (
             PromptAgentDefinition,
-            OpenApiTool,
-            OpenApiFunctionDefinition,
-            OpenApiProjectConnectionAuthDetails,
-            OpenApiProjectConnectionSecurityScheme,
         )
     except Exception as e:
         print("ERROR: missing/old azure-ai-projects SDK for OpenAPI tools. Upgrade needed.")
@@ -178,18 +174,28 @@ def main() -> int:
                 keys={"x-aisoc-runner-key": runner_bearer},
             )
 
-        tool = OpenApiTool(
-            openapi=OpenApiFunctionDefinition(
-                name="aisoc_runner",
-                spec=spec,
-                description="AISOC Runner gateway",
-                auth=OpenApiProjectConnectionAuthDetails(
-                    security_scheme=OpenApiProjectConnectionSecurityScheme(
-                        project_connection_id=getattr(conn, "id", conn.get("id", None)),
-                    )
-                ),
-            )
-        )
+        conn_id = getattr(conn, "id", None) or (conn.get("id") if isinstance(conn, dict) else None)
+        if not conn_id:
+            print("ERROR: could not determine connection id for aisoc-runner-key", file=sys.stderr)
+            return 5
+
+        # Use dict-based tool definition per MSFT docs (more robust across SDK versions)
+        tool = {
+            "type": "openapi",
+            "openapi": {
+                "name": "aisoc_runner",
+                "description": "AISOC Runner gateway",
+                "spec": spec,
+                "auth": {
+                    "type": "project_connection",
+                    "security_scheme": {
+                        "project_connection_id": conn_id,
+                        # Map the connection to this OpenAPI security scheme name:
+                        "security_scheme_name": "runnerKey",
+                    },
+                },
+            },
+        }
 
         agent_name = slug(name)
 
