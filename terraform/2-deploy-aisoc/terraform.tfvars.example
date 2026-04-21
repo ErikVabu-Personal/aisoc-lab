@@ -23,6 +23,11 @@ function_plan_sku = "EP1"
 # Recommended: set Foundry location explicitly, separately from App Service quota hacks.
 foundry_location = "westus"
 
+# IMPORTANT:
+# Creating Foundry projects via Terraform/AzAPI can take a very long time and may time out.
+# Recommended: keep this false and run scripts/deploy_foundry_project.py after `terraform apply`.
+foundry_manage_project_in_terraform = false
+
 # REQUIRED: model choice + deployment name that agents should target
 foundry_model_choice          = "gpt-4.1-mini"
 foundry_model_deployment_name = "gpt-4.1-mini"

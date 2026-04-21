@@ -62,6 +62,8 @@ resource "azapi_resource" "foundry_account" {
 }
 
 resource "azapi_resource" "foundry_project" {
+  # Creating Foundry projects via ARM/AzAPI can be extremely slow and often
+  # hits provider deadlines. Prefer using scripts/deploy_foundry_project.py.
   count = var.foundry_manage_project_in_terraform ? 1 : 0
 
   type      = "Microsoft.CognitiveServices/accounts/projects@${local.foundry_api_version}"
