@@ -73,4 +73,13 @@ az containerapp update \
   --set-env-vars SOCGATEWAY_FUNCTION_CODE=secretref:socgateway-function-code \
   >/dev/null
 
-echo "OK: runner configured with SOCGateway function code." >&2
+# Some az versions don't support `az containerapp restart`. To ensure the new secret
+# is picked up, force a new revision by setting a harmless env var.
+RESTART_TS="$(date +%s)"
+az containerapp update \
+  -g "$RG" \
+  -n "$RUNNER_NAME" \
+  --set-env-vars RESTART_TS="$RESTART_TS" \
+  >/dev/null
+
+echo "OK: runner configured with SOCGateway function code (new revision triggered)." >&2
