@@ -32,7 +32,7 @@ resource "azurerm_key_vault_secret" "runner_token" {
 
 resource "azurerm_container_app" "runner" {
   name                         = "ca-aisoc-runner-${random_string.suffix.result}"
-  resource_group_name          = local.rg_name
+  resource_group_name          = data.terraform_remote_state.sentinel.outputs.resource_group
   container_app_environment_id = data.terraform_remote_state.sentinel.outputs.container_app_environment_id
   revision_mode                = "Single"
 
