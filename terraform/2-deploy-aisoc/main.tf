@@ -228,6 +228,11 @@ output "foundry_project_id" {
   description = "Foundry project resource id (only when managed by Terraform)."
 }
 
+output "foundry_project_endpoint" {
+  value       = try(azapi_resource.foundry_project[0].output.properties.endpoints["AI Foundry API"], null)
+  description = "Foundry project endpoint (AI Foundry API) used by SDK/scripts."
+}
+
 output "key_vault_name" {
   value       = azurerm_key_vault.kv.name
   description = "Key Vault name for Phase 2 (stores runner bearer, etc.)."

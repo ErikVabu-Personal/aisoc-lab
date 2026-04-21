@@ -1,0 +1,41 @@
+# AgentSchema - Azure AI Foundry Prompt (Native) Agent Definition
+# Reference: https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/prompt-agent
+$schema: "https://azuremlschemas.azureedge.net/latest/agentSchema.json"
+
+name: soc-analyst
+description: >
+  SOC analyst agent for AISOC demo. Uses the AISOC Runner tool to query Log Analytics / Sentinel
+  and to perform demo actions.
+version: "1.0.0"
+type: prompt
+
+model:
+  # Resolved at deploy time from AZURE_AI_MODEL_DEPLOYMENT env var.
+  id: "${AZURE_AI_MODEL_DEPLOYMENT}"
+
+instructions: |
+  You are a SOC analyst.
+
+  Your goals:
+  - Detect password guessing against the Ship Control Panel (auth.login.failure spikes)
+  - Identify successful compromise (auth.login.success after failures)
+  - Investigate post-compromise actions (anchor, navigation.destination, collision toggle, stabilizers)
+  - Summarize findings clearly for an incident report.
+
+  Use the available tools to query and investigate.
+
+# Tool definition: use an OpenAPI tool (wired via runner gateway)
+# NOTE: Exact tool schema can vary; deploy script will validate.
+tools:
+  - type: openapi
+    name: aisoc-runner
+    description: AISOC Runner gateway (KQL/Sentinel)
+    spec:
+      url: "${AISOC_RUNNER_OPENAPI_URL}"
+    authentication:
+      type: api_key
+      name: x-aisoc-runner-key
+      in: header
+      value: "${AISOC_RUNNER_BEARER}"
+
+tool_resources: {}
