@@ -7,9 +7,17 @@ export AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$(terraform output -raw foundry_projec
 export AZURE_AI_MODEL_DEPLOYMENT="$(terraform output -raw foundry_model_deployment_name)"
 export AISOC_RUNNER_URL="$(terraform output -raw runner_url)"
 
-RG="$(terraform -chdir=../1-deploy-sentinel output -raw resource_group)"
-HUB="$(terraform output -raw foundry_hub_name)"
-PROJ="$(terraform output -raw foundry_project_name)"
+# Export deterministic identifiers so the Python script can build the portal-compatible
+# project connection ARM id:
+# /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<hub>/projects/<proj>/connections/<name>
+export AZURE_SUBSCRIPTION_ID="$(terraform output -raw subscription_id 2>/dev/null || az account show --query id -o tsv)"
+export AZURE_RESOURCE_GROUP="$(terraform output -raw resource_group)"
+export AZURE_FOUNDRY_HUB_NAME="$(terraform output -raw foundry_hub_name)"
+export AZURE_FOUNDRY_PROJECT_NAME="$(terraform output -raw foundry_project_name)"
+
+RG="$AZURE_RESOURCE_GROUP"
+HUB="$AZURE_FOUNDRY_HUB_NAME"
+PROJ="$AZURE_FOUNDRY_PROJECT_NAME"
 
 KV_ID="$(terraform output -raw key_vault_id)"
 KV_NAME="${KV_ID##*/}"

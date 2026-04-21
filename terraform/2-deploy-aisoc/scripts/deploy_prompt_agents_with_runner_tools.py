@@ -126,9 +126,25 @@ def main() -> int:
     runner_url = os.environ.get("AISOC_RUNNER_URL")
     runner_bearer = os.environ.get("AISOC_RUNNER_BEARER")
 
-    if not endpoint or not model or not runner_url or not runner_bearer:
+    # Deterministic identifiers (exported by deploy_prompt_agents_with_runner_tools.sh)
+    sub_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
+    rg = os.environ.get("AZURE_RESOURCE_GROUP")
+    hub = os.environ.get("AZURE_FOUNDRY_HUB_NAME")
+    project = os.environ.get("AZURE_FOUNDRY_PROJECT_NAME")
+
+    if (
+        not endpoint
+        or not model
+        or not runner_url
+        or not runner_bearer
+        or not sub_id
+        or not rg
+        or not hub
+        or not project
+    ):
         print(
-            "ERROR: missing env vars. Need AZURE_AI_FOUNDRY_PROJECT_ENDPOINT, AZURE_AI_MODEL_DEPLOYMENT, AISOC_RUNNER_URL, AISOC_RUNNER_BEARER",
+            "ERROR: missing env vars. Need AZURE_AI_FOUNDRY_PROJECT_ENDPOINT, AZURE_AI_MODEL_DEPLOYMENT, AISOC_RUNNER_URL, AISOC_RUNNER_BEARER, "
+            "AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, AZURE_FOUNDRY_HUB_NAME, AZURE_FOUNDRY_PROJECT_NAME",
             file=sys.stderr,
         )
         return 2
@@ -174,22 +190,21 @@ def main() -> int:
                 keys={"x-aisoc-runner-key": runner_bearer},
             )
 
-        conn_id = getattr(conn, "id", None) or (conn.get("id") if isinstance(conn, dict) else None)
-        if not conn_id:
-            print("ERROR: could not determine connection id for aisoc-runner-key", file=sys.stderr)
-            return 5
+        # IMPORTANT: Foundry's OpenAPI tool expects a *project connection ARM id* (portal-compatible),
+        # not whatever shape the SDK returns for `conn.id`. Build it deterministically:
+        # /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<hub>/projects/<proj>/connections/<name>
+        conn_arm_id = (
+            f"/subscriptions/{sub_id}"
+            f"/resourceGroups/{rg}"
+            f"/providers/Microsoft.CognitiveServices/accounts/{hub}"
+            f"/projects/{project}"
+            f"/connections/{conn_name}"
+        )
 
-        # Use dict-based tool definition per MSFT docs (more robust across SDK versions)
-        # Use dict-based tool definition per MSFT docs (more robust across SDK versions).
-        #
-        # Unfortunately, different Foundry/SDK versions disagree on the casing of the
-        # auth block. The service error you hit is explicit about needing
-        # `security_scheme`, so we send BOTH forms to satisfy strict validators while
-        # still working with UIs that expect camelCase.
-        # Foundry requires both the project connection id and the OpenAPI security scheme name
-        # (the key under components.securitySchemes) so it can bind the connection.
-        # Our rendered specs use security scheme name: "runnerKey".
-        auth_security = {"project_connection_id": conn_id, "security_scheme_name": "runnerKey"}
+        # Unfortunately, different Foundry/SDK versions disagree on the casing of the auth block.
+        # The service validator can require `security_scheme`, while some portal surfaces look for
+        # `securityScheme`. We send BOTH.
+        auth_security = {"project_connection_id": conn_arm_id, "security_scheme_name": "runnerKey"}
         tool = {
             "type": "openapi",
             "openapi": {
