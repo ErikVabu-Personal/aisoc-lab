@@ -51,6 +51,7 @@ conn_delete() {
 conn_create_via_cli() {
   local tmp_file
   tmp_file="/tmp/${CONN_NAME}.connection.json"
+  # Write valid JSON to a file (az CLI accepts JSON/YAML here).
   cat >"$tmp_file" <<EOF
 $1
 EOF
@@ -74,11 +75,13 @@ conn_create_via_rest() {
   # - properties.authType/category CustomKeys
   # - metadata.type openapi
   # - target '-' (GUI uses '-')
+  # NOTE: The RP requires `credentials` to be present for CustomKeys, even though
+  # it is not returned on GET (secrets are redacted).
   az rest \
     --method put \
     --url "$url" \
     --headers "Authorization=Bearer $token" "Content-Type=application/json" \
-    --body "{\"properties\":{\"authType\":\"CustomKeys\",\"category\":\"CustomKeys\",\"metadata\":{\"type\":\"openapi\"},\"target\":\"-\",\"customKeys\":{\"x-aisoc-runner-key\":\"${AISOC_RUNNER_BEARER}\"}}}" \
+    --body "{\"properties\":{\"authType\":\"CustomKeys\",\"category\":\"CustomKeys\",\"metadata\":{\"type\":\"openapi\"},\"target\":\"-\",\"credentials\":{\"keys\":{\"x-aisoc-runner-key\":\"${AISOC_RUNNER_BEARER}\"}}}}" \
     >/dev/null
 }
 
@@ -96,7 +99,16 @@ ensure_conn() {
   echo "Creating Foundry project connection '$CONN_NAME' via az cognitiveservices..." >&2
 
   # Attempt 1: CLI payload (top-level fields)
-  if conn_create_via_cli "{\n  \"type\": \"CustomKeys\",\n  \"displayName\": \"AISOC Runner Key\",\n  \"target\": \"-\",\n  \"metadata\": {\"type\": \"openapi\"},\n  \"authType\": \"CustomKeys\",\n  \"customKeys\": {\n    \"x-aisoc-runner-key\": \"${AISOC_RUNNER_BEARER}\"\n  }\n}"; then
+  if conn_create_via_cli "{
+  \"type\": \"CustomKeys\",
+  \"displayName\": \"AISOC Runner Key\",
+  \"target\": \"-\",
+  \"metadata\": {\"type\": \"openapi\"},
+  \"authType\": \"CustomKeys\",
+  \"customKeys\": {
+    \"x-aisoc-runner-key\": \"${AISOC_RUNNER_BEARER}\"
+  }
+}"; then
     local at
     at="$(conn_auth_type)"
     if [[ "$at" == "CustomKeys" ]]; then
@@ -108,7 +120,17 @@ ensure_conn() {
   fi
 
   # Attempt 2: CLI payload (properties wrapper)
-  if conn_create_via_cli "{\n  \"properties\": {\n    \"authType\": \"CustomKeys\",\n    \"category\": \"CustomKeys\",\n    \"metadata\": {\"type\": \"openapi\"},\n    \"target\": \"-\",\n    \"customKeys\": {\n      \"x-aisoc-runner-key\": \"${AISOC_RUNNER_BEARER}\"\n    }\n  }\n}"; then
+  if conn_create_via_cli "{
+  \"properties\": {
+    \"authType\": \"CustomKeys\",
+    \"category\": \"CustomKeys\",
+    \"metadata\": {\"type\": \"openapi\"},
+    \"target\": \"-\",
+    \"customKeys\": {
+      \"x-aisoc-runner-key\": \"${AISOC_RUNNER_BEARER}\"
+    }
+  }
+}"; then
     local at
     at="$(conn_auth_type)"
     if [[ "$at" == "CustomKeys" ]]; then
