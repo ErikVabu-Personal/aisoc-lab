@@ -28,6 +28,12 @@ foundry_location = "westus"
 # Recommended: keep this false and run scripts/deploy_foundry_project.py after `terraform apply`.
 foundry_manage_project_in_terraform = true
 
+# Runner (Azure Container Apps)
+# REQUIRED: runner container image (publish via GitHub Actions)
+# Example:
+# runner_image = "ghcr.io/erikvabu-personal/aisoc-runner:<sha>"
+runner_image = "ghcr.io/erikvabu-personal/aisoc-runner:latest"
+
 # REQUIRED: model choice + deployment name that agents should target
 foundry_model_choice          = "gpt-4.1-mini"
 foundry_model_deployment_name = "gpt-4.1-mini"
