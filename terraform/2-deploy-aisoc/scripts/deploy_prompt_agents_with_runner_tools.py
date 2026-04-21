@@ -180,6 +180,10 @@ def main() -> int:
             return 5
 
         # Use dict-based tool definition per MSFT docs (more robust across SDK versions)
+        # Use dict-based tool definition per MSFT docs (more robust across SDK versions).
+        #
+        # NOTE: Foundry has been picky about field casing here. In practice the service
+        # expects `securityScheme` (camelCase), not `security_scheme` (snake_case).
         tool = {
             "type": "openapi",
             "openapi": {
@@ -188,10 +192,8 @@ def main() -> int:
                 "spec": spec,
                 "auth": {
                     "type": "project_connection",
-                    "security_scheme": {
+                    "securityScheme": {
                         "project_connection_id": conn_id,
-                        # Map the connection to this OpenAPI security scheme name:
-                        "security_scheme_name": "runnerKey",
                     },
                 },
             },

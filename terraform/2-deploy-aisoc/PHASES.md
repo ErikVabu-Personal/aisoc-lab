@@ -11,7 +11,7 @@ It reads Phase 1 outputs from `../1-deploy-sentinel/terraform.tfstate`.
 Run:
 
 ```bash
-cd terraform/2-2-deploy-aisoc
+cd terraform/2-deploy-aisoc
 terraform init
 terraform apply
 ```
