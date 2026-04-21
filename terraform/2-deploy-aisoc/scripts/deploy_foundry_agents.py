@@ -43,13 +43,13 @@ def get_val(tf: Dict[str, Any], key: str) -> Any:
     return tf[key].get("value")
 
 
-def az_token() -> str:
+def az_token(resource: str) -> str:
     out = run([
         "az",
         "account",
         "get-access-token",
         "--resource",
-        "https://management.azure.com/",
+        resource,
         "-o",
         "json",
     ])
@@ -72,7 +72,7 @@ def main() -> int:
     args = ap.parse_args()
 
     try:
-        _ = az_token()
+        _ = az_token("https://management.azure.com/")
     except Exception:
         print("ERROR: Azure CLI auth not available. Run `az login` first.", file=sys.stderr)
         return 2
@@ -148,7 +148,8 @@ def main() -> int:
     print(f"POST {url}")
 
     # Use ARM token as bearer (many Foundry APIs accept AAD token).
-    token = az_token()
+    # Foundry API expects an access token for the ai.azure.com audience.
+    token = az_token("https://ai.azure.com/")
     r = requests.post(url, json=agent_payload, headers={"Authorization": f"Bearer {token}"}, timeout=60)
     if r.status_code >= 300:
         print("ERROR: agent create failed")
