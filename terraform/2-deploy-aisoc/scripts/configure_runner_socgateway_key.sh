@@ -34,7 +34,7 @@ if [[ -z "$RUNNER_NAME" || "$RUNNER_NAME" == "null" ]]; then
 fi
 
 # Try to fetch the function key for SOCGateway.
-# CLI command shapes can vary across versions; we try a couple approaches.
+# CLI command shapes can vary across versions; prefer function-level key.
 KEY=""
 
 if az functionapp function keys list --help >/dev/null 2>&1; then
@@ -45,7 +45,7 @@ if az functionapp function keys list --help >/dev/null 2>&1; then
     --query default -o tsv 2>/dev/null || true)"
 fi
 
-# Fallback: some setups expose only host keys in CLI; runner typically works with host keys too.
+# Fallback: host key (runner works with host keys too)
 if [[ -z "$KEY" || "$KEY" == "null" ]]; then
   KEY="$(az functionapp keys list \
     -g "$RG" \
@@ -64,7 +64,7 @@ echo "Setting SOCGATEWAY_FUNCTION_CODE on runner $RUNNER_NAME (RG: $RG)" >&2
 az containerapp secret set \
   -g "$RG" \
   -n "$RUNNER_NAME" \
-  --secrets socgateway-function-code="$KEY" \
+  --secrets "socgateway-function-code=$KEY" \
   >/dev/null
 
 az containerapp update \
@@ -81,5 +81,28 @@ az containerapp update \
   -n "$RUNNER_NAME" \
   --set-env-vars RESTART_TS="$RESTART_TS" \
   >/dev/null
+
+# Wait until the new revision is serving and the env var is visible.
+RUNNER_URL="$(terraform output -raw runner_url)"
+RUNNER_BEARER_SECRET="$(terraform output -raw runner_bearer_token_secret_name)"
+KV_NAME="$(terraform output -raw key_vault_name)"
+RUNNER_BEARER="$(az keyvault secret show --vault-name "$KV_NAME" --name "$RUNNER_BEARER_SECRET" --query value -o tsv 2>/dev/null || true)"
+
+if [[ -n "$RUNNER_BEARER" ]]; then
+  echo "Waiting for runner to pick up SOCGATEWAY_FUNCTION_CODE..." >&2
+  deadline=$(( $(date +%s) + 120 ))
+  while [[ $(date +%s) -lt $deadline ]]; do
+    cfg="$(curl -sS "$RUNNER_URL/debug/config" -H "x-aisoc-runner-key: $RUNNER_BEARER" 2>/dev/null || true)"
+    if echo "$cfg" | grep -q '"socgateway_function_code_set":true'; then
+      echo "OK: runner is updated." >&2
+      echo "OK: runner configured with SOCGateway function code." >&2
+      exit 0
+    fi
+    sleep 3
+  done
+  echo "WARN: timed out waiting for runner config to reflect the new function code. It may still converge shortly." >&2
+else
+  echo "WARN: could not fetch runner bearer from Key Vault to verify rollout; skipping wait." >&2
+fi
 
 echo "OK: runner configured with SOCGateway function code (new revision triggered)." >&2
