@@ -218,6 +218,11 @@ output "foundry_project_id" {
   description = "Foundry project resource id (only when managed by Terraform)."
 }
 
+output "key_vault_name" {
+  value       = azurerm_key_vault.kv.name
+  description = "Key Vault name for Phase 2 (stores runner bearer, etc.)."
+}
+
 output "foundry_location" {
   value       = coalesce(var.foundry_location, local.location_effective)
   description = "Effective location to use for Foundry-related resources."
