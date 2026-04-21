@@ -90,7 +90,8 @@ def main() -> int:
 
     tf = tf_outputs(args.tfout)
 
-    hub_id = get_val(tf, "foundry_hub_id")
+    # Use the original Terraform output name from main.tf
+    hub_id = get_val(tf, "foundry_account_id")
     project_name = get_val(tf, "foundry_project_name")
     api_version = get_val(tf, "foundry_api_version") or "2025-10-01-preview"
 
