@@ -76,13 +76,14 @@ def main() -> int:
     tf = tf_outputs()
 
     sub_id = get_val(tf, "subscription_id") if "subscription_id" in tf else run(["az", "account", "show", "--query", "id", "-o", "tsv"])
-    rg = get_val(tf, "resource_group") if "resource_group" in tf else None
+    # Resource group is output as `resource_group` in this stack (added recently).
+    # If your local state predates that change, fall back to the Phase 1 remote state.
+    rg = tf.get("resource_group", {}).get("value")
     if not rg:
-        # Phase 2 uses Phase 1 RG; grab it from remote_state-like output if present
-        rg = get_val(tf, "resource_group_name") if "resource_group_name" in tf else None
-    if not rg:
-        # last resort: ask user to rely on existing TF outputs (should exist in this stack)
-        rg = get_val(tf, "foundry_rg") if "foundry_rg" in tf else None
+        try:
+            rg = run(["terraform", "-chdir=../1-deploy-sentinel", "output", "-raw", "resource_group"])
+        except Exception:
+            rg = None
 
     hub = get_val(tf, "foundry_hub_name")
     project = get_val(tf, "foundry_project_name")
