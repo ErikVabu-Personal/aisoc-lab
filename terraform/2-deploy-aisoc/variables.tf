@@ -51,6 +51,12 @@ variable "foundry_model_deployment_name" {
   default     = null
 }
 
+variable "foundry_model_version" {
+  description = "Model version string for the Foundry deployment (e.g. 2026-03-17)."
+  type        = string
+  default     = null
+}
+
 variable "foundry_manage_project_in_terraform" {
   description = "If true, attempt to create the Foundry project via AzAPI in Terraform."
   type        = bool

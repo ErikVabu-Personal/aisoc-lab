@@ -34,6 +34,11 @@ foundry_manage_project_in_terraform = true
 # runner_image = "ghcr.io/erikvabu-personal/aisoc-runner:<sha>"
 runner_image = "ghcr.io/erikvabu-personal/aisoc-runner:latest"
 
-# REQUIRED: model choice + deployment name that agents should target
-foundry_model_choice          = "gpt-4.1-mini"
-foundry_model_deployment_name = "gpt-4.1-mini"
+# REQUIRED: model choice + version + deployment name that agents should target
+# Example (per your preference):
+# foundry_model_choice   = "gpt-5.4-mini"
+# foundry_model_version  = "2026-03-17"
+# foundry_model_deployment_name = "gpt-5.4-mini"
+foundry_model_choice          = "gpt-5.4-mini"
+foundry_model_version         = "2026-03-17"
+foundry_model_deployment_name = "gpt-5.4-mini"
