@@ -14,6 +14,12 @@ Run:
 cd terraform/2-deploy-aisoc
 terraform init
 terraform apply
+
+# Deploy the SOCGateway Function code (Terraform only provisions the Function App infra)
+./scripts/deploy_socgateway_function.sh
+
+# Deploy prompt agents wired to the runner OpenAPI tool
+./scripts/deploy_prompt_agents_with_runner_tools.sh
 ```
 
 If you see quota errors for Consumption plans, set:
