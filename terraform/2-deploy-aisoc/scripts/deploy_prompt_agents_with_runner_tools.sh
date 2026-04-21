@@ -44,8 +44,11 @@ conn_auth_type() {
 }
 
 conn_delete() {
-  az cognitiveservices account project connection delete \
-    -g "$RG" -n "$HUB" --project-name "$PROJ" --connection-name "$CONN_NAME" --yes >/dev/null
+  # This subcommand doesn't consistently support --yes across az versions.
+  # Force-confirm and ignore errors (e.g., already deleted).
+  printf 'y\n' | az cognitiveservices account project connection delete \
+    -g "$RG" -n "$HUB" --project-name "$PROJ" --connection-name "$CONN_NAME" \
+    >/dev/null 2>&1 || true
 }
 
 conn_create_via_cli() {
