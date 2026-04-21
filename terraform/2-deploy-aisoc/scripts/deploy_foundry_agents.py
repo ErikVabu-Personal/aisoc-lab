@@ -144,7 +144,10 @@ def main() -> int:
 
     # Try a best-effort create call. The exact endpoint may vary; we keep this script small and hackable.
     # Typical pattern is something like POST {foundry_api}/agents
-    url = f"{foundry_api}/agents"
+    # Foundry data-plane requires an explicit api-version query parameter.
+    # We use a conservative default that should work for the current Foundry Agents API.
+    api_ver = "2025-04-01-preview"
+    url = f"{foundry_api}/agents?api-version={api_ver}"
     print(f"POST {url}")
 
     # Use ARM token as bearer (many Foundry APIs accept AAD token).
