@@ -186,7 +186,10 @@ def main() -> int:
         # auth block. The service error you hit is explicit about needing
         # `security_scheme`, so we send BOTH forms to satisfy strict validators while
         # still working with UIs that expect camelCase.
-        auth_security = {"project_connection_id": conn_id}
+        # Foundry requires both the project connection id and the OpenAPI security scheme name
+        # (the key under components.securitySchemes) so it can bind the connection.
+        # Our rendered specs use security scheme name: "runnerKey".
+        auth_security = {"project_connection_id": conn_id, "security_scheme_name": "runnerKey"}
         tool = {
             "type": "openapi",
             "openapi": {
