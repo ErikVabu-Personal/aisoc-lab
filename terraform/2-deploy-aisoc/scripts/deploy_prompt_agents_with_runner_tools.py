@@ -32,6 +32,16 @@ AGENTS = [
     "Detection Engineer",
 ]
 
+
+def slug(s: str) -> str:
+    import re
+
+    s = s.strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    s = re.sub(r"^-+", "", s)
+    s = re.sub(r"-+$", "", s)
+    return s[:63]
+
 ROLE_INSTRUCTIONS: Dict[str, str] = {
     "Triage": "You are the triage analyst. Quickly assess alerts and decide severity and next steps.",
     "Investigator": "You are the incident investigator. Deep dive using KQL and produce findings.",
@@ -181,8 +191,10 @@ def main() -> int:
             )
         )
 
+        agent_name = slug(name)
+
         agent = client.agents.create_version(
-            agent_name=name,
+            agent_name=agent_name,
             definition=PromptAgentDefinition(
                 model=model,
                 instructions=ROLE_INSTRUCTIONS.get(name, "You are a SOC analyst."),
@@ -191,7 +203,7 @@ def main() -> int:
             description=f"AISOC demo agent: {name}",
         )
 
-        print(f"OK: {name} published version={getattr(agent, 'version', None)}")
+        print(f"OK: {name} (agent_name={agent_name}) published version={getattr(agent, 'version', None)}")
 
     return 0
 
