@@ -149,8 +149,19 @@ def main() -> int:
         try:
             conn = client.connections.get(conn_name)  # type: ignore[attr-defined]
         except Exception:
-            # Best-effort create "Custom keys" connection.
-            # SDK surface differs; if this fails, we'll ask you to create it once in UI.
+            # Some SDK versions do not support creating connections programmatically.
+            # In that case, instruct the user to create it once in the Foundry UI.
+            if not hasattr(client.connections, "create"):
+                print(
+                    "ERROR: Project connection 'aisoc-runner-key' not found and SDK cannot create connections.\n"
+                    "Create it once in Foundry UI: Project -> Connections -> Add -> Custom keys\n"
+                    "  Name: aisoc-runner-key\n"
+                    "  Key:  x-aisoc-runner-key\n"
+                    "  Value: <runner bearer token>\n",
+                    file=sys.stderr,
+                )
+                return 4
+
             conn = client.connections.create(  # type: ignore[attr-defined]
                 name=conn_name,
                 connection_type="custom_keys",
