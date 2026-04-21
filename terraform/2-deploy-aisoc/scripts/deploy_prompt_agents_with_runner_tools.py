@@ -130,7 +130,8 @@ def main() -> int:
             PromptAgentDefinition,
             OpenApiTool,
             OpenApiFunctionDefinition,
-            OpenApiKeyAuthDetails,
+            OpenApiProjectConnectionAuthDetails,
+            OpenApiProjectConnectionSecurityScheme,
         )
     except Exception as e:
         print("ERROR: missing/old azure-ai-projects SDK for OpenAPI tools. Upgrade needed.")
@@ -142,14 +143,29 @@ def main() -> int:
     for name in AGENTS:
         spec = render_openapi(runner_url, name)
 
+        # Create a project connection for the runner key and reference it.
+        # Connection name is stable; shared across agents.
+        conn_name = "aisoc-runner-key"
+        try:
+            conn = client.connections.get(conn_name)  # type: ignore[attr-defined]
+        except Exception:
+            # Best-effort create "Custom keys" connection.
+            # SDK surface differs; if this fails, we'll ask you to create it once in UI.
+            conn = client.connections.create(  # type: ignore[attr-defined]
+                name=conn_name,
+                connection_type="custom_keys",
+                keys={"x-aisoc-runner-key": runner_bearer},
+            )
+
         tool = OpenApiTool(
             openapi=OpenApiFunctionDefinition(
                 name="aisoc_runner",
                 spec=spec,
                 description="AISOC Runner gateway",
-                auth=OpenApiKeyAuthDetails(
-                    key_name="x-aisoc-runner-key",
-                    key_value=runner_bearer,
+                auth=OpenApiProjectConnectionAuthDetails(
+                    security_scheme=OpenApiProjectConnectionSecurityScheme(
+                        project_connection_id=getattr(conn, "id", conn.get("id", None)),
+                    )
                 ),
             )
         )
