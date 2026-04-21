@@ -146,29 +146,46 @@ def main() -> int:
     # Typical pattern is something like POST {foundry_api}/agents
     # Foundry data-plane requires an explicit api-version query parameter.
     # We use a conservative default that should work for the current Foundry Agents API.
-    # Discover supported api-version values for this endpoint
-    def probe_versions(versions: list[str]) -> str:
+    # Discover supported api-version values for this endpoint.
+    # Use POST probing (GET can behave differently and mislead).
+    def probe_endpoint(paths: list[str], versions: list[str]) -> tuple[str, str]:
         token_probe = az_token("https://ai.azure.com/")
-        for v in versions:
-            u = f"{foundry_api}/agents?api-version={v}"
-            try:
-                rr = requests.get(u, headers={"Authorization": f"Bearer {token_probe}"}, timeout=30)
-                if rr.status_code != 400 or "API version not supported" not in rr.text:
-                    # If it's anything else (200/401/403/404), we at least know api-version is accepted.
-                    return v
-            except Exception:
-                continue
-        return versions[0]
+        headers = {"Authorization": f"Bearer {token_probe}"}
 
-    api_ver = probe_versions([
+        # minimal dummy payload; we only care about api-version acceptance
+        dummy = {"name": "probe", "instructions": "probe"}
+
+        for path in paths:
+            for v in versions:
+                u = f"{foundry_api}/{path}?api-version={v}"
+                try:
+                    rr = requests.post(u, json=dummy, headers=headers, timeout=30)
+                    txt = rr.text or ""
+                    if "API version not supported" in txt:
+                        continue
+                    # any other response means api-version is at least understood for this route
+                    return path, v
+                except Exception:
+                    continue
+
+        raise RuntimeError("Could not find a supported api-version for agents/assistants endpoint")
+
+    paths = ["agents", "assistants"]
+    versions = [
+        "2024-10-01-preview",
+        "2024-12-01-preview",
+        "2025-01-01-preview",
+        "2025-03-01-preview",
         "2025-05-01-preview",
         "2025-06-01-preview",
         "2025-07-01-preview",
         "2025-08-01-preview",
         "2025-09-01-preview",
         "2025-10-01-preview",
-    ])
-    url = f"{foundry_api}/agents?api-version={api_ver}"
+    ]
+
+    route, api_ver = probe_endpoint(paths, versions)
+    url = f"{foundry_api}/{route}?api-version={api_ver}"
     print(f"POST {url}")
 
     # Use ARM token as bearer (many Foundry APIs accept AAD token).
