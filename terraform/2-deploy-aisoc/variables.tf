@@ -52,7 +52,34 @@ variable "foundry_model_deployment_name" {
 }
 
 variable "foundry_manage_project_in_terraform" {
-  description = "If true, attempt to create the Foundry project via AzAPI in Terraform. Default false (use scripts/deploy_foundry_project.py instead)."
+  description = "If true, attempt to create the Foundry project via AzAPI in Terraform."
   type        = bool
   default     = false
+}
+
+# -----------------------------
+# Runner (Azure Container Apps)
+# -----------------------------
+
+variable "runner_image" {
+  description = "Runner container image (GHCR)"
+  type        = string
+}
+
+variable "runner_cpu" {
+  description = "Runner CPU cores"
+  type        = number
+  default     = 0.5
+}
+
+variable "runner_memory" {
+  description = "Runner memory"
+  type        = string
+  default     = "1Gi"
+}
+
+variable "runner_enable_writes" {
+  description = "Allow runner to perform write operations via SOCGateway"
+  type        = bool
+  default     = true
 }
