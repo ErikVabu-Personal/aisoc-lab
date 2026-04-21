@@ -55,14 +55,14 @@ echo "Using model deployment:   $MODEL_DEPLOYMENT"
 echo "Using azd environment:    $ENV_NAME"
 
 # Ensure the extension is installed (idempotent)
-azd agent version >/dev/null
+azd ai agent version >/dev/null
 
 # Init into a local folder under terraform/2-deploy-aisoc/.azd-agent
 AGENT_DIR="$root/.azd-agent"
 mkdir -p "$AGENT_DIR"
 
 # Initialize (non-interactive)
-azd agent init "$AGENT_DIR" \
+azd ai agent init "$AGENT_DIR" \
   --environment "$ENV_NAME" \
   --project-id "$PROJECT_ID" \
   --model-deployment "$MODEL_DEPLOYMENT" \
