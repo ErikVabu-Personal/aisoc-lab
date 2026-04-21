@@ -61,6 +61,14 @@ azd ai agent version >/dev/null
 AGENT_DIR="$root/.azd-agent"
 mkdir -p "$AGENT_DIR"
 
+# Configure ACR endpoint for hosted agent builds
+ACR_SERVER="$(terraform output -raw acr_login_server 2>/dev/null || true)"
+if [[ -z "$ACR_SERVER" || "$ACR_SERVER" == "null" ]]; then
+  echo "ERROR: acr_login_server output is empty. Run terraform apply after pulling the ACR changes." >&2
+  exit 4
+fi
+export AZURE_CONTAINER_REGISTRY_ENDPOINT="$ACR_SERVER"
+
 # Initialize (non-interactive)
 azd ai agent init "$AGENT_DIR" \
   --environment "$ENV_NAME" \
@@ -70,7 +78,6 @@ azd ai agent init "$AGENT_DIR" \
 
 echo "Initialized azd agent project in $AGENT_DIR"
 
-echo "\nNEXT STEP (manual run for now):"
+echo "\nNEXT STEP: deploy hosted agent (no provision):"
 echo "- cd $AGENT_DIR"
-echo "- run: azd up"
-echo "\n(We'll wire runner tools + automate azd up in a follow-up once we see the generated project structure.)"
+echo "- run: azd deploy 2-deploy-aisoc"
