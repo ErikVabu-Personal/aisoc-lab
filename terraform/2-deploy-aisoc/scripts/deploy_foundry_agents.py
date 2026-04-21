@@ -43,13 +43,14 @@ def get_val(tf: Dict[str, Any], key: str) -> Any:
     return tf[key].get("value")
 
 
-def az_token(resource: str) -> str:
+def az_token_scope(scope: str) -> str:
+    # Foundry docs use scope-based tokens for ai.azure.com
     out = run([
         "az",
         "account",
         "get-access-token",
-        "--resource",
-        resource,
+        "--scope",
+        scope,
         "-o",
         "json",
     ])
@@ -72,26 +73,18 @@ def main() -> int:
     args = ap.parse_args()
 
     try:
-        _ = az_token("https://management.azure.com/")
+        _ = az_token_scope("https://ai.azure.com/.default")
     except Exception:
         print("ERROR: Azure CLI auth not available. Run `az login` first.", file=sys.stderr)
         return 2
 
     tf = tf_outputs()
 
-    project_id = get_val(tf, "foundry_project_id")
-    if not project_id:
-        print("ERROR: Terraform output foundry_project_id is null. Ensure foundry_manage_project_in_terraform=true and apply succeeded.")
-        return 3
-
-    # Read project to get the Foundry API endpoint.
-    api_version = get_val(tf, "foundry_api_version") or "2025-06-01"
-    proj = az_rest("GET", f"https://management.azure.com{project_id}?api-version={api_version}")
-    foundry_api = (proj.get("properties", {}).get("endpoints", {}) or {}).get("AI Foundry API")
-    if not foundry_api:
-        print("ERROR: Project does not expose properties.endpoints['AI Foundry API']")
-        print(json.dumps(proj, indent=2)[:4000])
-        return 4
+    # Build the project endpoint per MSFT docs:
+    # https://<foundry_resource_name>.ai.azure.com/api/projects/<project_name>
+    hub_name = get_val(tf, "foundry_hub_name")
+    project_name = get_val(tf, "foundry_project_name")
+    foundry_api = f"https://{hub_name}.ai.azure.com/api/projects/{project_name}"
 
     runner_url = get_val(tf, "runner_url")
     runner_secret_name = get_val(tf, "runner_bearer_token_secret_name")
@@ -142,55 +135,16 @@ def main() -> int:
         print(json.dumps(agent_payload, indent=2)[:4000])
         return 0
 
-    # Try a best-effort create call. The exact endpoint may vary; we keep this script small and hackable.
-    # Typical pattern is something like POST {foundry_api}/agents
-    # Foundry data-plane requires an explicit api-version query parameter.
-    # We use a conservative default that should work for the current Foundry Agents API.
-    # Discover supported api-version values for this endpoint.
-    # Use POST probing (GET can behave differently and mislead).
-    def probe_endpoint(paths: list[str], versions: list[str]) -> tuple[str, str]:
-        token_probe = az_token("https://ai.azure.com/")
-        headers = {"Authorization": f"Bearer {token_probe}"}
+    # Foundry Projects (new) endpoint is stable (per docs):
+    #   https://<resource>.ai.azure.com/api/projects/<project>
+    # Agent creation is best done via the Azure AI Projects SDK, but we keep a REST path here.
+    # If this endpoint changes, capture the UI network call and update here.
 
-        # minimal dummy payload; we only care about api-version acceptance
-        dummy = {"name": "probe", "instructions": "probe"}
-
-        for path in paths:
-            for v in versions:
-                u = f"{foundry_api}/{path}?api-version={v}"
-                try:
-                    rr = requests.post(u, json=dummy, headers=headers, timeout=30)
-                    txt = rr.text or ""
-                    if "API version not supported" in txt:
-                        continue
-                    # any other response means api-version is at least understood for this route
-                    return path, v
-                except Exception:
-                    continue
-
-        raise RuntimeError("Could not find a supported api-version for agents/assistants endpoint")
-
-    paths = ["agents", "assistants"]
-    versions = [
-        "2024-10-01-preview",
-        "2024-12-01-preview",
-        "2025-01-01-preview",
-        "2025-03-01-preview",
-        "2025-05-01-preview",
-        "2025-06-01-preview",
-        "2025-07-01-preview",
-        "2025-08-01-preview",
-        "2025-09-01-preview",
-        "2025-10-01-preview",
-    ]
-
-    route, api_ver = probe_endpoint(paths, versions)
-    url = f"{foundry_api}/{route}?api-version={api_ver}"
+    api_ver = "2025-03-01-preview"
+    url = f"{foundry_api}/agents?api-version={api_ver}"
     print(f"POST {url}")
 
-    # Use ARM token as bearer (many Foundry APIs accept AAD token).
-    # Foundry API expects an access token for the ai.azure.com audience.
-    token = az_token("https://ai.azure.com/")
+    token = az_token_scope("https://ai.azure.com/.default")
     r = requests.post(url, json=agent_payload, headers={"Authorization": f"Bearer {token}"}, timeout=60)
     if r.status_code >= 300:
         print("ERROR: agent create failed")
