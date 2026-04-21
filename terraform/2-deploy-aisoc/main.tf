@@ -11,6 +11,16 @@
 
 data "azurerm_client_config" "current" {}
 
+output "subscription_id" {
+  value       = data.azurerm_client_config.current.subscription_id
+  description = "Subscription id (for scripts that call Foundry portal APIs)."
+}
+
+output "resource_group" {
+  value       = data.terraform_remote_state.sentinel.outputs.resource_group
+  description = "Resource group used for the AISOC lab (from Phase 1)."
+}
+
 # Use the existing resource group from this stack
 
 locals {
