@@ -51,4 +51,4 @@ foundry_model_deployment_name = "model-router"
 
 # If you hit: "SKU 'Standard' ... not supported", try:
 foundry_model_sku_name     = "GlobalStandard"
-foundry_model_sku_capacity = 1
+foundry_model_sku_capacity = 10
