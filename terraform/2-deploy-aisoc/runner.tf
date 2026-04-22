@@ -24,7 +24,7 @@ resource "random_string" "runner_token" {
 resource "azurerm_key_vault_secret" "runner_token" {
   name         = "AISOC-RUNNER-BEARER"
   value        = random_string.runner_token.result
-  key_vault_id = azurerm_key_vault.kv.id
+  key_vault_id = local.shared_kv_id
 }
 
 # NOTE: Azure Functions function keys are secrets that should not be stored in Terraform state.

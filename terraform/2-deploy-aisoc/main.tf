@@ -25,7 +25,8 @@ output "resource_group" {
 
 locals {
   foundry_prefix = "foundry-soc"
-  kv_name        = "kv-${local.foundry_prefix}-${random_string.suffix.result}"
+  # Key Vault is created in Phase 1 and reused here.
+  kv_name        = data.terraform_remote_state.sentinel.outputs.aisoc_key_vault_name
   sa_name        = "safoundrysoc${random_string.suffix.result}" # must be lowercase
   func_name      = "func-${local.foundry_prefix}-${random_string.suffix.result}"
 
@@ -58,33 +59,8 @@ resource "azurerm_service_plan" "fa" {
   tags = local.tags
 }
 
-# Key Vault to store API keys (OpenRouter etc.)
-resource "azurerm_key_vault" "kv" {
-  name                = local.kv_name
-  location            = local.location_effective
-  resource_group_name = data.terraform_remote_state.sentinel.outputs.resource_group
-  tenant_id           = data.azurerm_client_config.current.tenant_id
-  sku_name            = "standard"
-
-  purge_protection_enabled   = false
-  soft_delete_retention_days = 7
-
-  # Lab ergonomics: KV deletions can take a long time due to soft-delete behavior.
-  # Prevent destroy by default; set var.preserve_key_vault=false when you explicitly
-  # want KV removed.
-  lifecycle {
-    prevent_destroy = var.preserve_key_vault
-  }
-
-  access_policy {
-    tenant_id = data.azurerm_client_config.current.tenant_id
-    object_id = data.azurerm_client_config.current.object_id
-
-    secret_permissions = ["Get", "List", "Set", "Delete"]
-  }
-
-  tags = local.tags
-}
+# Key Vault lives in Phase 1. Phase 2 stores secrets there and grants access as needed.
+# (No Key Vault resource here.)
 
 # Store OpenRouter API key as secret (optional; preferred)
 resource "azurerm_key_vault_secret" "openrouter" {
@@ -92,7 +68,7 @@ resource "azurerm_key_vault_secret" "openrouter" {
 
   name         = "OPENROUTER-API-KEY"
   value        = var.openrouter_api_key
-  key_vault_id = azurerm_key_vault.kv.id
+  key_vault_id = local.shared_kv_id
 }
 
 # Function App (Linux)
@@ -128,7 +104,7 @@ resource "azurerm_linux_function_app" "soc_gateway" {
     "AZURE_RESOURCE_GROUP"  = data.terraform_remote_state.sentinel.outputs.resource_group
 
     # Key vault reference (function uses managed identity to fetch secrets)
-    "KEYVAULT_URI" = azurerm_key_vault.kv.vault_uri
+    "KEYVAULT_URI" = local.shared_kv_uri
 
     # AISOC gateway authorization keys (Key Vault references)
     "AISOC_READ_KEY"  = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.aisoc_read_key.id})"
@@ -153,7 +129,7 @@ resource "time_sleep" "wait_for_soc_gateway_identity" {
 resource "azurerm_key_vault_access_policy" "func_secrets" {
   depends_on = [time_sleep.wait_for_soc_gateway_identity]
 
-  key_vault_id = azurerm_key_vault.kv.id
+  key_vault_id = local.shared_kv_id
   tenant_id    = data.azurerm_client_config.current.tenant_id
   object_id    = azurerm_linux_function_app.soc_gateway.identity[0].principal_id
 
@@ -190,12 +166,12 @@ output "soc_gateway_principal_id" {
 }
 
 output "key_vault_uri" {
-  value = azurerm_key_vault.kv.vault_uri
+  value = local.shared_kv_uri
 }
 
 output "key_vault_id" {
-  value       = azurerm_key_vault.kv.id
-  description = "Key Vault resource id."
+  value       = local.shared_kv_id
+  description = "Key Vault resource id (from Phase 1)."
 }
 
 output "aisoc_read_key_secret_name" {
@@ -251,8 +227,8 @@ output "foundry_project_endpoint" {
 }
 
 output "key_vault_name" {
-  value       = azurerm_key_vault.kv.name
-  description = "Key Vault name for Phase 2 (stores runner bearer, etc.)."
+  value       = local.shared_kv_name
+  description = "Key Vault name (from Phase 1) storing AISOC shared secrets."
 }
 
 output "foundry_location" {

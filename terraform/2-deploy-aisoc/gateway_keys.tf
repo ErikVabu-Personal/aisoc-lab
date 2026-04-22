@@ -26,11 +26,11 @@ resource "random_string" "aisoc_write_key" {
 resource "azurerm_key_vault_secret" "aisoc_read_key" {
   name         = "AISOC-READ-KEY"
   value        = random_string.aisoc_read_key.result
-  key_vault_id = azurerm_key_vault.kv.id
+  key_vault_id = local.shared_kv_id
 }
 
 resource "azurerm_key_vault_secret" "aisoc_write_key" {
   name         = "AISOC-WRITE-KEY"
   value        = random_string.aisoc_write_key.result
-  key_vault_id = azurerm_key_vault.kv.id
+  key_vault_id = local.shared_kv_id
 }
