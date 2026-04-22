@@ -134,8 +134,18 @@ resource "azurerm_linux_function_app" "soc_gateway" {
   tags = local.tags
 }
 
+# Give Azure time to propagate the Function App's managed identity before applying
+# Key Vault access policy. This avoids flaky first-run 403s when the Function tries
+# to read secrets immediately after deployment.
+resource "time_sleep" "wait_for_soc_gateway_identity" {
+  depends_on      = [azurerm_linux_function_app.soc_gateway]
+  create_duration = "30s"
+}
+
 # Grant the function MI read access to Key Vault secrets
 resource "azurerm_key_vault_access_policy" "func_secrets" {
+  depends_on = [time_sleep.wait_for_soc_gateway_identity]
+
   key_vault_id = azurerm_key_vault.kv.id
   tenant_id    = data.azurerm_client_config.current.tenant_id
   object_id    = azurerm_linux_function_app.soc_gateway.identity[0].principal_id
