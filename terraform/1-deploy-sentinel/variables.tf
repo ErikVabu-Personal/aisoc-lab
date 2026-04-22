@@ -105,6 +105,12 @@ variable "enable_scheduled_rule_tpm_wmi" {
   default     = true
 }
 
+variable "enable_scheduled_rule_controlpanel_auth_failures" {
+  description = "Deploy a scheduled Sentinel analytics rule that triggers when multiple auth.login.failure events occur for the same username from the same client IP within 5 minutes."
+  type        = bool
+  default     = true
+}
+
 variable "vm_name" {
   description = "Windows VM name"
   type        = string
