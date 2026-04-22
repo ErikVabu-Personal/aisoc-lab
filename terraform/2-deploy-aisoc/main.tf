@@ -226,6 +226,15 @@ output "foundry_project_endpoint" {
   description = "Foundry project endpoint (AI Foundry API) used by SDK/scripts."
 }
 
+locals {
+  # Convenience local for orchestrator (some tenants return endpoints with slightly different keys).
+  foundry_project_endpoint_effective = coalesce(
+    try(azapi_resource.foundry_project[0].output.properties.endpoints["AI Foundry API"], null),
+    try(azapi_resource.foundry_project[0].output.properties.endpoints["AI Foundry"], null),
+    try(azapi_resource.foundry_project[0].output.properties.endpoints["AI Projects"], null)
+  )
+}
+
 output "key_vault_name" {
   value       = local.shared_kv_name
   description = "Key Vault name (from Phase 1) storing AISOC shared secrets."
