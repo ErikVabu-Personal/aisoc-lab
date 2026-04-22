@@ -597,7 +597,7 @@ Important:
 ### 6.2 Deploy PixelAgents Web (Terraform)
 
 ```bash
-cd terraform/4-deploy-pixelagents-web
+cd terraform/3-deploy-pixelagents-web
 terraform init
 terraform apply
 ```

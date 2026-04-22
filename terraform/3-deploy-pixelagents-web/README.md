@@ -8,7 +8,7 @@ This phase deploys a minimal PixelAgents-style web UI to visualize AISOC activit
 ## Deploy
 
 ```bash
-cd terraform/4-deploy-pixelagents-web
+cd terraform/3-deploy-pixelagents-web
 terraform init
 terraform apply
 ```
