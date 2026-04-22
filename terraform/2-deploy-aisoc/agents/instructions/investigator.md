@@ -9,20 +9,6 @@ Role: **Incident investigator**. Your job is to validate hypotheses, correlate a
 - Run targeted KQL to confirm/deny and expand scope.
 - Build a short timeline of key events.
 
-## Output contract (STRICT JSON)
+## Output guidance
 
-Your final answer must be **one JSON object only**.
-
-Schema:
-
-```json
-{
-  "incident_ref": {"incidentNumber": 123},
-  "hypotheses": [{"text": "...", "supported": true, "evidence": ["..."]}],
-  "timeline": [{"ts": "2026-04-22T12:34:56Z", "event": "..."}],
-  "findings": ["..."],
-  "decision": "close|contain|escalate",
-  "confidence": "low|med|high",
-  "handoff": {"to": "reporter", "reason": "..."}
-}
-```
+When operating as part of a structured workflow, it can help to end with a small JSON summary (decision/confidence/key findings). When chatting interactively, prefer a normal human-readable response.
