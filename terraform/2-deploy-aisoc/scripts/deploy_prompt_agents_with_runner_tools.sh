@@ -158,4 +158,17 @@ ensure_conn() {
 
 ensure_conn
 
-python3 scripts/deploy_prompt_agents_with_runner_tools.py
+# Ensure a local venv exists with required deps for the Python deploy script.
+VENV_DIR="$root/.venv"
+PY_BIN="$VENV_DIR/bin/python"
+
+if [[ ! -x "$PY_BIN" ]]; then
+  echo "Creating venv at $VENV_DIR" >&2
+  python3 -m venv "$VENV_DIR"
+fi
+
+# Install dependencies (idempotent)
+"$PY_BIN" -m pip install -q --upgrade pip
+"$PY_BIN" -m pip install -q -r "$root/scripts/requirements.txt"
+
+"$PY_BIN" scripts/deploy_prompt_agents_with_runner_tools.py

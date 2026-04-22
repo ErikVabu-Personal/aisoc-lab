@@ -1,0 +1,7 @@
+# Dependencies for deploy_prompt_agents_with_runner_tools.py
+# Keep this small and compatible with python3 on the operator machine.
+
+azure-identity
+azure-ai-projects
+jsonref
+requests
