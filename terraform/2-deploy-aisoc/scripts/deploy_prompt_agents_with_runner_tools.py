@@ -43,11 +43,46 @@ def slug(s: str) -> str:
     return s[:63]
 
 ROLE_INSTRUCTIONS: Dict[str, str] = {
-    "Triage": "You are the triage analyst. Quickly assess alerts and decide severity and next steps.",
-    "Investigator": "You are the incident investigator. Deep dive using KQL and produce findings.",
-    "Reporter": "You are the incident reporter. Produce clear executive summaries and timelines.",
-    "Detection Engineer": "You are the detection engineer. Recommend detection rules and improvements.",
+    "Triage": "Triage analyst.",
+    "Investigator": "Incident investigator.",
+    "Reporter": "Incident reporter.",
+    "Detection Engineer": "Detection engineer.",
 }
+
+
+def _read_text(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def load_instructions(agent_display_name: str) -> str:
+    """Load common + role instructions from agents/instructions/*.md.
+
+    This makes agent behavior versioned in-repo and reproducible: edit markdown,
+    re-run the deploy script, and agents update.
+    """
+
+    base_dir = os.path.join(os.path.dirname(__file__), "..", "agents", "instructions")
+    common = _read_text(os.path.join(base_dir, "common.md"))
+
+    role_map = {
+        "Triage": "triage.md",
+        "Investigator": "investigator.md",
+        "Reporter": "reporter.md",
+        "Detection Engineer": "detection-engineer.md",
+    }
+    role_file = role_map.get(agent_display_name)
+    role = _read_text(os.path.join(base_dir, role_file)) if role_file else ""
+
+    stitched = "\n\n".join([x for x in [common, role] if x])
+    if stitched:
+        return stitched
+
+    # Fallback: keep prior minimal instructions if files are missing.
+    return ROLE_INSTRUCTIONS.get(agent_display_name, "You are a SOC analyst.")
 
 
 def render_openapi(runner_url: str, agent_name: str) -> Dict[str, Any]:
@@ -227,7 +262,7 @@ def main() -> int:
             agent_name=agent_name,
             definition=PromptAgentDefinition(
                 model=model,
-                instructions=ROLE_INSTRUCTIONS.get(name, "You are a SOC analyst."),
+                instructions=load_instructions(name),
                 tools=[tool],
             ),
             description=f"AISOC demo agent: {name}",
