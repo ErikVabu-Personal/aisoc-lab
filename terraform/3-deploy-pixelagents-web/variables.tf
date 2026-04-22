@@ -1,19 +1,19 @@
 variable "resource_group" {
   type        = string
-  description = "Resource group name (typically Phase 1 RG)"
-  default     = "rg-sentinel-test"
+  description = "Optional override: Resource group name. If null, uses Phase 1 remote state output."
+  default     = null
 }
 
 variable "location" {
   type        = string
-  description = "Azure region"
-  default     = "westus"
+  description = "Optional override: Azure region. If null, uses Phase 1 selected_location."
+  default     = null
 }
 
 variable "container_app_environment_id" {
   type        = string
-  description = "Optional: reuse an existing Container Apps Environment ID. If empty, a new one is created."
-  default     = ""
+  description = "Optional override: reuse an existing Container Apps Environment ID. If null/empty, reuses Phase 1 env when available; otherwise creates a new one."
+  default     = null
 }
 
 variable "pixelagents_container_app_name" {
