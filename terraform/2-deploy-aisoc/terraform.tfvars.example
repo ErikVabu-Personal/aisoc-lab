@@ -21,7 +21,8 @@ function_plan_sku = "EP1"
 
 # OPTIONAL: defaults to location_override/effective location
 # Recommended: set Foundry location explicitly, separately from App Service quota hacks.
-foundry_location = "westus"
+# NOTE: Model Router is region-gated; East US 2 and Sweden Central are known-supported regions.
+foundry_location = "eastus2"
 
 # IMPORTANT:
 # Creating Foundry projects via Terraform/AzAPI can take a very long time and may time out.
