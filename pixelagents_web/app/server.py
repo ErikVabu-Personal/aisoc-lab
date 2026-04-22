@@ -46,12 +46,25 @@ def healthz() -> dict[str, str]:
     return {"ok": "true"}
 
 
+def _default_agent_roster() -> list[str]:
+    # Comma-separated list of agents that should always exist in UI even before events.
+    # Defaults to the classic trio + detection engineer.
+    raw = os.getenv("PIXELAGENTS_AGENT_ROSTER", "triage,investigator,reporter,detection-engineer")
+    names = [x.strip() for x in raw.split(",") if x.strip()]
+    # De-dupe while preserving order
+    out: list[str] = []
+    for n in names:
+        if n not in out:
+            out.append(n)
+    return out
+
+
 @app.get("/api/agents/state")
 def api_agents_state() -> dict[str, Any]:
     # Minimal adapter for Pixel Agents UI
-    # Ensure fixed roster exists even before events
+    # Ensure a stable roster exists even before events
     now = time.time()
-    for name in ("triage", "investigator", "reporter"):
+    for name in _default_agent_roster():
         AGENTS.setdefault(
             name,
             {
@@ -84,8 +97,12 @@ def api_agents_state() -> dict[str, Any]:
 
         return "idle"
 
+    # Return stable roster first, then any dynamically discovered agents.
+    roster = _default_agent_roster()
+    dynamic = sorted([k for k in AGENTS.keys() if k not in roster])
+
     agents = []
-    for name in ("triage", "investigator", "reporter"):
+    for name in roster + dynamic:
         a = AGENTS.get(name, {})
         agents.append(
             {
@@ -96,7 +113,7 @@ def api_agents_state() -> dict[str, Any]:
             }
         )
 
-    return {"agents": agents, "ts": now, "cooldown_sec": cooldown}
+    return {"agents": agents, "ts": now, "cooldown_sec": cooldown, "roster": roster}
 
 
 @app.post("/events")
