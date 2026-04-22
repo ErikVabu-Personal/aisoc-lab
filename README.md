@@ -534,6 +534,9 @@ And (writes enabled):
 
 ## Phase 5 — Deploy Foundry Agents (Agent Service)
 
+> Note: The legacy Terraform phase folder `terraform/5-deploy-ship-control-panel/` has been removed.
+> Ship Control Panel is deployed as part of Phase 1 (`terraform/1-deploy-sentinel/ship_control_panel.tf`).
+
 If you want the agents to run inside **Azure AI Foundry Agent Service**, deploy them with the script below.
 
 Prereqs:
