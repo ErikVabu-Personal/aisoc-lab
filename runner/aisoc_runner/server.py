@@ -150,6 +150,14 @@ def tools_execute(
 ) -> dict[str, Any]:
     _require_bearer(authorization, x_aisoc_runner_key)
 
+    # Foundry OpenAPI tools can sometimes wrap the call using the operationId as the outer
+    # tool_name (e.g. tool_name="toolsExecute") and place the intended payload under
+    # arguments={tool_name:<inner>, arguments:{...}}. Normalize to the inner shape.
+    if payload.get("tool_name") == "toolsExecute" and isinstance(payload.get("arguments"), dict):
+        inner = payload.get("arguments")
+        if isinstance(inner, dict) and ("tool_name" in inner or "arguments" in inner):
+            payload = inner
+
     tool_name = payload.get("tool_name")
     args = payload.get("arguments") or {}
 
