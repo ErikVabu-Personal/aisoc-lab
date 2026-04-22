@@ -10,6 +10,9 @@ variable "location" {
   default     = null
 }
 
+# NOTE: `pixelagents_token` is output as sensitive. This is fine for a demo stack, but be mindful
+# it will still exist in local terraform state.
+
 variable "container_app_environment_id" {
   type        = string
   description = "Optional override: reuse an existing Container Apps Environment ID. If null/empty, reuses Phase 1 env when available; otherwise creates a new one."
