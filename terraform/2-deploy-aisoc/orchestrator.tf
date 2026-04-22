@@ -50,8 +50,8 @@ resource "azurerm_linux_function_app" "orchestrator" {
     "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT" = local.foundry_project_endpoint_effective
     "AZURE_AI_MODEL_DEPLOYMENT"         = var.foundry_model_deployment_name
 
-    # Runner
-    "RUNNER_URL" = try(data.terraform_remote_state.aisoc.outputs.runner_url, "")
+    # Runner (created in this phase)
+    "RUNNER_URL" = "https://${azurerm_container_app.runner.ingress[0].fqdn}"
 
     # Key Vault for secrets (Phase 1 KV)
     "KEYVAULT_URI" = local.shared_kv_uri
