@@ -40,6 +40,36 @@ def run(cmd: list[str]) -> str:
 
 
 def az_token() -> str:
+    """Get an AAD token for ai.azure.com.
+
+    In some environments, ai.azure.com expects a token minted for the resource
+    (audience) rather than an arbitrary scope string.
+
+    We try:
+    1) --resource https://ai.azure.com/
+    2) --scope    https://ai.azure.com/.default
+    """
+
+    # 1) Resource (audience) form
+    try:
+        out = run(
+            [
+                "az",
+                "account",
+                "get-access-token",
+                "--resource",
+                "https://ai.azure.com/",
+                "-o",
+                "json",
+            ]
+        )
+        tok = json.loads(out).get("accessToken")
+        if tok:
+            return tok
+    except Exception:
+        pass
+
+    # 2) Scope form
     out = run(
         [
             "az",
