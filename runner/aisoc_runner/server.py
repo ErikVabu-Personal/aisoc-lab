@@ -159,7 +159,20 @@ def tools_execute(
             payload = inner
 
     tool_name = payload.get("tool_name")
+    # Normalize (avoid whitespace / accidental non-str values)
+    if tool_name is not None and not isinstance(tool_name, str):
+        tool_name = str(tool_name)
+    tool_name = (tool_name or "").strip()
+
     args = payload.get("arguments") or {}
+    # Log minimal debug info (shows up in ACA logs)
+    try:
+        print(
+            f"[tools_execute] tool_name={tool_name!r} payload_keys={sorted(list(payload.keys()))} args_type={type(args).__name__}",
+            flush=True,
+        )
+    except Exception:
+        pass
 
     agent = x_aisoc_agent or payload.get("agent") or os.getenv("DEFAULT_AGENT_NAME", "unknown")
     started = time.time()
@@ -264,7 +277,10 @@ def tools_execute(
             result = {"result": r.json()}
             return result
 
-        raise HTTPException(status_code=400, detail=f"Unknown tool_name: {tool_name!r}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown tool_name: {tool_name!r}; payload_keys={sorted(list(payload.keys()))}",
+        )
 
         if tool_name == "update_incident":
             raw_id = args.get("id") or args.get("incident_id")
