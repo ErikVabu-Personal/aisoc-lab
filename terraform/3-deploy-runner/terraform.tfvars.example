@@ -1,8 +1,0 @@
-# Rename to terraform.tfvars
-
-# Use a published image. We'll add a GitHub Actions workflow to build/push it.
-image = "ghcr.io/ErikVabu-Personal/aisoc-runner:latest"
-
-# Optional
-location = "westeurope"
-# enable_writes = false

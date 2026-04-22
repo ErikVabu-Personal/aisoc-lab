@@ -447,15 +447,11 @@ To build/publish:
 
 ### 4.2 Deploy runner infrastructure (Terraform)
 
-```bash
-cd terraform/3-deploy-runner
-cp terraform.tfvars.example terraform.tfvars
-terraform init
-terraform apply
-```
+Runner infrastructure is deployed as part of **Phase 2** (`terraform/2-deploy-aisoc/runner.tf`).
 
 Terraform outputs:
 - `runner_url`
+- `runner_name`
 - `runner_bearer_token_secret_name` (stored in Key Vault)
 
 ### 4.3 Deploy/update the running Container App to a specific image tag (manual)
@@ -463,20 +459,16 @@ Terraform outputs:
 **Important:** Azure Container Apps may keep running an older image behind `:latest`.
 For demos, deploy by **commit SHA tag** (recommended).
 
-1) Get the latest runner image SHA tag from the GitHub Actions run (the commit SHA you want).
-
-2) Update the container app to that SHA tag:
-
 ```bash
-RG=$(terraform -chdir=terraform/1-deploy-sentinel output -raw resource_group 2>/dev/null || echo "rg-sentinel-test")
-APP=$(terraform -chdir=terraform/3-deploy-runner output -raw runner_container_app_name 2>/dev/null || echo "ca-aisoc-runner-e7r54h")
+RG=$(terraform -chdir=terraform/2-deploy-aisoc output -raw resource_group)
+APP=$(terraform -chdir=terraform/2-deploy-aisoc output -raw runner_name)
 SHA=<GITHUB_SHA>
 
 az containerapp update -g "$RG" -n "$APP" \
   --image "ghcr.io/erikvabu-personal/aisoc-runner:${SHA}"
 ```
 
-If you only have `:latest`, you can update to latest, but prefer SHA for determinism:
+Or latest:
 
 ```bash
 az containerapp update -g "$RG" -n "$APP" \
