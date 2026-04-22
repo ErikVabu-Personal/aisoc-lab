@@ -167,6 +167,12 @@ def tools_execute(
     )
 
     try:
+        if not tool_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing tool_name. Payload keys={sorted(list(payload.keys()))}",
+            )
+
         if tool_name == "kql_query":
             query = args.get("query")
             timespan = args.get("timespan", "PT1H")
@@ -249,6 +255,8 @@ def tools_execute(
                 raise HTTPException(status_code=r.status_code, detail=r.text)
             result = {"result": r.json()}
             return result
+
+        raise HTTPException(status_code=400, detail=f"Unknown tool_name: {tool_name!r}")
 
         if tool_name == "update_incident":
             raw_id = args.get("id") or args.get("incident_id")
