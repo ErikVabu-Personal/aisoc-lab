@@ -5,6 +5,12 @@ variable "openrouter_api_key" {
   sensitive   = true
 }
 
+variable "preserve_key_vault" {
+  description = "If true (recommended for labs), prevent Key Vault destruction to avoid slow teardowns due to soft-delete retention. Set false when you explicitly want KV removed."
+  type        = bool
+  default     = true
+}
+
 variable "function_plan_sku" {
   description = "App Service Plan SKU for the SOC gateway Function. Region quotas vary heavily; set this in tfvars when needed."
   type        = string

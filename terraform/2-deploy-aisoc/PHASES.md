@@ -2,6 +2,10 @@
 
 This phase deploys the AI/SOC components on top of the Sentinel lab (Phase 1):
 
+> Note on teardown speed: Key Vault deletions can be slow due to soft-delete retention.
+> This phase defaults to `preserve_key_vault=true` to speed up `terraform destroy`.
+> Set `preserve_key_vault=false` when you explicitly want Key Vault removed.
+
 - SOC Tool Gateway (Azure Function)
 - Key Vault for model provider secrets
 - RBAC for the Function managed identity

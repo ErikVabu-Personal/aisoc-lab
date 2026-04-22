@@ -11,6 +11,9 @@ function_plan_sku = "EP1"
 # Optional
 # openrouter_api_key = "sk-or-v1-..."
 
+# Recommended for labs: keep Key Vault to avoid slow destroys (soft-delete delays)
+preserve_key_vault = true
+
 # --- Foundry (Hub/Project + agent runtime config)
 # These are REQUIRED for the Foundry Hub/Project Terraform (AzAPI) resources.
 # The agent + model deployment is still done via script using Terraform outputs.

@@ -69,6 +69,13 @@ resource "azurerm_key_vault" "kv" {
   purge_protection_enabled   = false
   soft_delete_retention_days = 7
 
+  # Lab ergonomics: KV deletions can take a long time due to soft-delete behavior.
+  # Prevent destroy by default; set var.preserve_key_vault=false when you explicitly
+  # want KV removed.
+  lifecycle {
+    prevent_destroy = var.preserve_key_vault
+  }
+
   access_policy {
     tenant_id = data.azurerm_client_config.current.tenant_id
     object_id = data.azurerm_client_config.current.object_id
