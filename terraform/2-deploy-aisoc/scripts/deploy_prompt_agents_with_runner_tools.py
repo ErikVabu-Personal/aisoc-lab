@@ -33,6 +33,14 @@ AGENTS = [
 ]
 
 
+def write_slug_roster(out_path: str) -> None:
+    """Write a stable, slug-form roster for downstream components (e.g. PixelAgents Web)."""
+    roster = [slug(a) for a in AGENTS]
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(",".join(roster) + "\n")
+
+
 def slug(s: str) -> str:
     import re
 
@@ -269,6 +277,11 @@ def main() -> int:
         )
 
         print(f"OK: {name} (agent_name={agent_name}) published version={getattr(agent, 'version', None)}")
+
+    # Write a slug roster that other phases/scripts can consume.
+    roster_path = os.path.join(os.path.dirname(__file__), "..", "agents", "roster.slugs.txt")
+    write_slug_roster(roster_path)
+    print(f"Wrote agent roster: {roster_path}")
 
     return 0
 

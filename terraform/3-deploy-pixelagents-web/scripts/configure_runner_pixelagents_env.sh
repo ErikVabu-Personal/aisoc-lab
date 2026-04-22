@@ -46,7 +46,17 @@ fi
 
 EVENTS_URL="${PIXEL_URL%/}/events"
 
+# Optional: set PixelAgents roster from Phase 2 agent deploy outputs (slug form).
+ROSTER_FILE="$(cd "$root/../2-deploy-aisoc" && pwd)/agents/roster.slugs.txt"
+ROSTER=""
+if [[ -f "$ROSTER_FILE" ]]; then
+  ROSTER="$(tr -d '\n' <"$ROSTER_FILE" | tr -d ' ')"
+fi
+
 echo "Configuring runner '$RUNNER_NAME' to emit PixelAgents events to: $EVENTS_URL" >&2
+if [[ -n "$ROSTER" ]]; then
+  echo "Using PixelAgents agent roster: $ROSTER" >&2
+fi
 
 # Set a secret for the PixelAgents token, then reference it via env var.
 az containerapp secret set \
@@ -61,6 +71,7 @@ az containerapp update \
   --set-env-vars \
     PIXELAGENTS_URL="$EVENTS_URL" \
     PIXELAGENTS_TOKEN=secretref:pixelagents-token \
+    ${ROSTER:+PIXELAGENTS_AGENT_ROSTER="$ROSTER"} \
     RESTART_TS="$(date +%s)" \
   >/dev/null
 
