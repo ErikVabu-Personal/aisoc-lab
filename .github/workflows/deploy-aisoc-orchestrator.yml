@@ -1,0 +1,63 @@
+name: Deploy AISOC Orchestrator Function
+
+on:
+  workflow_dispatch:
+    inputs:
+      function_app_name:
+        description: "Azure Function App name (e.g. func-aisoc-orch-xxxxx)"
+        required: true
+      resource_group:
+        description: "Resource group name (e.g. demo-3)"
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build function package (with dependencies)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd terraform/2-deploy-aisoc/orchestrator/function_app
+
+          python -m pip install --upgrade pip
+          rm -rf .python_packages function_app.zip
+
+          python -m pip install --no-cache-dir --target ".python_packages/lib/site-packages" -r requirements.txt
+
+          python - <<'PY'
+          import sys, pathlib
+          sys.path.insert(0, str(pathlib.Path('.python_packages/lib/site-packages').resolve()))
+          import requests  # noqa
+          import azure.functions  # noqa
+          import azure.identity  # noqa
+          print('deps_ok')
+          PY
+
+          zip -r function_app.zip host.json requirements.txt AISOCOrchestrator shared .python_packages
+
+      - name: Deploy zip to Function App
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd terraform/2-deploy-aisoc/orchestrator/function_app
+          az functionapp deployment source config-zip \
+            --resource-group "${{ inputs.resource_group }}" \
+            --name "${{ inputs.function_app_name }}" \
+            --src function_app.zip
