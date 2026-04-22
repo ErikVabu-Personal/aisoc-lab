@@ -40,7 +40,7 @@ runner_image = "ghcr.io/erikvabu-personal/aisoc-runner:latest"
 # foundry_model_version  = "2026-03-17"
 # foundry_model_deployment_name = "gpt-4.1-mini"
 foundry_model_choice          = "gpt-4.1-mini"
-foundry_model_version         = "2026-03-17"
+foundry_model_version         = "2025-04-14"
 foundry_model_deployment_name = "gpt-4.1-mini"
 
 # If you hit: "SKU 'Standard' ... not supported", try:
