@@ -7,6 +7,17 @@ from collections import defaultdict, deque
 from typing import Any, Deque, Dict
 
 from fastapi import FastAPI, Header, HTTPException, Request
+
+
+def _slug_agent(name: str) -> str:
+    import re
+
+    s = (name or "").strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    s = re.sub(r"^-+", "", s)
+    s = re.sub(r"-+$", "", s)
+    return s or "unknown"
+
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -130,10 +141,13 @@ async def ingest_event(
     body.setdefault("ts", time.time())
     EVENTS.append(body)
 
-    agent = body.get("agent") or "unknown"
+    agent_raw = body.get("agent") or "unknown"
+    agent = _slug_agent(str(agent_raw))
+
     # Keep a very small per-agent summary for the UI
     AGENTS[agent] = {
         "agent": agent,
+        "agent_display": str(agent_raw),
         "state": body.get("state") or AGENTS[agent].get("state") or "idle",
         "last_event": body,
         "updated_at": body["ts"],
