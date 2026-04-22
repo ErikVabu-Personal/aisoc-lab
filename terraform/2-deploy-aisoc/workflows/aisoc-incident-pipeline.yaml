@@ -1,0 +1,34 @@
+kind: workflow
+name: aisoc-incident-pipeline
+trigger:
+  kind: OnConversationStart
+  id: trigger_wf
+  actions:
+    - kind: InvokeAzureAgent
+      id: triage
+      agent:
+        name: triage
+      conversationId: =System.ConversationId
+      input: {}
+      output:
+        autoSend: true
+    - kind: InvokeAzureAgent
+      id: investigator
+      agent:
+        name: investigator
+      conversationId: =System.ConversationId
+      input:
+        messages: ""
+      output:
+        autoSend: true
+    - kind: InvokeAzureAgent
+      id: reporter
+      agent:
+        name: reporter
+      conversationId: =System.ConversationId
+      input:
+        messages: ""
+      output:
+        autoSend: true
+id: ""
+description: ""
