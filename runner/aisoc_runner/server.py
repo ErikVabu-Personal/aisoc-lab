@@ -17,6 +17,7 @@ def _emit_pixelagents_event(event: dict[str, Any]) -> None:
 
     Failures are intentionally swallowed to avoid breaking tool execution.
     """
+
     url = os.getenv("PIXELAGENTS_URL", "").strip()
     token = os.getenv("PIXELAGENTS_TOKEN", "").strip()
     if not url or not token:
@@ -38,6 +39,7 @@ def _extract_incident_guid(value: Any) -> str | None:
 
     Accepts workspace-scoped incident IDs too (case-insensitive '/incidents/').
     """
+
     if not isinstance(value, str):
         return None
 
@@ -48,14 +50,13 @@ def _extract_incident_guid(value: Any) -> str | None:
     lower = s.lower()
     needle = "/incidents/"
     if needle in lower:
-        # Find the segment after /incidents/ in a case-insensitive way.
         idx = lower.index(needle) + len(needle)
         remainder = s[idx:]
         guid = remainder.split("/", 1)[0].split("?", 1)[0].strip()
         return guid or None
 
-    # If it's already a GUID, just return it.
     return s
+
 
 app = FastAPI(title="aisoc-runner")
 
@@ -67,7 +68,7 @@ def _require_bearer(auth: str | None, api_key: str | None) -> None:
 
     # Support either:
     # - Authorization: Bearer <token>
-    # - x-aisoc-runner-key: <token>  (for Foundry OpenAPI tool connections)
+    # - x-aisoc-runner-key: <token>
     token: str | None = None
 
     if api_key:
@@ -113,7 +114,6 @@ def _gw_headers(scope: Literal["read", "write"]) -> dict[str, str]:
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
-    # Optional build metadata (set at build/deploy time)
     return {
         "ok": "true",
         "git_sha": os.getenv("GIT_SHA", ""),
@@ -129,8 +129,7 @@ def debug_config(
     _require_bearer(authorization, x_aisoc_runner_key)
 
     def redacted_len(name: str) -> int:
-        v = os.getenv(name, "")
-        return len(v)
+        return len(os.getenv(name, ""))
 
     return {
         "socgateway_base_url": os.getenv("SOCGATEWAY_BASE_URL", ""),
@@ -138,6 +137,8 @@ def debug_config(
         "socgateway_read_key_len": redacted_len("SOCGATEWAY_READ_KEY"),
         "socgateway_write_key_len": redacted_len("SOCGATEWAY_WRITE_KEY"),
         "enable_writes": os.getenv("ENABLE_WRITES", "0"),
+        "pixelagents_url_set": bool(os.getenv("PIXELAGENTS_URL", "")),
+        "pixelagents_token_set": bool(os.getenv("PIXELAGENTS_TOKEN", "")),
     }
 
 
@@ -150,22 +151,20 @@ def tools_execute(
 ) -> dict[str, Any]:
     _require_bearer(authorization, x_aisoc_runner_key)
 
-    # Foundry OpenAPI tools can sometimes wrap the call using the operationId as the outer
-    # tool_name (e.g. tool_name="toolsExecute") and place the intended payload under
-    # arguments={tool_name:<inner>, arguments:{...}}. Normalize to the inner shape.
+    # Foundry OpenAPI tools can wrap the call using the operationId as the outer tool_name.
+    # Normalize to the inner payload shape.
     if payload.get("tool_name") == "toolsExecute" and isinstance(payload.get("arguments"), dict):
         inner = payload.get("arguments")
         if isinstance(inner, dict) and ("tool_name" in inner or "arguments" in inner):
             payload = inner
 
-    tool_name = payload.get("tool_name")
-    # Normalize (avoid whitespace / accidental non-str values)
+    tool_name: Any = payload.get("tool_name")
     if tool_name is not None and not isinstance(tool_name, str):
         tool_name = str(tool_name)
     tool_name = (tool_name or "").strip()
 
     args = payload.get("arguments") or {}
-    # Log minimal debug info (shows up in ACA logs)
+
     try:
         print(
             f"[tools_execute] tool_name={tool_name!r} payload_keys={sorted(list(payload.keys()))} args_type={type(args).__name__}",
@@ -173,6 +172,9 @@ def tools_execute(
         )
     except Exception:
         pass
+
+    if not tool_name:
+        raise HTTPException(status_code=400, detail=f"Missing tool_name. Payload keys={sorted(list(payload.keys()))}")
 
     agent = x_aisoc_agent or payload.get("agent") or os.getenv("DEFAULT_AGENT_NAME", "unknown")
     started = time.time()
@@ -188,17 +190,12 @@ def tools_execute(
     )
 
     try:
-        if not tool_name:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Missing tool_name. Payload keys={sorted(list(payload.keys()))}",
-            )
-
         if tool_name == "kql_query":
             query = args.get("query")
             timespan = args.get("timespan", "PT1H")
             if not query:
                 raise HTTPException(status_code=400, detail="Missing arguments.query")
+
             r = requests.post(
                 _gw_url("kql/query"),
                 params=_gw_params(),
@@ -208,8 +205,7 @@ def tools_execute(
             )
             if r.status_code >= 400:
                 raise HTTPException(status_code=r.status_code, detail=r.text)
-            result = {"result": r.json()}
-            return result
+            return {"result": r.json()}
 
         if tool_name == "list_incidents":
             r = requests.get(
@@ -220,15 +216,13 @@ def tools_execute(
             )
             if r.status_code >= 400:
                 raise HTTPException(status_code=r.status_code, detail=r.text)
-            result = {"result": r.json()}
-            return result
+            return {"result": r.json()}
 
         if tool_name == "get_incident":
             raw_id = args.get("id") or args.get("incident_id")
             incident_number = args.get("incidentNumber") or args.get("incident_number")
 
             if incident_number is not None and raw_id is None:
-                # Resolve incidentNumber -> incident name (GUID) via list_incidents
                 try:
                     n = int(incident_number)
                 except Exception:
@@ -264,7 +258,10 @@ def tools_execute(
 
             incident_id = _extract_incident_guid(raw_id)
             if not incident_id:
-                raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.id (or incident_id) or arguments.incidentNumber",
+                )
 
             r = requests.get(
                 _gw_url(f"sentinel/incidents/{incident_id}"),
@@ -274,13 +271,7 @@ def tools_execute(
             )
             if r.status_code >= 400:
                 raise HTTPException(status_code=r.status_code, detail=r.text)
-            result = {"result": r.json()}
-            return result
-
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown tool_name: {tool_name!r}; payload_keys={sorted(list(payload.keys()))}",
-        )
+            return {"result": r.json()}
 
         if tool_name == "update_incident":
             raw_id = args.get("id") or args.get("incident_id")
@@ -288,7 +279,6 @@ def tools_execute(
             properties = args.get("properties")
 
             if incident_number is not None and raw_id is None:
-                # Resolve incidentNumber -> incident name (GUID) via list_incidents
                 try:
                     n = int(incident_number)
                 except Exception:
@@ -324,7 +314,11 @@ def tools_execute(
 
             incident_id = _extract_incident_guid(raw_id)
             if not incident_id:
-                raise HTTPException(status_code=400, detail="Missing arguments.id (or incident_id) or arguments.incidentNumber")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.id (or incident_id) or arguments.incidentNumber",
+                )
+
             if not isinstance(properties, dict):
                 raise HTTPException(status_code=400, detail="Missing arguments.properties (object)")
 
@@ -337,10 +331,12 @@ def tools_execute(
             )
             if r.status_code >= 400:
                 raise HTTPException(status_code=r.status_code, detail=r.text)
-            result = {"result": r.json()}
-            return result
+            return {"result": r.json()}
 
-        raise HTTPException(status_code=400, detail=f"Unknown tool_name: {tool_name}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown tool_name: {tool_name!r}; payload_keys={sorted(list(payload.keys()))}",
+        )
 
     finally:
         ended = time.time()
