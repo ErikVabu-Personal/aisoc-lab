@@ -1,4 +1,18 @@
-azure-functions
-azure-identity
-azure-ai-projects
-requests
+# Keep dependencies pinned to avoid pulling wheels that require newer glibc than the Functions host provides.
+# (We hit: GLIBC_2.33 not found from cryptography/_rust)
+
+azure-functions==1.21.3
+requests==2.32.3
+
+# Identity stack (pins keep cryptography on a compatible build)
+azure-identity==1.15.0
+azure-core==1.30.2
+msal==1.31.0
+msal-extensions==1.2.0
+
+# Force cryptography to a version that doesn't require GLIBC_2.33 on the Functions host.
+# If you still see glibc errors, drop this further (e.g. 41.0.7) or switch to a custom container.
+cryptography==42.0.8
+
+# Foundry SDK
+azure-ai-projects==1.0.0b11
