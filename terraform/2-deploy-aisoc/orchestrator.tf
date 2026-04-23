@@ -97,12 +97,6 @@ resource "azurerm_role_assignment" "orch_foundry_ai_user" {
 
 # Some data-plane checks evaluate permissions at the *project* scope.
 # Create a project-scope assignment as well.
-resource "azurerm_role_assignment" "orch_foundry_ai_user_project" {
-  scope                = "${azapi_resource.foundry_account.id}/projects/${local.foundry_project_name_effective}"
-  role_definition_name = "Azure AI User"
-
-  principal_id = azurerm_linux_function_app.orchestrator.identity[0].principal_id
-}
 
 output "orchestrator_function_name" {
   value       = azurerm_linux_function_app.orchestrator.name
