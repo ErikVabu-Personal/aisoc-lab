@@ -76,7 +76,7 @@ RULE_NAME="controlpanel-auth-failures"
 
 QUERY=$(cat <<'KQL'
 ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(5m)
+| where TimeGenerated > ago(15m)
 | where Log_s has "auth.login.failure"
 | extend j = parse_json(Log_s)
 | where isnotnull(j)
@@ -102,8 +102,8 @@ BODY=$(jq -n --arg displayName "Control Panel: multiple failed logins (user + IP
       enabled: true,
       severity: "Medium",
       query: $query,
-      queryFrequency: "PT5M",
-      queryPeriod: "PT5M",
+      queryFrequency: "PT15M",
+      queryPeriod: "PT15M",
       triggerOperator: "GreaterThan",
       triggerThreshold: 0,
       suppressionEnabled: false,
