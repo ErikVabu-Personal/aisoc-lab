@@ -29,14 +29,18 @@ locals {
   # This significantly reduces flaky 500s from the control plane.
   foundry_api_version = "2025-06-01"
 
-  # Auto-generate globally-unique-ish names if not provided.
-  # (Cognitive Services account names must be unique and follow specific rules.)
-  foundry_hub_name_effective     = coalesce(var.foundry_hub_name, "aisoc-hub-${random_string.suffix.result}")
-  foundry_project_name_effective = coalesce(var.foundry_project_name, "aisoc-project-${random_string.suffix.result}")
-
   # customSubDomainName must be globally unique and may remain reserved for ~48h after delete.
   # Use a dedicated random suffix to avoid collisions when recreating resources.
   foundry_custom_subdomain = "aisoc-${random_string.suffix.result}-${random_string.cs_subdomain.result}"
+
+  # IMPORTANT:
+  # Foundry Agents publishing UI sometimes constructs the hub hostname as:
+  #   <hubName>.services.ai.azure.com
+  # If hubName doesn't match the provisioned custom subdomain prefix, publishing can fail with ENOTFOUND.
+  # To avoid this, default the hub/account name to the same value as customSubDomainName.
+  # (You can still override foundry_hub_name explicitly if you know what you're doing.)
+  foundry_hub_name_effective     = coalesce(var.foundry_hub_name, local.foundry_custom_subdomain)
+  foundry_project_name_effective = coalesce(var.foundry_project_name, "aisoc-project-${random_string.suffix.result}")
 }
 
 resource "azapi_resource" "foundry_account" {
