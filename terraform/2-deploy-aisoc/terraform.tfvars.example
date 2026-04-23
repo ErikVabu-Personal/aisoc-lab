@@ -36,18 +36,15 @@ runner_image = "ghcr.io/erikvabu-personal/aisoc-runner:latest"
 
 # REQUIRED: model choice + version + deployment name that agents should target
 #
-# Recommended default: Foundry **model-router** (routes to an appropriate LLM)
-# From the Foundry model card:
-# - model:   model-router
-# - version: 2025-11-18
+# Recommended default: gpt-4.1-mini (agent-runtime compatible)
 #
 # Example:
-# foundry_model_choice   = "model-router"
-# foundry_model_version  = "2025-11-18"
-# foundry_model_deployment_name = "model-router"
-foundry_model_choice          = "model-router"
-foundry_model_version         = "2025-11-18"
-foundry_model_deployment_name = "model-router"
+# foundry_model_choice          = "gpt-4.1-mini"
+# foundry_model_version         = "2025-04-14"
+# foundry_model_deployment_name = "gpt-4.1-mini"
+foundry_model_choice          = "gpt-4.1-mini"
+foundry_model_version         = "2025-04-14"
+foundry_model_deployment_name = "gpt-4.1-mini"
 
 # If you hit: "SKU 'Standard' ... not supported", try:
 foundry_model_sku_name     = "GlobalStandard"
