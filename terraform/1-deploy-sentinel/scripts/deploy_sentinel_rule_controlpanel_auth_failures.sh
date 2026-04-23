@@ -74,7 +74,7 @@ PY
 
 RULE_NAME="controlpanel-auth-failures"
 
-read -r -d '' QUERY <<'KQL'
+QUERY=$(cat <<'KQL'
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(5m)
 | where Log_s has "auth.login.failure"
@@ -86,6 +86,7 @@ ContainerAppConsoleLogs_CL
 | where FailureCount >= 3
 | extend timestamp = LastSeen
 KQL
+)
 
 # Create/Update rule via ARM (PUT is idempotent).
 URL="https://management.azure.com/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.OperationalInsights/workspaces/${LAW}/providers/Microsoft.SecurityInsights/alertRules/${RULE_ID}?api-version=2025-09-01"
@@ -125,6 +126,16 @@ BODY=$(jq -n --arg displayName "Control Panel: multiple failed logins (user + IP
   }')
 
 echo "Deploying rule (id=$RULE_ID) via az rest..." >&2
-az rest --method put --url "$URL" --body "$BODY" >/dev/null
+echo "URL=$URL" >&2
+
+# Don't hide errors; print a short response for debugging.
+resp="$(az rest --method put --url "$URL" --body "$BODY" -o json 2>&1)" || {
+  echo "ERROR: az rest failed" >&2
+  echo "$resp" >&2
+  exit 4
+}
+
+# If az returned non-JSON text, still echo it.
+echo "$resp" | head -c 1200 >&2
 
 echo "OK: deployed. Rule id=$RULE_ID" >&2
