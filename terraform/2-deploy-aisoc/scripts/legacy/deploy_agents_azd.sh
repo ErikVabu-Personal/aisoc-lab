@@ -21,7 +21,7 @@ PROJECT_ID="$(terraform output -raw foundry_project_id)"
 MODEL_DEPLOYMENT="$(terraform output -raw foundry_model_deployment_name)"
 
 if [[ -z "$PROJECT_ID" ]]; then
-  echo "ERROR: foundry_project_id output is empty. Ensure foundry_manage_project_in_terraform=true and apply succeeded." >&2
+  echo "ERROR: foundry_project_id output is empty. Ensure terraform apply succeeded, then create the project via scripts/legacy/deploy_foundry_project.py." >&2
   exit 2
 fi
 

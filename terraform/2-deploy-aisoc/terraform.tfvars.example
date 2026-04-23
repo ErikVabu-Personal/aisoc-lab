@@ -27,7 +27,6 @@ foundry_location = "eastus2"
 # IMPORTANT:
 # Creating Foundry projects via Terraform/AzAPI can take a very long time and may time out.
 # Recommended: keep this false and run scripts/deploy_foundry_project.py after `terraform apply`.
-foundry_manage_project_in_terraform = true
 
 # Runner (Azure Container Apps)
 # REQUIRED: runner container image (publish via GitHub Actions)
