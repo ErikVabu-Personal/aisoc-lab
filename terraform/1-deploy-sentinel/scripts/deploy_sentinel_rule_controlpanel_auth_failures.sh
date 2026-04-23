@@ -36,24 +36,35 @@ fi
 echo "RG=$RG" >&2
 echo "LAW=$LAW" >&2
 
-echo "Waiting for table ContainerAppConsoleLogs_CL to exist in workspace..." >&2
-for i in $(seq 1 30); do
-  # Query schema via LA query API: if table missing, query fails.
-  if az monitor log-analytics query \
-      --workspace "$LAW" \
-      --analytics-query "ContainerAppConsoleLogs_CL | take 1" \
-      --timespan PT1H \
-      >/dev/null 2>&1; then
-    echo "OK: table exists." >&2
-    break
-  fi
-  echo "  not yet (attempt $i/30); sleeping 20s..." >&2
-  sleep 20
-  if [[ $i -eq 30 ]]; then
-    echo "ERROR: table did not appear after 10 minutes. Generate a log line from the Container App and retry." >&2
-    exit 3
-  fi
-done
+# Workspace customer id (GUID) is required for `az monitor log-analytics query`.
+# (Workspace name won't work here.)
+WSID="${WSID:-}"
+if [[ -z "${WSID:-}" ]]; then
+  WSID="$(terraform output -raw log_analytics_workspace_workspace_id 2>/dev/null || true)"
+fi
+
+if [[ -z "${WSID:-}" ]]; then
+  echo "WARN: could not resolve WSID (Log Analytics workspace customer id). Skipping table readiness check." >&2
+else
+  echo "Waiting for table ContainerAppConsoleLogs_CL to exist in workspace..." >&2
+  for i in $(seq 1 30); do
+    # Query via LA API: if table missing, query fails.
+    if az monitor log-analytics query \
+        --workspace "$WSID" \
+        --analytics-query "ContainerAppConsoleLogs_CL | take 1" \
+        --timespan PT1H \
+        >/dev/null 2>&1; then
+      echo "OK: table exists." >&2
+      break
+    fi
+    echo "  not yet (attempt $i/30); sleeping 20s..." >&2
+    sleep 20
+    if [[ $i -eq 30 ]]; then
+      echo "ERROR: table did not appear after 10 minutes. Generate a log line from the Container App and retry." >&2
+      exit 3
+    fi
+  done
+fi
 
 RULE_ID="${RULE_ID:-$(python3 - <<'PY'
 import uuid
