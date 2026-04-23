@@ -99,17 +99,6 @@ variable "enable_sentinel_mde_connector" {
   default     = false
 }
 
-variable "enable_scheduled_rule_tpm_wmi" {
-  description = "Deploy a simple scheduled Sentinel analytics rule that triggers on Microsoft-Windows-TPM-WMI events (runs every 5 minutes)."
-  type        = bool
-  default     = true
-}
-
-variable "enable_scheduled_rule_controlpanel_auth_failures" {
-  description = "Deploy a scheduled Sentinel analytics rule that triggers when multiple auth.login.failure events occur for the same username from the same client IP within 5 minutes."
-  type        = bool
-  default     = true
-}
 
 variable "vm_name" {
   description = "Windows VM name"
