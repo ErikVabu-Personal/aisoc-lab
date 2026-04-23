@@ -394,6 +394,10 @@ def tools_execute(
                 if not properties:
                     return {"result": {"ok": True, "wrote_comment": True}}
 
+                # Demo hardening: when comment writeback is requested, ignore status patching.
+                # Some Sentinel incident status updates can be finicky/unsupported depending on API/version.
+                properties.pop("status", None)
+
             r = requests.patch(
                 _gw_url(f"sentinel/incidents/{incident_id}"),
                 params=_gw_params(),
