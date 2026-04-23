@@ -76,3 +76,43 @@ def update_incident(subscription_id: str, resource_group: str, workspace_name: s
     )
     r.raise_for_status()
     return r.json()
+
+
+def add_incident_comment(
+    subscription_id: str,
+    resource_group: str,
+    workspace_name: str,
+    incident_id: str,
+    message: str,
+    api_version: str = "2024-03-01",
+) -> dict:
+    """Create a comment on a Sentinel incident.
+
+    Uses the incidentComments sub-resource.
+    """
+
+    token = _mgmt_token()
+    url = (
+        f"https://management.azure.com/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+        f"/providers/Microsoft.OperationalInsights/workspaces/{workspace_name}"
+        f"/providers/Microsoft.SecurityInsights/incidents/{incident_id}"
+        f"/incidentComments?api-version={api_version}"
+    )
+
+    payload = {
+        "properties": {
+            "message": message,
+        }
+    }
+
+    r = requests.post(
+        url,
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json()

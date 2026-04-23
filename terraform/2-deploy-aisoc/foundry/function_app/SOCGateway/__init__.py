@@ -3,7 +3,7 @@ import os
 import azure.functions as func
 
 from shared.log_analytics import query_law
-from shared.sentinel import list_incidents, get_incident, update_incident
+from shared.sentinel import list_incidents, get_incident, update_incident, add_incident_comment
 from shared.auth import get_openrouter_api_key_from_env_or_kv
 from shared.permissions import require_key
 
@@ -87,6 +87,31 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             if not isinstance(props, dict):
                 return func.HttpResponse("Missing properties patch", status_code=400)
             return func.HttpResponse(json.dumps(update_incident(sub, rg, ws, incident_id, props)), mimetype="application/json")
+
+        # Create comment: POST /sentinel/incidents/{id}/comments
+        if route and route.startswith("sentinel/incidents/") and route.endswith("/comments") and req.method.upper() == "POST":
+            require_key(req, "AISOC_WRITE_KEY")
+            sub = os.environ["AZURE_SUBSCRIPTION_ID"]
+            rg = os.environ["AZURE_RESOURCE_GROUP"]
+            ws = os.environ["LAW_WORKSPACE_NAME"]
+
+            # route: sentinel/incidents/{id}/comments
+            parts = route.split("/")
+            if len(parts) < 4:
+                return func.HttpResponse("Missing id", status_code=400)
+            incident_id = parts[2]
+            if not incident_id:
+                return func.HttpResponse("Missing id", status_code=400)
+
+            body = _json(req)
+            message = body.get("message")
+            if not isinstance(message, str) or not message.strip():
+                return func.HttpResponse("Missing message", status_code=400)
+
+            return func.HttpResponse(
+                json.dumps(add_incident_comment(sub, rg, ws, incident_id, message.strip())),
+                mimetype="application/json",
+            )
 
         if route == "llm/openrouter":
             require_key(req, "AISOC_READ_KEY")

@@ -71,7 +71,7 @@
                 "properties": {
                   "tool_name": {
                     "type": "string",
-                    "enum": ["kql_query", "list_incidents", "get_incident", "update_incident"]
+                    "enum": ["kql_query", "list_incidents", "get_incident", "update_incident", "add_incident_comment"]
                   },
                   "arguments": {
                     "type": "object",

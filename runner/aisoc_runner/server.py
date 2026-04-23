@@ -273,11 +273,7 @@ def tools_execute(
                 raise HTTPException(status_code=r.status_code, detail=r.text)
             return {"result": r.json()}
 
-        if tool_name == "update_incident":
-            raw_id = args.get("id") or args.get("incident_id")
-            incident_number = args.get("incidentNumber") or args.get("incident_number")
-            properties = args.get("properties")
-
+        def _resolve_incident_id(raw_id: Any, incident_number: Any) -> str:
             if incident_number is not None and raw_id is None:
                 try:
                     n = int(incident_number)
@@ -318,6 +314,14 @@ def tools_execute(
                     status_code=400,
                     detail="Missing arguments.id (or incident_id) or arguments.incidentNumber",
                 )
+            return incident_id
+
+        if tool_name == "update_incident":
+            raw_id = args.get("id") or args.get("incident_id")
+            incident_number = args.get("incidentNumber") or args.get("incident_number")
+            properties = args.get("properties")
+
+            incident_id = _resolve_incident_id(raw_id, incident_number)
 
             if not isinstance(properties, dict):
                 raise HTTPException(status_code=400, detail="Missing arguments.properties (object)")
@@ -327,6 +331,27 @@ def tools_execute(
                 params=_gw_params(),
                 headers=_gw_headers("write"),
                 json={"properties": properties},
+                timeout=60,
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=r.text)
+            return {"result": r.json()}
+
+        if tool_name == "add_incident_comment":
+            raw_id = args.get("id") or args.get("incident_id")
+            incident_number = args.get("incidentNumber") or args.get("incident_number")
+            message = args.get("message") or args.get("comment")
+
+            incident_id = _resolve_incident_id(raw_id, incident_number)
+
+            if not isinstance(message, str) or not message.strip():
+                raise HTTPException(status_code=400, detail="Missing arguments.message (string)")
+
+            r = requests.post(
+                _gw_url(f"sentinel/incidents/{incident_id}/comments"),
+                params=_gw_params(),
+                headers=_gw_headers("write"),
+                json={"message": message.strip()},
                 timeout=60,
             )
             if r.status_code >= 400:

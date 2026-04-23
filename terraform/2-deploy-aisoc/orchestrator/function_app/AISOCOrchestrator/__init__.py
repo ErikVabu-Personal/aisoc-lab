@@ -177,11 +177,43 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             model_deployment,
             system=(
                 "You are an incident reporter. Output ONLY strict JSON with keys: "
-                "executive_summary, timeline, impact, actions_taken, recommendations, closure. "
+                "executive_summary, timeline, impact, actions_taken, recommendations, closure, case_note_markdown. "
+                "case_note_markdown must be a concise comment suitable for pasting into Sentinel (<= 1200 chars). "
                 "Keep executive_summary <= 6 bullets. recommendations max 5."
             ),
             user=f"Write report and propose closure.\nINCIDENT:\n{incident_json}\n\nTRIAGE_JSON:\n{triage_out}\n\nINVESTIGATION_JSON:\n{inv_out}",
         )
+
+        # Optional writeback: add reporter case note as Sentinel incident comment.
+        writeback = bool(body.get("writeback"))
+        wrote_comment = False
+        if writeback:
+            # Use best-effort extraction of case note text.
+            case_note = None
+            s = (rep_out or "").strip()
+            if s.startswith("{"):
+                try:
+                    rep_j = json.loads(s)
+                    case_note = rep_j.get("case_note_markdown") or rep_j.get("case_note")
+                except Exception:
+                    case_note = None
+            if not isinstance(case_note, str) or not case_note.strip():
+                case_note = _clip(rep_out, 1200)
+
+            _runner_post(
+                runner_url,
+                runner_bearer,
+                {
+                    "tool_name": "add_incident_comment",
+                    "arguments": {
+                        "incidentNumber": incident_number,
+                        "id": incident_id,
+                        "message": case_note,
+                    },
+                },
+                agent="reporter",
+            )
+            wrote_comment = True
 
         auto_close = os.environ.get("AISOC_AUTO_CLOSE", "0") == "1"
         did_close = False
@@ -218,6 +250,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             "investigation": _maybe_json(inv_out),
             "report": _maybe_json(rep_out),
             "did_close": did_close,
+            "wrote_comment": wrote_comment,
         }
         return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
