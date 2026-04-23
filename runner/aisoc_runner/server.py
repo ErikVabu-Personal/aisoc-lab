@@ -334,9 +334,25 @@ def tools_execute(
             # Some clients/LLMs send a "flat" patch shape (status/classification/etc) instead of nesting under properties.
             # Accept that and wrap it into properties.
             if not isinstance(properties, dict):
-                flat = {k: v for k, v in args.items() if k not in ("id", "incident_id", "incidentId", "incidentNumber", "incident_number", "properties")}
+                flat = {
+                    k: v
+                    for k, v in args.items()
+                    if k
+                    not in (
+                        "id",
+                        "incident_id",
+                        "incidentId",
+                        "incidentNumber",
+                        "incident_number",
+                        "properties",
+                    )
+                }
                 if flat:
                     properties = flat
+
+            # Also accept top-level comment field (common LLM behavior).
+            if isinstance(properties, dict) and "comment" not in properties and isinstance(args.get("comment"), str):
+                properties["comment"] = args.get("comment")
 
             # Also accept a singular comment field and treat it as an incident comment write.
             if isinstance(properties, dict) and "comment" in properties and "comments" not in properties:
@@ -373,6 +389,10 @@ def tools_execute(
                     )
                     if cr.status_code >= 400:
                         raise HTTPException(status_code=cr.status_code, detail=cr.text)
+
+                # If this was comment-only, we're done. Don't PATCH empty properties.
+                if not properties:
+                    return {"result": {"ok": True, "wrote_comment": True}}
 
             r = requests.patch(
                 _gw_url(f"sentinel/incidents/{incident_id}"),
