@@ -5,7 +5,32 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 cd "$root"
 
-export AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$(terraform output -raw foundry_project_endpoint)"
+# Project endpoint is discovered after project creation (we create the project via script, not Terraform).
+# Prefer env var if set, else fall back to scripts/legacy/deploy_foundry_project.py to read it.
+if [[ -n "${AZURE_AI_FOUNDRY_PROJECT_ENDPOINT:-}" ]]; then
+  export AZURE_AI_FOUNDRY_PROJECT_ENDPOINT
+else
+  # Attempt to read from terraform output if present (legacy), otherwise query the project resource.
+  export AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$(terraform output -raw foundry_project_endpoint 2>/dev/null || true)"
+  if [[ -z "${AZURE_AI_FOUNDRY_PROJECT_ENDPOINT:-}" || "${AZURE_AI_FOUNDRY_PROJECT_ENDPOINT}" == "null" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+      # This script prints the project id when ready; we also need endpoints.
+      # Query the project resource via ARM to extract the AI Foundry API endpoint.
+      hub_id="$(terraform output -raw foundry_account_id)"
+      proj_name="$(terraform output -raw foundry_project_name)"
+      api_ver="$(terraform output -raw foundry_api_version 2>/dev/null || echo 2025-06-01)"
+      proj_url="https://management.azure.com${hub_id}/projects/${proj_name}?api-version=${api_ver}"
+      token="$(az account get-access-token --resource https://management.azure.com/ -o tsv --query accessToken)"
+      AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$(curl -sS -H "Authorization: Bearer ${token}" "${proj_url}" | python3 -c 'import sys,json; j=json.load(sys.stdin); print((j.get("properties",{}).get("endpoints",{}) or {}).get("AI Foundry API") or "")')"
+      export AZURE_AI_FOUNDRY_PROJECT_ENDPOINT
+    fi
+  fi
+fi
+
+if [[ -z "${AZURE_AI_FOUNDRY_PROJECT_ENDPOINT:-}" ]]; then
+  echo "ERROR: AZURE_AI_FOUNDRY_PROJECT_ENDPOINT is empty. Run ./scripts/deploy_foundry_project.sh first." >&2
+  exit 2
+fi
 export AZURE_AI_MODEL_DEPLOYMENT="$(terraform output -raw foundry_model_deployment_name)"
 export AISOC_RUNNER_URL="$(terraform output -raw runner_url)"
 
