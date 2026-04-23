@@ -251,3 +251,8 @@ output "foundry_model_deployment_name" {
   value       = var.foundry_model_deployment_name
   description = "Desired Foundry model deployment name that agents should target."
 }
+
+output "foundry_model_version" {
+  value       = var.foundry_model_version
+  description = "Model version string for the Foundry deployment (e.g. 2026-03-17)."
+}
