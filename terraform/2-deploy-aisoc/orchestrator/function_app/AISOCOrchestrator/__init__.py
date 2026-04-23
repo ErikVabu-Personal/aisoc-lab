@@ -34,49 +34,45 @@ def _runner_post(runner_url: str, runner_bearer: str, payload: dict[str, Any], a
     return r.json()
 
 
-def _foundry_responses_url(project_endpoint: str, agent_name: str) -> str:
-    # Published agent invocation endpoint (Responses protocol)
-    # https://.../api/projects/<project>/agents/<name>/protocols/openai/v1/responses
-    return project_endpoint.rstrip("/") + f"/agents/{agent_name}/protocols/openai/v1/responses"
+def _ai_projects_token() -> str:
+    # Agent Service uses ai.azure.com audience.
+    return DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
 
 
-def _foundry_invoke_published_agent(
-    project_endpoint: str,
-    project_api_key: str,
-    agent_name: str,
-    user_text: str,
-) -> str:
-    url = _foundry_responses_url(project_endpoint, agent_name)
+def _api_version() -> str:
+    return os.environ.get("AISOC_AIPROJECTS_API_VERSION", "v1")
 
-    # Non-streaming Responses API request (minimal)
-    payload = {
-        "input": user_text,
-    }
 
-    r = requests.post(
-        url,
-        headers={
-            "Ocp-Apim-Subscription-Key": project_api_key,
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=180,
-    )
+def _agents_list(project_endpoint: str) -> list[dict[str, Any]]:
+    url = project_endpoint.rstrip("/") + f"/agents?api-version={_api_version()}"
+    r = requests.get(url, headers={"Authorization": f"Bearer {_ai_projects_token()}"}, timeout=30)
     if r.status_code >= 400:
-        raise RuntimeError(f"Published agent '{agent_name}' failed ({r.status_code}): {r.text[:4000]}")
-
+        raise RuntimeError(f"List agents failed ({r.status_code}): {r.text[:2000]}")
     data = r.json()
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        return data["data"]
+    raise RuntimeError(f"Unexpected agents list shape: {json.dumps(data)[:1000]}")
 
-    # Best-effort extraction of text from OpenAI Responses-shaped output.
-    # Common shapes include:
-    # - { output: [ { content: [ { type: 'output_text', text: '...' } ] } ] }
-    # - { output_text: '...' }
+
+def _agent_latest_id(project_endpoint: str, agent_name: str) -> str:
+    agents = _agents_list(project_endpoint)
+    for a in agents:
+        if str(a.get("name") or a.get("id") or "").lower() == agent_name.lower():
+            latest = ((a.get("versions") or {}).get("latest") or {})
+            agent_id = latest.get("id")
+            if isinstance(agent_id, str) and agent_id:
+                return agent_id
+    available = [str(x.get("name") or x.get("id") or "") for x in agents]
+    raise RuntimeError(f"Agent '{agent_name}' not found. Available: {available}")
+
+
+def _response_text(data: Any) -> str:
+    # Similar extraction to OpenAI Responses.
     if isinstance(data, dict):
         if isinstance(data.get("output_text"), str):
             return data["output_text"]
         out = data.get("output")
-        if isinstance(out, list) and out:
-            # walk content blocks
+        if isinstance(out, list):
             texts: list[str] = []
             for item in out:
                 if not isinstance(item, dict):
@@ -89,8 +85,31 @@ def _foundry_invoke_published_agent(
                         texts.append(block["text"])
             if texts:
                 return "\n".join(texts)
-
     return json.dumps(data)[:12000]
+
+
+def _invoke_agent(project_endpoint: str, agent_name: str, user_text: str) -> str:
+    agent_id = _agent_latest_id(project_endpoint, agent_name)
+    url = project_endpoint.rstrip("/") + f"/responses?api-version={_api_version()}"
+
+    payload = {
+        "agent_id": agent_id,
+        "input": user_text,
+    }
+
+    r = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {_ai_projects_token()}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=240,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(f"Agent '{agent_name}' response failed ({r.status_code}): {r.text[:4000]}")
+
+    return _response_text(r.json())
 
 
 def _clip(s: str, max_chars: int) -> str:
@@ -149,13 +168,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         incident_json = json.dumps(inc.get("result"), indent=2)[:12000]
 
-        project_key_secret = os.environ.get("AISOC_FOUNDRY_PROJECT_KEY_SECRET_NAME", "AISOC-FOUNDRY-PROJECT-KEY")
-        project_api_key = get_kv_secret(kv_uri, project_key_secret)
-
-        # Call published agents by name via Responses protocol.
-        triage_out = _foundry_invoke_published_agent(
+        # Call agents via Foundry Agent Service runtime (agents + responses).
+        triage_out = _invoke_agent(
             project_endpoint,
-            project_api_key,
             "triage",
             user_text=(
                 "You are the TRIAGE agent. Use the AISOC Runner OpenAPI tool to fetch incident and context. "
@@ -173,9 +188,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
-        inv_out = _foundry_invoke_published_agent(
+        inv_out = _invoke_agent(
             project_endpoint,
-            project_api_key,
             "investigator",
             user_text=(
                 "You are the INVESTIGATOR agent. Use the AISOC Runner OpenAPI tool to fetch incident details and run relevant KQL queries. "
@@ -185,9 +199,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         writeback = bool(body.get("writeback"))
-        rep_out = _foundry_invoke_published_agent(
+        rep_out = _invoke_agent(
             project_endpoint,
-            project_api_key,
             "reporter",
             user_text=(
                 "You are the REPORTER agent. Write an exec-ready summary and a Sentinel-ready case note. "
