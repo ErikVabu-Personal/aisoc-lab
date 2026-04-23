@@ -341,6 +341,35 @@ def tools_execute(
             if not isinstance(properties, dict):
                 raise HTTPException(status_code=400, detail="Missing arguments.properties (object) or flat incident fields")
 
+            # If caller included comments/work notes, Sentinel expects them via incidentComments sub-resource.
+            # Translate common shapes into add-comment calls.
+            comments = None
+            if isinstance(properties, dict):
+                comments = properties.pop("comments", None)
+            if comments is not None:
+                texts: list[str] = []
+                if isinstance(comments, str) and comments.strip():
+                    texts.append(comments.strip())
+                elif isinstance(comments, list):
+                    for c in comments:
+                        if isinstance(c, dict):
+                            t = c.get("comment") or c.get("message")
+                            if isinstance(t, str) and t.strip():
+                                texts.append(t.strip())
+                        elif isinstance(c, str) and c.strip():
+                            texts.append(c.strip())
+                # Best-effort: add each comment (ignore failures? no, bubble up)
+                for t in texts:
+                    cr = requests.post(
+                        _gw_url(f"sentinel/incidents/{incident_id}/comments"),
+                        params=_gw_params(),
+                        headers=_gw_headers("write"),
+                        json={"message": t},
+                        timeout=60,
+                    )
+                    if cr.status_code >= 400:
+                        raise HTTPException(status_code=cr.status_code, detail=cr.text)
+
             r = requests.patch(
                 _gw_url(f"sentinel/incidents/{incident_id}"),
                 params=_gw_params(),
