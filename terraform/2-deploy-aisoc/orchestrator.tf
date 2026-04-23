@@ -72,7 +72,9 @@ resource "azurerm_key_vault_access_policy" "orch_secrets" {
   tenant_id    = data.azurerm_client_config.current.tenant_id
   object_id    = azurerm_linux_function_app.orchestrator.identity[0].principal_id
 
-  secret_permissions = ["Get"]
+  # Needs both get + list for reliable secret retrieval/debugging.
+  # Without this, the orchestrator cannot fetch AISOC-RUNNER-BEARER from KV.
+  secret_permissions = ["Get", "List"]
 }
 
 output "orchestrator_function_name" {
