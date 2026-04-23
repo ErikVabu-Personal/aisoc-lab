@@ -338,6 +338,10 @@ def tools_execute(
                 if flat:
                     properties = flat
 
+            # Also accept a singular comment field and treat it as an incident comment write.
+            if isinstance(properties, dict) and "comment" in properties and "comments" not in properties:
+                properties["comments"] = properties.pop("comment")
+
             if not isinstance(properties, dict):
                 raise HTTPException(status_code=400, detail="Missing arguments.properties (object) or flat incident fields")
 
