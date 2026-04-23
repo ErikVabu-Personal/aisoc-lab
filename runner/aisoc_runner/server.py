@@ -435,6 +435,22 @@ def tools_execute(
             detail=f"Unknown tool_name: {tool_name!r}; payload_keys={sorted(list(payload.keys()))}",
         )
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Ensure we always get a deterministic traceback in Container Apps logs.
+        try:
+            import traceback
+
+            print(
+                f"[tools_execute] unhandled_exception tool_name={tool_name!r} agent={agent!r} err={e!r}",
+                flush=True,
+            )
+            traceback.print_exc()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Unhandled runner exception (see logs)")
+
     finally:
         ended = time.time()
         _emit_pixelagents_event(
