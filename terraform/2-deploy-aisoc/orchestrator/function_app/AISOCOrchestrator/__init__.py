@@ -34,54 +34,124 @@ def _runner_post(runner_url: str, runner_bearer: str, payload: dict[str, Any], a
     return r.json()
 
 
-def _model_call(project_endpoint: str, model_deployment: str, system: str, user: str) -> str:
-    """Call Foundry model.
+def _foundry_base(project_endpoint: str) -> str:
+    # https://...services.ai.azure.com/api/projects/<project> -> https://...services.ai.azure.com
+    return project_endpoint.split("/api/projects/")[0].rstrip("/")
 
-    We avoid depending on a specific azure-ai-projects SDK "inference" surface because it changes
-    between versions (and can break at runtime). Instead, call the Foundry inference REST endpoint
-    directly using DefaultAzureCredential.
 
-    Expected env vars:
-      - AZURE_AI_FOUNDRY_PROJECT_ENDPOINT: https://<resource>.services.ai.azure.com/api/projects/<project>
-      - AZURE_AI_MODEL_DEPLOYMENT: deployment name (e.g. model-router)
+def _bearer() -> str:
+    return DefaultAzureCredential().get_token("https://cognitiveservices.azure.com/.default").token
+
+
+def _foundry_list_agents(project_endpoint: str) -> list[dict[str, Any]]:
+    """List Foundry agents for the given project.
+
+    NOTE: API surfaces evolve; we try a small set of known paths.
     """
 
-    # Derive base resource URL from the project endpoint.
-    # Example:
-    #   https://...services.ai.azure.com/api/projects/<project>
-    # -> https://...services.ai.azure.com
-    base = project_endpoint.split("/api/projects/")[0].rstrip("/")
+    base = _foundry_base(project_endpoint)
+    token = _bearer()
 
-    # Foundry inference is compatible with Azure OpenAI-style chat completions under /openai/deployments/.../chat/completions
-    # (this is the stable path across many Foundry setups).
-    url = f"{base}/openai/deployments/{model_deployment}/chat/completions?api-version=2024-06-01"
+    candidates = [
+        # common "projects"-scoped agents collection
+        project_endpoint.rstrip("/") + "/agents?api-version=2025-06-01",
+        project_endpoint.rstrip("/") + "/agents?api-version=2024-10-01-preview",
+        # some surfaces expose agents under /api/agents with project query
+        base + "/api/agents?api-version=2025-06-01",
+    ]
 
-    token = DefaultAzureCredential().get_token("https://cognitiveservices.azure.com/.default").token
+    last_err = None
+    for url in candidates:
+        try:
+            r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+            if r.status_code >= 400:
+                last_err = f"{r.status_code}: {r.text[:4000]}"
+                continue
+            data = r.json()
+            if isinstance(data, dict) and isinstance(data.get("value"), list):
+                return data["value"]
+            if isinstance(data, list):
+                return data
+            # unknown shape
+            last_err = f"Unexpected list agents response: {json.dumps(data)[:1000]}"
+        except Exception as e:
+            last_err = str(e)
 
-    r = requests.post(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.2,
-        },
-        timeout=90,
-    )
+    raise RuntimeError(f"Failed to list Foundry agents. Last error: {last_err}")
 
-    if r.status_code >= 400:
-        raise RuntimeError(f"Foundry inference failed ({r.status_code}): {r.text[:4000]}")
 
-    data = r.json()
-    try:
-        return data["choices"][0]["message"]["content"]
-    except Exception:
-        raise RuntimeError(f"Unexpected Foundry response shape: {json.dumps(data)[:2000]}")
+def _foundry_run_agent(project_endpoint: str, agent_name: str, user: str) -> str:
+    """Run a Foundry agent by name.
+
+    We locate the agent id by listing agents, then invoke a run endpoint.
+    The exact run endpoint differs across API versions; we try a few candidates.
+    """
+
+    agents = _foundry_list_agents(project_endpoint)
+    agent = None
+    for a in agents:
+        # try common fields
+        n = a.get("name") or a.get("properties", {}).get("displayName") or a.get("displayName")
+        if str(n).strip().lower() == agent_name.lower():
+            agent = a
+            break
+
+    if not agent:
+        available = [str((x.get("name") or x.get("displayName") or x.get("properties", {}).get("displayName") or "")).strip() for x in agents]
+        raise RuntimeError(f"Agent '{agent_name}' not found. Available: {available}")
+
+    agent_id = agent.get("id") or agent.get("name")
+    if not agent_id:
+        raise RuntimeError(f"Agent '{agent_name}' has no id/name field")
+
+    token = _bearer()
+
+    # Run endpoint candidates (API varies). We keep it minimal and fail with the last error.
+    base = _foundry_base(project_endpoint)
+    candidates = [
+        # project-scoped agent runs
+        project_endpoint.rstrip("/") + f"/agents/{agent_id}/runs?api-version=2025-06-01",
+        project_endpoint.rstrip("/") + f"/agents/{agent_id}/runs?api-version=2024-10-01-preview",
+        # generic api surface
+        base + f"/api/agents/{agent_id}:run?api-version=2025-06-01",
+    ]
+
+    payload = {"input": user}
+
+    last_err = None
+    for url in candidates:
+        try:
+            r = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=120,
+            )
+            if r.status_code >= 400:
+                last_err = f"{r.status_code}: {r.text[:4000]}"
+                continue
+            data = r.json()
+
+            # Try a few common response shapes for final text.
+            for key in ("output", "result", "message", "content"):
+                if isinstance(data, dict) and isinstance(data.get(key), str):
+                    return data[key]
+
+            # nested "output.text" style
+            if isinstance(data, dict) and isinstance(data.get("output"), dict):
+                out = data["output"]
+                if isinstance(out.get("text"), str):
+                    return out["text"]
+
+            # unknown but successful
+            return json.dumps(data)
+        except Exception as e:
+            last_err = str(e)
+
+    raise RuntimeError(f"Failed to run agent '{agent_name}'. Last error: {last_err}")
 
 
 def _clip(s: str, max_chars: int) -> str:
@@ -140,16 +210,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         incident_json = json.dumps(inc.get("result"), indent=2)[:12000]
 
-        triage_out = _model_call(
+        # Triage agent (Foundry Agent runtime). Agent should call Runner tools itself.
+        triage_out = _foundry_run_agent(
             project_endpoint,
-            model_deployment,
-            system=(
-                "You are a SOC triage analyst. Output ONLY strict JSON with keys: "
-                "summary, verdict, confidence, entities, next_actions. "
-                "entities must include username and clientIp when present, else null. "
-                "Keep summary under 6 bullets. next_actions max 5 items."
-            ),
-            user=f"Triage this Sentinel incident:\n{incident_json}",
+            "triage",
+            user=f"Triage Sentinel incident. First fetch incident details via AISOC Runner tool if needed.\nINCIDENT_REF:\n{incident_json}",
         )
 
         if mode == "triage_only":
@@ -157,105 +222,35 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "ok": True,
                 "mode": mode,
                 "incident_ref": {"incidentNumber": incident_number, "incidentId": incident_id},
-                "triage": json.loads(triage_out) if triage_out.strip().startswith("{") else {"raw": _clip(triage_out, max_chars)},
+                "triage": {"raw": _clip(triage_out, max_chars)},
             }
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
-        # Investigator: generate a few targeted KQL queries, run them via Runner as agent=investigator,
-        # then write findings grounded in the results.
-        inv_plan = _model_call(
+        # Investigator agent (Foundry Agent runtime).
+        inv_out = _foundry_run_agent(
             project_endpoint,
-            model_deployment,
-            system=(
-                "You are an incident investigator. Output ONLY strict JSON with keys: "
-                "hypotheses, evidence_needed, queries. "
-                "queries is an array of {name,kql,timespan}. Keep to max 3 queries. "
-                "Each kql must be short (<= 400 chars). Prefer querying the tables relevant to this incident."
-            ),
-            user=f"Create a minimal investigation query plan for this incident.\nINCIDENT:\n{incident_json}\n\nTRIAGE_JSON:\n{triage_out}",
-        )
-
-        inv_plan_j: dict[str, Any] | None = None
-        try:
-            inv_plan_j = json.loads(inv_plan) if inv_plan.strip().startswith("{") else None
-        except Exception:
-            inv_plan_j = None
-
-        query_results: list[dict[str, Any]] = []
-        if inv_plan_j and isinstance(inv_plan_j.get("queries"), list):
-            for q in inv_plan_j.get("queries", [])[:3]:
-                try:
-                    name = str(q.get("name") or "query")
-                    kql = q.get("kql")
-                    timespan = q.get("timespan") or "PT1H"
-                    if isinstance(kql, str) and kql.strip():
-                        res = _runner_post(
-                            runner_url,
-                            runner_bearer,
-                            {"tool_name": "kql_query", "arguments": {"query": kql.strip(), "timespan": str(timespan)}},
-                            agent="investigator",
-                        )
-                        query_results.append({"name": name, "timespan": str(timespan), "kql": kql.strip(), "result": res.get("result")})
-                except Exception as e:
-                    query_results.append({"name": str(q.get("name") or "query"), "error": str(e)})
-
-        inv_out = _model_call(
-            project_endpoint,
-            model_deployment,
-            system=(
-                "You are an incident investigator. Output ONLY strict JSON with keys: "
-                "hypotheses, findings, timeline, verdict, confidence, next_actions. "
-                "Ground conclusions in the provided query results; if results are empty, say so."
-            ),
+            "investigator",
             user=(
-                f"Investigate based on incident + triage + query results.\n"
-                f"INCIDENT:\n{incident_json}\n\nTRIAGE_JSON:\n{triage_out}\n\n"
-                f"QUERY_RESULTS_JSON:\n{json.dumps(query_results)[:12000]}"
+                "Investigate this incident. Use AISOC Runner tool to fetch incident + run relevant KQL queries. "
+                "Base your findings on evidence you retrieve.\n\n"
+                f"INCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}"
             ),
         )
 
-        rep_out = _model_call(
-            project_endpoint,
-            model_deployment,
-            system=(
-                "You are an incident reporter. Output ONLY strict JSON with keys: "
-                "executive_summary, timeline, impact, actions_taken, recommendations, closure, case_note_markdown. "
-                "case_note_markdown must be a concise comment suitable for pasting into Sentinel (<= 1200 chars). "
-                "Keep executive_summary <= 6 bullets. recommendations max 5."
-            ),
-            user=f"Write report and propose closure.\nINCIDENT:\n{incident_json}\n\nTRIAGE_JSON:\n{triage_out}\n\nINVESTIGATION_JSON:\n{inv_out}",
-        )
-
-        # Optional writeback: add reporter case note as Sentinel incident comment.
+        # Reporter agent (Foundry Agent runtime). If writeback=true, the reporter should add a Sentinel comment
+        # via the AISOC Runner tool.
         writeback = bool(body.get("writeback"))
-        wrote_comment = False
-        if writeback:
-            # Use best-effort extraction of case note text.
-            case_note = None
-            s = (rep_out or "").strip()
-            if s.startswith("{"):
-                try:
-                    rep_j = json.loads(s)
-                    case_note = rep_j.get("case_note_markdown") or rep_j.get("case_note")
-                except Exception:
-                    case_note = None
-            if not isinstance(case_note, str) or not case_note.strip():
-                case_note = _clip(rep_out, 1200)
+        rep_out = _foundry_run_agent(
+            project_endpoint,
+            "reporter",
+            user=(
+                "Write an executive-ready incident report and a concise case note suitable for Sentinel comments.\n"
+                + ("IMPORTANT: writeback=true. Add the case note as a Sentinel incident comment using AISOC Runner tool.\n" if writeback else "")
+                + f"\nINCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}\n\nINVESTIGATOR_OUTPUT:\n{_clip(inv_out, 8000)}"
+            ),
+        )
 
-            _runner_post(
-                runner_url,
-                runner_bearer,
-                {
-                    "tool_name": "add_incident_comment",
-                    "arguments": {
-                        "incidentNumber": incident_number,
-                        "id": incident_id,
-                        "message": case_note,
-                    },
-                },
-                agent="reporter",
-            )
-            wrote_comment = True
+        wrote_comment = None
 
         auto_close = os.environ.get("AISOC_AUTO_CLOSE", "0") == "1"
         did_close = False
