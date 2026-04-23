@@ -12,12 +12,24 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 cd "$root"
 
-RG="$(terraform output -raw resource_group_name 2>/dev/null || terraform output -raw resource_group)"
-LAW="$(terraform output -raw workspace_name 2>/dev/null || terraform output -raw law_workspace_name)"
+# Prefer explicit env vars (useful when running from CI or when output names differ).
+RG="${RG:-}"
+LAW="${LAW:-}"
+
+if [[ -z "${RG:-}" ]]; then
+  RG="$(terraform output -raw resource_group 2>/dev/null || true)"
+fi
+
+if [[ -z "${LAW:-}" ]]; then
+  LAW="$(terraform output -raw log_analytics_workspace_name 2>/dev/null || true)"
+fi
+
 SUB="$(az account show --query id -o tsv)"
 
 if [[ -z "${RG:-}" || -z "${LAW:-}" ]]; then
-  echo "ERROR: could not resolve RG/LAW from terraform outputs. Run from terraform/1-deploy-sentinel with state initialized." >&2
+  echo "ERROR: could not resolve RG/LAW. Set RG and LAW env vars, or run from terraform/1-deploy-sentinel with outputs available." >&2
+  echo "Hint: RG=\"$(terraform output -raw resource_group 2>/dev/null || echo '')\"" >&2
+  echo "Hint: LAW=\"$(terraform output -raw log_analytics_workspace_name 2>/dev/null || echo '')\"" >&2
   exit 2
 fi
 
