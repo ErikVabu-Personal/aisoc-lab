@@ -35,39 +35,12 @@ def _runner_post(runner_url: str, runner_bearer: str, payload: dict[str, Any], a
 
 
 def _ai_projects_token() -> str:
-    # Agent Service uses ai.azure.com audience.
+    # Foundry Agent Service uses ai.azure.com audience.
     return DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
 
 
-def _api_version() -> str:
-    return os.environ.get("AISOC_AIPROJECTS_API_VERSION", "v1")
-
-
-def _agents_list(project_endpoint: str) -> list[dict[str, Any]]:
-    url = project_endpoint.rstrip("/") + f"/agents?api-version={_api_version()}"
-    r = requests.get(url, headers={"Authorization": f"Bearer {_ai_projects_token()}"}, timeout=30)
-    if r.status_code >= 400:
-        raise RuntimeError(f"List agents failed ({r.status_code}): {r.text[:2000]}")
-    data = r.json()
-    if isinstance(data, dict) and isinstance(data.get("data"), list):
-        return data["data"]
-    raise RuntimeError(f"Unexpected agents list shape: {json.dumps(data)[:1000]}")
-
-
-def _agent_latest_id(project_endpoint: str, agent_name: str) -> str:
-    agents = _agents_list(project_endpoint)
-    for a in agents:
-        if str(a.get("name") or a.get("id") or "").lower() == agent_name.lower():
-            latest = ((a.get("versions") or {}).get("latest") or {})
-            agent_id = latest.get("id")
-            if isinstance(agent_id, str) and agent_id:
-                return agent_id
-    available = [str(x.get("name") or x.get("id") or "") for x in agents]
-    raise RuntimeError(f"Agent '{agent_name}' not found. Available: {available}")
-
-
 def _response_text(data: Any) -> str:
-    # Similar extraction to OpenAI Responses.
+    # Extract output text from an OpenAI Responses-shaped payload.
     if isinstance(data, dict):
         if isinstance(data.get("output_text"), str):
             return data["output_text"]
@@ -89,12 +62,13 @@ def _response_text(data: Any) -> str:
 
 
 def _invoke_agent(project_endpoint: str, agent_name: str, user_text: str) -> str:
-    agent_id = _agent_latest_id(project_endpoint, agent_name)
-    url = project_endpoint.rstrip("/") + f"/responses?api-version={_api_version()}"
+    # Invoke agent via OpenAI v1 Responses endpoint under the project.
+    # NOTE: When using /openai/v1 paths, the service rejects api-version query params.
+    url = project_endpoint.rstrip("/") + "/openai/v1/responses"
 
     payload = {
-        "agent_id": agent_id,
         "input": user_text,
+        "agent_reference": {"name": agent_name, "type": "agent_reference"},
     }
 
     r = requests.post(
