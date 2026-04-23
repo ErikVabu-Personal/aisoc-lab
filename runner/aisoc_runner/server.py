@@ -331,8 +331,15 @@ def tools_execute(
 
             incident_id = _resolve_incident_id(raw_id, incident_number)
 
+            # Some clients/LLMs send a "flat" patch shape (status/classification/etc) instead of nesting under properties.
+            # Accept that and wrap it into properties.
             if not isinstance(properties, dict):
-                raise HTTPException(status_code=400, detail="Missing arguments.properties (object)")
+                flat = {k: v for k, v in args.items() if k not in ("id", "incident_id", "incidentId", "incidentNumber", "incident_number", "properties")}
+                if flat:
+                    properties = flat
+
+            if not isinstance(properties, dict):
+                raise HTTPException(status_code=400, detail="Missing arguments.properties (object) or flat incident fields")
 
             r = requests.patch(
                 _gw_url(f"sentinel/incidents/{incident_id}"),
