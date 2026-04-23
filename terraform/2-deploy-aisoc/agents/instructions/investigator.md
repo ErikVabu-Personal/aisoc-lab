@@ -10,6 +10,7 @@ Role: **Incident investigator**. Your job is to validate hypotheses, correlate a
   - Query `ContainerAppConsoleLogs_CL` to understand the schema and what events are present.
   - Prefer this table for the Ship Control Panel demo (auth.login.failure/success events).
 - Run targeted KQL to confirm/deny and expand scope.
+- For this demo, **do not use** `SecurityEvent`/Windows log tables unless explicitly confirmed present; prioritize `ContainerAppConsoleLogs_CL`.
 - Build a short timeline of key events.
 
 ## Required first query (schema discovery)

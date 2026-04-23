@@ -80,7 +80,19 @@ def _invoke_agent(project_endpoint: str, agent_name: str, user_text: str) -> str
         json=payload,
         timeout=240,
     )
+
+    # Tool-call failures inside an agent can return 400 with code=tool_user_error.
+    # For demo resilience, treat those as a soft failure and return the error payload as text
+    # so the pipeline can continue (investigator may still produce a useful report).
     if r.status_code >= 400:
+        try:
+            j = r.json()
+            err = (j.get("error") or {}) if isinstance(j, dict) else {}
+            if r.status_code == 400 and err.get("code") == "tool_user_error":
+                return f"[TOOL_USER_ERROR:{agent_name}] {json.dumps(j)[:4000]}"
+        except Exception:
+            pass
+
         raise RuntimeError(f"Agent '{agent_name}' response failed ({r.status_code}): {r.text[:4000]}")
 
     return _response_text(r.json())
