@@ -161,15 +161,57 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
+        # Investigator: generate a few targeted KQL queries, run them via Runner as agent=investigator,
+        # then write findings grounded in the results.
+        inv_plan = _model_call(
+            project_endpoint,
+            model_deployment,
+            system=(
+                "You are an incident investigator. Output ONLY strict JSON with keys: "
+                "hypotheses, evidence_needed, queries. "
+                "queries is an array of {name,kql,timespan}. Keep to max 3 queries. "
+                "Each kql must be short (<= 400 chars). Prefer querying the tables relevant to this incident."
+            ),
+            user=f"Create a minimal investigation query plan for this incident.\nINCIDENT:\n{incident_json}\n\nTRIAGE_JSON:\n{triage_out}",
+        )
+
+        inv_plan_j: dict[str, Any] | None = None
+        try:
+            inv_plan_j = json.loads(inv_plan) if inv_plan.strip().startswith("{") else None
+        except Exception:
+            inv_plan_j = None
+
+        query_results: list[dict[str, Any]] = []
+        if inv_plan_j and isinstance(inv_plan_j.get("queries"), list):
+            for q in inv_plan_j.get("queries", [])[:3]:
+                try:
+                    name = str(q.get("name") or "query")
+                    kql = q.get("kql")
+                    timespan = q.get("timespan") or "PT1H"
+                    if isinstance(kql, str) and kql.strip():
+                        res = _runner_post(
+                            runner_url,
+                            runner_bearer,
+                            {"tool_name": "kql_query", "arguments": {"query": kql.strip(), "timespan": str(timespan)}},
+                            agent="investigator",
+                        )
+                        query_results.append({"name": name, "timespan": str(timespan), "kql": kql.strip(), "result": res.get("result")})
+                except Exception as e:
+                    query_results.append({"name": str(q.get("name") or "query"), "error": str(e)})
+
         inv_out = _model_call(
             project_endpoint,
             model_deployment,
             system=(
                 "You are an incident investigator. Output ONLY strict JSON with keys: "
-                "hypotheses, evidence_needed, queries, findings, verdict. "
-                "queries is an array of {name,kql}. Keep to max 3 queries. No long KQL; keep each under 400 chars."
+                "hypotheses, findings, timeline, verdict, confidence, next_actions. "
+                "Ground conclusions in the provided query results; if results are empty, say so."
             ),
-            user=f"Investigate based on incident + triage.\nINCIDENT:\n{incident_json}\n\nTRIAGE_JSON:\n{triage_out}",
+            user=(
+                f"Investigate based on incident + triage + query results.\n"
+                f"INCIDENT:\n{incident_json}\n\nTRIAGE_JSON:\n{triage_out}\n\n"
+                f"QUERY_RESULTS_JSON:\n{json.dumps(query_results)[:12000]}"
+            ),
         )
 
         rep_out = _model_call(
