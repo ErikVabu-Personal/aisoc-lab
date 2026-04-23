@@ -206,6 +206,11 @@ def tools_execute(
                 timeout=60,
             )
             if r.status_code >= 400:
+                # Log upstream details to container logs for debugging.
+                try:
+                    print(f"[kql_query] upstream_error status={r.status_code} body={r.text[:2000]!r}", flush=True)
+                except Exception:
+                    pass
                 raise HTTPException(status_code=r.status_code, detail=r.text)
             return {"result": r.json()}
 
