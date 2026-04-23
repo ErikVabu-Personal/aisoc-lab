@@ -219,7 +219,8 @@ def tools_execute(
             return {"result": r.json()}
 
         if tool_name == "get_incident":
-            raw_id = args.get("id") or args.get("incident_id")
+            # Accept a few common aliases produced by LLMs / different client conventions.
+            raw_id = args.get("id") or args.get("incident_id") or args.get("incidentId")
             incident_number = args.get("incidentNumber") or args.get("incident_number")
 
             if incident_number is not None and raw_id is None:
@@ -317,7 +318,7 @@ def tools_execute(
             return incident_id
 
         if tool_name == "update_incident":
-            raw_id = args.get("id") or args.get("incident_id")
+            raw_id = args.get("id") or args.get("incident_id") or args.get("incidentId")
             incident_number = args.get("incidentNumber") or args.get("incident_number")
             properties = args.get("properties")
 
@@ -338,7 +339,7 @@ def tools_execute(
             return {"result": r.json()}
 
         if tool_name == "add_incident_comment":
-            raw_id = args.get("id") or args.get("incident_id")
+            raw_id = args.get("id") or args.get("incident_id") or args.get("incidentId")
             incident_number = args.get("incidentNumber") or args.get("incident_number")
             message = args.get("message") or args.get("comment")
 
