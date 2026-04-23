@@ -34,124 +34,63 @@ def _runner_post(runner_url: str, runner_bearer: str, payload: dict[str, Any], a
     return r.json()
 
 
-def _foundry_base(project_endpoint: str) -> str:
-    # https://...services.ai.azure.com/api/projects/<project> -> https://...services.ai.azure.com
-    return project_endpoint.split("/api/projects/")[0].rstrip("/")
+def _foundry_responses_url(project_endpoint: str, agent_name: str) -> str:
+    # Published agent invocation endpoint (Responses protocol)
+    # https://.../api/projects/<project>/agents/<name>/protocols/openai/v1/responses
+    return project_endpoint.rstrip("/") + f"/agents/{agent_name}/protocols/openai/v1/responses"
 
 
-def _bearer() -> str:
-    return DefaultAzureCredential().get_token("https://cognitiveservices.azure.com/.default").token
+def _foundry_invoke_published_agent(
+    project_endpoint: str,
+    project_api_key: str,
+    agent_name: str,
+    user_text: str,
+) -> str:
+    url = _foundry_responses_url(project_endpoint, agent_name)
 
+    # Non-streaming Responses API request (minimal)
+    payload = {
+        "input": user_text,
+    }
 
-def _foundry_list_agents(project_endpoint: str) -> list[dict[str, Any]]:
-    """List Foundry agents for the given project.
+    r = requests.post(
+        url,
+        headers={
+            "Ocp-Apim-Subscription-Key": project_api_key,
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=180,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(f"Published agent '{agent_name}' failed ({r.status_code}): {r.text[:4000]}")
 
-    NOTE: API surfaces evolve; we try a small set of known paths.
-    """
+    data = r.json()
 
-    base = _foundry_base(project_endpoint)
-    token = _bearer()
+    # Best-effort extraction of text from OpenAI Responses-shaped output.
+    # Common shapes include:
+    # - { output: [ { content: [ { type: 'output_text', text: '...' } ] } ] }
+    # - { output_text: '...' }
+    if isinstance(data, dict):
+        if isinstance(data.get("output_text"), str):
+            return data["output_text"]
+        out = data.get("output")
+        if isinstance(out, list) and out:
+            # walk content blocks
+            texts: list[str] = []
+            for item in out:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        texts.append(block["text"])
+            if texts:
+                return "\n".join(texts)
 
-    candidates = [
-        # common "projects"-scoped agents collection
-        project_endpoint.rstrip("/") + "/agents?api-version=2025-06-01",
-        project_endpoint.rstrip("/") + "/agents?api-version=2024-10-01-preview",
-        # some surfaces expose agents under /api/agents with project query
-        base + "/api/agents?api-version=2025-06-01",
-    ]
-
-    last_err = None
-    for url in candidates:
-        try:
-            r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
-            if r.status_code >= 400:
-                last_err = f"{r.status_code}: {r.text[:4000]}"
-                continue
-            data = r.json()
-            if isinstance(data, dict) and isinstance(data.get("value"), list):
-                return data["value"]
-            if isinstance(data, list):
-                return data
-            # unknown shape
-            last_err = f"Unexpected list agents response: {json.dumps(data)[:1000]}"
-        except Exception as e:
-            last_err = str(e)
-
-    raise RuntimeError(f"Failed to list Foundry agents. Last error: {last_err}")
-
-
-def _foundry_run_agent(project_endpoint: str, agent_name: str, user: str) -> str:
-    """Run a Foundry agent by name.
-
-    We locate the agent id by listing agents, then invoke a run endpoint.
-    The exact run endpoint differs across API versions; we try a few candidates.
-    """
-
-    agents = _foundry_list_agents(project_endpoint)
-    agent = None
-    for a in agents:
-        # try common fields
-        n = a.get("name") or a.get("properties", {}).get("displayName") or a.get("displayName")
-        if str(n).strip().lower() == agent_name.lower():
-            agent = a
-            break
-
-    if not agent:
-        available = [str((x.get("name") or x.get("displayName") or x.get("properties", {}).get("displayName") or "")).strip() for x in agents]
-        raise RuntimeError(f"Agent '{agent_name}' not found. Available: {available}")
-
-    agent_id = agent.get("id") or agent.get("name")
-    if not agent_id:
-        raise RuntimeError(f"Agent '{agent_name}' has no id/name field")
-
-    token = _bearer()
-
-    # Run endpoint candidates (API varies). We keep it minimal and fail with the last error.
-    base = _foundry_base(project_endpoint)
-    candidates = [
-        # project-scoped agent runs
-        project_endpoint.rstrip("/") + f"/agents/{agent_id}/runs?api-version=2025-06-01",
-        project_endpoint.rstrip("/") + f"/agents/{agent_id}/runs?api-version=2024-10-01-preview",
-        # generic api surface
-        base + f"/api/agents/{agent_id}:run?api-version=2025-06-01",
-    ]
-
-    payload = {"input": user}
-
-    last_err = None
-    for url in candidates:
-        try:
-            r = requests.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=120,
-            )
-            if r.status_code >= 400:
-                last_err = f"{r.status_code}: {r.text[:4000]}"
-                continue
-            data = r.json()
-
-            # Try a few common response shapes for final text.
-            for key in ("output", "result", "message", "content"):
-                if isinstance(data, dict) and isinstance(data.get(key), str):
-                    return data[key]
-
-            # nested "output.text" style
-            if isinstance(data, dict) and isinstance(data.get("output"), dict):
-                out = data["output"]
-                if isinstance(out.get("text"), str):
-                    return out["text"]
-
-            # unknown but successful
-            return json.dumps(data)
-        except Exception as e:
-            last_err = str(e)
-
-    raise RuntimeError(f"Failed to run agent '{agent_name}'. Last error: {last_err}")
+    return json.dumps(data)[:12000]
 
 
 def _clip(s: str, max_chars: int) -> str:
@@ -210,11 +149,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         incident_json = json.dumps(inc.get("result"), indent=2)[:12000]
 
-        # Triage agent (Foundry Agent runtime). Agent should call Runner tools itself.
-        triage_out = _foundry_run_agent(
+        project_key_secret = os.environ.get("AISOC_FOUNDRY_PROJECT_KEY_SECRET_NAME", "AISOC-FOUNDRY-PROJECT-KEY")
+        project_api_key = get_kv_secret(kv_uri, project_key_secret)
+
+        # Call published agents by name via Responses protocol.
+        triage_out = _foundry_invoke_published_agent(
             project_endpoint,
+            project_api_key,
             "triage",
-            user=f"Triage Sentinel incident. First fetch incident details via AISOC Runner tool if needed.\nINCIDENT_REF:\n{incident_json}",
+            user_text=(
+                "You are the TRIAGE agent. Use the AISOC Runner OpenAPI tool to fetch incident and context. "
+                "Return a concise triage summary and immediate next steps.\n\n"
+                + f"INCIDENT_REF:\n{incident_json}"
+            ),
         )
 
         if mode == "triage_only":
@@ -226,27 +173,27 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
-        # Investigator agent (Foundry Agent runtime).
-        inv_out = _foundry_run_agent(
+        inv_out = _foundry_invoke_published_agent(
             project_endpoint,
+            project_api_key,
             "investigator",
-            user=(
-                "Investigate this incident. Use AISOC Runner tool to fetch incident + run relevant KQL queries. "
-                "Base your findings on evidence you retrieve.\n\n"
-                f"INCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}"
+            user_text=(
+                "You are the INVESTIGATOR agent. Use the AISOC Runner OpenAPI tool to fetch incident details and run relevant KQL queries. "
+                "Ground findings in evidence and produce a short timeline + verdict.\n\n"
+                + f"INCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}"
             ),
         )
 
-        # Reporter agent (Foundry Agent runtime). If writeback=true, the reporter should add a Sentinel comment
-        # via the AISOC Runner tool.
         writeback = bool(body.get("writeback"))
-        rep_out = _foundry_run_agent(
+        rep_out = _foundry_invoke_published_agent(
             project_endpoint,
+            project_api_key,
             "reporter",
-            user=(
-                "Write an executive-ready incident report and a concise case note suitable for Sentinel comments.\n"
-                + ("IMPORTANT: writeback=true. Add the case note as a Sentinel incident comment using AISOC Runner tool.\n" if writeback else "")
-                + f"\nINCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}\n\nINVESTIGATOR_OUTPUT:\n{_clip(inv_out, 8000)}"
+            user_text=(
+                "You are the REPORTER agent. Write an exec-ready summary and a Sentinel-ready case note. "
+                + ("writeback=true: Add the case note as a Sentinel incident comment using the AISOC Runner OpenAPI tool. " if writeback else "")
+                + "\n\n"
+                + f"INCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}\n\nINVESTIGATOR_OUTPUT:\n{_clip(inv_out, 8000)}"
             ),
         )
 
