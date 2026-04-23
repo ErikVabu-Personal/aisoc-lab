@@ -66,31 +66,8 @@ resource "azapi_resource" "foundry_account" {
   }
 }
 
-resource "azapi_resource" "foundry_project" {
-  # Creating Foundry projects via ARM/AzAPI can be extremely slow and often
-  # hits provider deadlines. Prefer using scripts/deploy_foundry_project.py.
-  count = var.foundry_manage_project_in_terraform ? 1 : 0
-
-  type      = "Microsoft.CognitiveServices/accounts/projects@${local.foundry_api_version}"
-  name      = local.foundry_project_name_effective
-  parent_id = azapi_resource.foundry_account.id
-
-  # Be explicit: ensure account creation/update is fully applied before project.
-  depends_on = [azapi_resource.foundry_account]
-
-  location                  = local.foundry_location_effective
-  schema_validation_enabled = false
-
-  body = {
-    sku = { name = "S0" }
-
-    identity = {
-      type = "SystemAssigned"
-    }
-
-    properties = {
-      displayName = local.foundry_project_name_effective
-      description = "AISOC demo project"
-    }
-  }
-}
+# NOTE:
+# We intentionally do NOT create the Foundry Project in Terraform.
+# The azapi provider can intermittently fail reads with "Missing Resource Identity After Read".
+# Create the project after apply using:
+#   python3 scripts/legacy/deploy_foundry_project.py

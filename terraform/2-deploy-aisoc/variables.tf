@@ -70,11 +70,6 @@ variable "foundry_model_sku_capacity" {
   default     = 1
 }
 
-variable "foundry_manage_project_in_terraform" {
-  description = "If true, attempt to create the Foundry project via AzAPI in Terraform."
-  type        = bool
-  default     = false
-}
 
 # -----------------------------
 # Runner (Azure Container Apps)

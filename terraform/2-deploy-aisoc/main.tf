@@ -217,22 +217,19 @@ output "foundry_account_id" {
 }
 
 output "foundry_project_id" {
-  value       = var.foundry_manage_project_in_terraform ? try(azapi_resource.foundry_project[0].id, null) : null
-  description = "Foundry project resource id (only when managed by Terraform)."
+  value       = "${azapi_resource.foundry_account.id}/projects/${local.foundry_project_name_effective}"
+  description = "Foundry project resource id (computed). The project is created post-apply via script." 
 }
 
+# We can't reliably output the project endpoint from Terraform when project creation is scripted.
+# The deploy_foundry_project.py script can read the project resource after creation.
 output "foundry_project_endpoint" {
-  value       = try(azapi_resource.foundry_project[0].output.properties.endpoints["AI Foundry API"], null)
-  description = "Foundry project endpoint (AI Foundry API) used by SDK/scripts."
+  value       = null
+  description = "Foundry project endpoint (AI Foundry API). Created post-apply; discover via script/UI."
 }
 
 locals {
-  # Convenience local for orchestrator (some tenants return endpoints with slightly different keys).
-  foundry_project_endpoint_effective = coalesce(
-    try(azapi_resource.foundry_project[0].output.properties.endpoints["AI Foundry API"], null),
-    try(azapi_resource.foundry_project[0].output.properties.endpoints["AI Foundry"], null),
-    try(azapi_resource.foundry_project[0].output.properties.endpoints["AI Projects"], null)
-  )
+  foundry_project_endpoint_effective = null
 }
 
 output "key_vault_name" {
