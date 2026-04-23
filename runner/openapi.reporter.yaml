@@ -75,7 +75,7 @@
                   },
                   "arguments": {
                     "type": "object",
-                    "description": "Tool arguments. For get_incident/update_incident: prefer {id: <incident name GUID>}. You may also pass a full ARM Resource ID as id (runner extracts GUID), or use incident_id. For convenience, you can pass incidentNumber (integer) instead of id; the runner will resolve it via list_incidents."
+                    "description": "Tool arguments. For kql_query: {query: string, timespan?: string}. workspaceId may be provided by some clients and will be ignored. For get_incident/update_incident/add_incident_comment: prefer {id: <incident GUID or ARM id>} or {incidentNumber: int}."
                   }
                 }
               }

@@ -192,6 +192,8 @@ def tools_execute(
     try:
         if tool_name == "kql_query":
             query = args.get("query")
+            # Some clients/LLMs include workspaceId/workspace_id; ignore it (Runner is already configured to a workspace via SOCGateway).
+            _ = args.get("workspaceId") or args.get("workspace_id")
             timespan = args.get("timespan", "PT1H")
             if not query:
                 raise HTTPException(status_code=400, detail="Missing arguments.query")
