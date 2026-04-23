@@ -77,11 +77,29 @@ resource "azurerm_key_vault_access_policy" "orch_secrets" {
   secret_permissions = ["Get", "List"]
 }
 
-# Allow the orchestrator managed identity to call Foundry/OpenAI chat completions.
-# This is a *data-plane* permission, separate from control-plane access.
+# Foundry permissions for orchestrator MI.
+#
+# - Cognitive Services OpenAI User: allows calling model deployments.
+# - Azure AI User: allows invoking Foundry Agent Service operations (agents/write).
 resource "azurerm_role_assignment" "orch_foundry_openai_user" {
   scope                = azapi_resource.foundry_account.id
   role_definition_name = "Cognitive Services OpenAI User"
+
+  principal_id = azurerm_linux_function_app.orchestrator.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "orch_foundry_ai_user" {
+  scope                = azapi_resource.foundry_account.id
+  role_definition_name = "Azure AI User"
+
+  principal_id = azurerm_linux_function_app.orchestrator.identity[0].principal_id
+}
+
+# Some data-plane checks evaluate permissions at the *project* scope.
+# Create a project-scope assignment as well.
+resource "azurerm_role_assignment" "orch_foundry_ai_user_project" {
+  scope                = "${azapi_resource.foundry_account.id}/projects/${local.foundry_project_name_effective}"
+  role_definition_name = "Azure AI User"
 
   principal_id = azurerm_linux_function_app.orchestrator.identity[0].principal_id
 }
