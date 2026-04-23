@@ -109,13 +109,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse("Missing incidentNumber or incidentId", status_code=400)
 
     project_endpoint = os.environ.get("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
-    model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT", "")
     runner_url = os.environ.get("RUNNER_URL", "")
     kv_uri = os.environ.get("KEYVAULT_URI", "")
     bearer_secret = os.environ.get("AISOC_RUNNER_BEARER_SECRET_NAME", "AISOC-RUNNER-BEARER")
 
-    if not project_endpoint or not model_deployment:
-        return func.HttpResponse("Missing AZURE_AI_FOUNDRY_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT", status_code=500)
+    if not project_endpoint:
+        return func.HttpResponse("Missing AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", status_code=500)
     if not runner_url:
         return func.HttpResponse("Missing RUNNER_URL", status_code=500)
     if not kv_uri:
