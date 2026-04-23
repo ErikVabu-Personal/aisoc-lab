@@ -2,6 +2,24 @@ import os
 import requests
 
 
+def _jwt_claims(token: str) -> dict:
+    """Decode JWT claims without verification (debugging only)."""
+
+    try:
+        import base64
+        import json
+
+        parts = token.split(".")
+        if len(parts) < 2:
+            return {}
+        payload = parts[1]
+        payload += "=" * (-len(payload) % 4)
+        payload = payload.replace("-", "+").replace("_", "/")
+        return json.loads(base64.b64decode(payload).decode("utf-8"))
+    except Exception:
+        return {}
+
+
 def _mgmt_token() -> str:
     # Azure Functions provides MSI_ENDPOINT/MSI_SECRET in many hosting modes.
     msi_endpoint = os.getenv("MSI_ENDPOINT")
@@ -18,7 +36,17 @@ def _mgmt_token() -> str:
             timeout=30,
         )
         r.raise_for_status()
-        return r.json()["access_token"]
+        token = r.json()["access_token"]
+        if os.getenv("AISOC_DEBUG_IDENTITY", "0") == "1":
+            claims = _jwt_claims(token)
+            try:
+                print(
+                    f"[sentinel:_mgmt_token] source=msi_endpoint oid={claims.get('oid')} tid={claims.get('tid')} appid={claims.get('appid')}",
+                    flush=True,
+                )
+            except Exception:
+                pass
+        return token
 
     r = requests.get(
         "http://169.254.169.254/metadata/identity/oauth2/token",
@@ -30,7 +58,17 @@ def _mgmt_token() -> str:
         timeout=30,
     )
     r.raise_for_status()
-    return r.json()["access_token"]
+    token = r.json()["access_token"]
+    if os.getenv("AISOC_DEBUG_IDENTITY", "0") == "1":
+        claims = _jwt_claims(token)
+        try:
+            print(
+                f"[sentinel:_mgmt_token] source=imds oid={claims.get('oid')} tid={claims.get('tid')} appid={claims.get('appid')}",
+                flush=True,
+            )
+        except Exception:
+            pass
+    return token
 
 
 def list_incidents(subscription_id: str, resource_group: str, workspace_name: str, api_version: str = "2024-03-01") -> dict:
@@ -74,6 +112,14 @@ def update_incident(subscription_id: str, resource_group: str, workspace_name: s
         },
         timeout=60,
     )
+    if r.status_code >= 400 and os.getenv("AISOC_DEBUG_IDENTITY", "0") == "1":
+        try:
+            print(
+                f"[sentinel:update_incident] arm_error status={r.status_code} body={r.text[:2000]!r}",
+                flush=True,
+            )
+        except Exception:
+            pass
     r.raise_for_status()
     return r.json()
 
@@ -114,5 +160,13 @@ def add_incident_comment(
         },
         timeout=60,
     )
+    if r.status_code >= 400 and os.getenv("AISOC_DEBUG_IDENTITY", "0") == "1":
+        try:
+            print(
+                f"[sentinel:add_incident_comment] arm_error status={r.status_code} body={r.text[:2000]!r}",
+                flush=True,
+            )
+        except Exception:
+            pass
     r.raise_for_status()
     return r.json()
