@@ -14,5 +14,5 @@ msal-extensions==1.2.0
 # If you still see glibc errors, drop this further (e.g. 41.0.7) or switch to a custom container.
 cryptography==42.0.8
 
-# Foundry SDK
+# Foundry SDK (not required for inference anymore, but kept for future project ops)
 azure-ai-projects==1.0.0b11
