@@ -84,6 +84,11 @@ def _model_call(project_endpoint: str, model_deployment: str, system: str, user:
         raise RuntimeError(f"Unexpected Foundry response shape: {json.dumps(data)[:2000]}")
 
 
+def _clip(s: str, max_chars: int) -> str:
+    s = s or ""
+    return s if len(s) <= max_chars else (s[: max_chars - 3] + "...")
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     route = req.route_params.get("route") or ""
 
@@ -93,6 +98,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     body = _json(req)
     incident_number = body.get("incidentNumber")
     incident_id = body.get("incidentId")
+
+    # demo-friendly controls
+    mode = (body.get("mode") or "triage_only").lower()  # triage_only | full
+    max_chars = int(body.get("max_chars") or 1800)
 
     if incident_number is None and incident_id is None:
         return func.HttpResponse("Missing incidentNumber or incidentId", status_code=400)
@@ -134,22 +143,44 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         triage_out = _model_call(
             project_endpoint,
             model_deployment,
-            system="You are the triage analyst.",
+            system=(
+                "You are a SOC triage analyst. Output ONLY strict JSON with keys: "
+                "summary, verdict, confidence, entities, next_actions. "
+                "entities must include username and clientIp when present, else null. "
+                "Keep summary under 6 bullets. next_actions max 5 items."
+            ),
             user=f"Triage this Sentinel incident:\n{incident_json}",
         )
+
+        if mode == "triage_only":
+            out = {
+                "ok": True,
+                "mode": mode,
+                "incident_ref": {"incidentNumber": incident_number, "incidentId": incident_id},
+                "triage": json.loads(triage_out) if triage_out.strip().startswith("{") else {"raw": _clip(triage_out, max_chars)},
+            }
+            return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
         inv_out = _model_call(
             project_endpoint,
             model_deployment,
-            system="You are the incident investigator.",
-            user=f"Investigate based on incident + triage.\nINCIDENT:\n{incident_json}\n\nTRIAGE:\n{triage_out}",
+            system=(
+                "You are an incident investigator. Output ONLY strict JSON with keys: "
+                "hypotheses, evidence_needed, queries, findings, verdict. "
+                "queries is an array of {name,kql}. Keep to max 3 queries. No long KQL; keep each under 400 chars."
+            ),
+            user=f"Investigate based on incident + triage.\nINCIDENT:\n{incident_json}\n\nTRIAGE_JSON:\n{triage_out}",
         )
 
         rep_out = _model_call(
             project_endpoint,
             model_deployment,
-            system="You are the incident reporter.",
-            user=f"Write report and propose closure.\nINCIDENT:\n{incident_json}\n\nTRIAGE:\n{triage_out}\n\nINVESTIGATION:\n{inv_out}",
+            system=(
+                "You are an incident reporter. Output ONLY strict JSON with keys: "
+                "executive_summary, timeline, impact, actions_taken, recommendations, closure. "
+                "Keep executive_summary <= 6 bullets. recommendations max 5."
+            ),
+            user=f"Write report and propose closure.\nINCIDENT:\n{incident_json}\n\nTRIAGE_JSON:\n{triage_out}\n\nINVESTIGATION_JSON:\n{inv_out}",
         )
 
         auto_close = os.environ.get("AISOC_AUTO_CLOSE", "0") == "1"
@@ -170,12 +201,22 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             )
             did_close = True
 
+        def _maybe_json(s: str) -> Any:
+            s = (s or "").strip()
+            if s.startswith("{"):
+                try:
+                    return json.loads(s)
+                except Exception:
+                    return {"raw": _clip(s, max_chars)}
+            return {"raw": _clip(s, max_chars)}
+
         out = {
             "ok": True,
+            "mode": mode,
             "incident_ref": {"incidentNumber": incident_number, "incidentId": incident_id},
-            "triage": triage_out,
-            "investigation": inv_out,
-            "report": rep_out,
+            "triage": _maybe_json(triage_out),
+            "investigation": _maybe_json(inv_out),
+            "report": _maybe_json(rep_out),
             "did_close": did_close,
         }
         return func.HttpResponse(json.dumps(out), mimetype="application/json")
