@@ -19,21 +19,30 @@ Role: **Incident investigator**. Your job is to validate hypotheses, correlate a
 
 ## Required first query (schema discovery)
 
-Run these *first* to understand what the table contains:
+Run these *first* to understand what the table contains in the
+incident's time window. Both use the Control Panel base filter from
+the common instructions.
 
 ```kusto
+// Recent raw sample — see the field shapes.
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(30m)
+| where Stream_s == "stdout"
+| extend j = parse_json(Log_s)
+| where j.service == "ship-control-panel"
+| project TimeGenerated, event = tostring(j.event), detail = j.detail
 | take 5
 ```
 
 ```kusto
+// Event-type histogram in the last 30 minutes.
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(30m)
+| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
-| where isnotnull(j)
-| summarize count() by event=tostring(j.event)
-| order by count_ desc
+| where j.service == "ship-control-panel"
+| summarize n = count() by event = tostring(j.event)
+| order by n desc
 ```
 
 ## Required investigation queries (auth failures)
@@ -43,12 +52,17 @@ ContainerAppConsoleLogs_CL
 ```kusto
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(60m)
-| where Log_s has "auth.login."
+| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
-| where isnotnull(j)
-| extend event=tostring(j.event), username=tostring(j.detail.username), clientIp=tostring(j.detail.client)
+| where j.service == "ship-control-panel"
+| extend event = tostring(j.event),
+         username = tostring(j.detail.username),
+         clientIp = tostring(j.detail.client)
 | where event == "auth.login.failure"
-| summarize failures=count(), firstSeen=min(TimeGenerated), lastSeen=max(TimeGenerated) by username, clientIp
+| summarize failures = count(),
+            first_seen = min(TimeGenerated),
+            last_seen = max(TimeGenerated)
+    by username, clientIp
 | order by failures desc
 | take 20
 ```
@@ -58,27 +72,35 @@ ContainerAppConsoleLogs_CL
 ```kusto
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(60m)
-| where Log_s has "auth.login."
+| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
-| where isnotnull(j)
-| extend event=tostring(j.event), username=tostring(j.detail.username), clientIp=tostring(j.detail.client)
-| where event in ("auth.login.failure","auth.login.success")
-| summarize count() by event, username, clientIp
-| order by count_ desc
+| where j.service == "ship-control-panel"
+| extend event = tostring(j.event),
+         username = tostring(j.detail.username),
+         clientIp = tostring(j.detail.client)
+| where event in ("auth.login.failure", "auth.login.success")
+| summarize n = count() by event, username, clientIp
+| order by n desc
 | take 50
 ```
 
-3) Pull raw rows for the top offender (copy username/clientIp from query #1):
+3) Pull raw rows for the top offender (replace the two `let` values
+   with the username and IP surfaced by query #1):
 
 ```kusto
 let u = "<username>";
 let ip = "<clientIp>";
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(60m)
+| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
-| where isnotnull(j)
-| extend event=tostring(j.event), username=tostring(j.detail.username), clientIp=tostring(j.detail.client), ua=tostring(j.detail.userAgent)
-| where username == u and clientIp == ip and event in ("auth.login.failure","auth.login.success")
+| where j.service == "ship-control-panel"
+| extend event = tostring(j.event),
+         username = tostring(j.detail.username),
+         clientIp = tostring(j.detail.client),
+         ua = tostring(j.detail.userAgent)
+| where username == u and clientIp == ip
+    and event in ("auth.login.failure", "auth.login.success")
 | project TimeGenerated, event, username, clientIp, ua
 | order by TimeGenerated asc
 | take 50
