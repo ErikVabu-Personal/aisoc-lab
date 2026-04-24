@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, Dict
 
 import azure.functions as func
@@ -78,15 +79,42 @@ def _invoke_agent(project_endpoint: str, agent_name: str, user_text: str) -> tup
         "agent_reference": {"name": agent_name, "type": "agent_reference"},
     }
 
-    r = requests.post(
-        url,
-        headers={
-            "Authorization": f"Bearer {_ai_projects_token()}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=240,
-    )
+    # Foundry model deployments can return 429 ("rate_limit_exceeded") when
+    # TPM/RPM quota is saturated. Retry a few times, honouring Retry-After
+    # when provided, before giving up. Individual agents share the deployment,
+    # so the investigator often hits it right after triage burned through
+    # tokens on a tool-heavy run.
+    MAX_429_RETRIES = 4
+    DEFAULT_429_WAIT_SEC = 15.0
+    MAX_429_WAIT_SEC = 60.0
+
+    r = None
+    for attempt in range(MAX_429_RETRIES + 1):
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {_ai_projects_token()}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=240,
+        )
+        if r.status_code != 429 or attempt >= MAX_429_RETRIES:
+            break
+
+        retry_after = r.headers.get("Retry-After", "")
+        try:
+            wait = float(retry_after) if retry_after else DEFAULT_429_WAIT_SEC
+        except ValueError:
+            wait = DEFAULT_429_WAIT_SEC
+        # Cap the wait so a misconfigured Retry-After can't park us for minutes.
+        wait = min(max(wait, 1.0), MAX_429_WAIT_SEC)
+        print(
+            f"[invoke_agent] 429 from agent={agent_name!r}, sleeping {wait:.1f}s "
+            f"(attempt {attempt + 1}/{MAX_429_RETRIES})",
+            flush=True,
+        )
+        time.sleep(wait)
 
     # Tool-call failures inside an agent can return 400 with code=tool_user_error.
     # For demo resilience, treat those as a soft failure and return the error payload as text
