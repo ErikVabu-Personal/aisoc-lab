@@ -305,19 +305,15 @@ def _assign_incident_owner(
     driven by that one field regardless.
     """
 
+    # Minimal owner payload — confirmed working against Sentinel's
+    # 2024-03-01 api-version once the Gateway switched update_incident
+    # from PATCH to GET-then-PUT with etag. The other owner sub-fields
+    # (ownerType, objectId, email, userPrincipalName) are nullable and
+    # left unset so we don't trip identity-validation paths that look
+    # for a real Entra user.
     args: dict[str, Any] = {
         "properties": {
-            "owner": {
-                "assignedTo": display_name,
-                "ownerType": "User",
-                # Deterministic zero-GUID so repeated assignments don't
-                # churn objectId; Sentinel doesn't validate that it
-                # resolves to a real Entra object for ownerType=User
-                # in most API versions.
-                "objectId": "00000000-0000-0000-0000-000000000000",
-                "email": None,
-                "userPrincipalName": None,
-            }
+            "owner": {"assignedTo": display_name}
         }
     }
     if incident_number is not None:
