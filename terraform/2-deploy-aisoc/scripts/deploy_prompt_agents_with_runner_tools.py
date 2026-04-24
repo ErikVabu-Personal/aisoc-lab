@@ -148,6 +148,7 @@ def render_openapi(runner_url: str, agent_name: str) -> Dict[str, Any]:
                                                 "get_incident",
                                                 "update_incident",
                                                 "ask_human",
+                                                "create_analytic_rule",
                                             ],
                                         },
                                         "arguments": {"type": "object"},

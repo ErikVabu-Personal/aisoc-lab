@@ -489,6 +489,75 @@ def tools_execute(
 
             return {"result": {"answer": answer_text, "question_id": qid}}
 
+        if tool_name == "create_analytic_rule":
+            # Inputs (all optional except displayName + query):
+            #   displayName, description, severity (Low/Medium/High/Informational),
+            #   query (KQL), queryFrequency ("PT5M"...), queryPeriod,
+            #   triggerOperator ("GreaterThan"...), triggerThreshold,
+            #   tactics ([]), techniques ([]), enabled (bool), suppressionDuration,
+            #   suppressionEnabled
+            # We default anything missing so a minimal agent call still produces
+            # a functional rule, and we auto-generate the rule UUID so the
+            # agent doesn't have to manage it.
+            import uuid as _uuid
+
+            display_name = args.get("displayName") or args.get("display_name")
+            query_kql = args.get("query")
+            if not isinstance(display_name, str) or not display_name.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.displayName (string)",
+                )
+            if not isinstance(query_kql, str) or not query_kql.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.query (string, KQL)",
+                )
+
+            severity = args.get("severity") or "Medium"
+            if severity not in ("Informational", "Low", "Medium", "High"):
+                severity = "Medium"
+
+            trigger_operator = args.get("triggerOperator") or "GreaterThan"
+            if trigger_operator not in ("GreaterThan", "LessThan", "Equal", "NotEqual"):
+                trigger_operator = "GreaterThan"
+
+            def _clean_list(v: Any) -> list:
+                if isinstance(v, list):
+                    return [str(x) for x in v if isinstance(x, (str, int))]
+                if isinstance(v, str) and v.strip():
+                    return [v.strip()]
+                return []
+
+            properties = {
+                "displayName": display_name.strip(),
+                "description": args.get("description") or f"Proposed by AISOC Detection Engineer: {display_name}",
+                "severity": severity,
+                "enabled": bool(args.get("enabled", True)),
+                "query": query_kql,
+                "queryFrequency": args.get("queryFrequency") or "PT5M",
+                "queryPeriod": args.get("queryPeriod") or args.get("queryFrequency") or "PT5M",
+                "triggerOperator": trigger_operator,
+                "triggerThreshold": int(args.get("triggerThreshold", 0)),
+                "suppressionDuration": args.get("suppressionDuration") or "PT1H",
+                "suppressionEnabled": bool(args.get("suppressionEnabled", False)),
+                "tactics": _clean_list(args.get("tactics")),
+                "techniques": _clean_list(args.get("techniques")),
+            }
+
+            rule_id = args.get("rule_id") or str(_uuid.uuid4())
+
+            r = requests.put(
+                _gw_url(f"sentinel/analytic_rules/{rule_id}"),
+                params=_gw_params(),
+                headers=_gw_headers("write"),
+                json={"properties": properties},
+                timeout=60,
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=r.text)
+            return {"result": {"rule_id": rule_id, "rule": r.json()}}
+
         if tool_name == "add_incident_comment":
             raw_id = args.get("id") or args.get("incident_id") or args.get("incidentId")
             incident_number = args.get("incidentNumber") or args.get("incident_number")

@@ -55,6 +55,10 @@ Sentinel. You have access to tools via the **AISOC Runner** OpenAPI tool.
     the data doesn't resolve. Pass `{"question": "..."}`; the tool
     blocks until a human responds (or a short timeout passes). Use
     sparingly — one focused question per call, not a barrage.
+  - `create_analytic_rule` is reserved for the **Detection Engineer**.
+    Triage, Investigator, and Reporter must NOT call this tool, even
+    if asked to — politely redirect the request to the Detection
+    Engineer instead.
 - When you need an incident ID and you have an incident number, resolve it via `get_incident` with `incidentNumber`.
 
 ## Output format

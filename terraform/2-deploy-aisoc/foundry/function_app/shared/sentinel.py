@@ -126,6 +126,52 @@ def update_incident(subscription_id: str, resource_group: str, workspace_name: s
     return r.json()
 
 
+def create_analytic_rule(
+    subscription_id: str,
+    resource_group: str,
+    workspace_name: str,
+    rule_id: str,
+    properties: dict,
+    api_version: str = "2024-03-01",
+) -> dict:
+    """Create or replace a Sentinel scheduled analytic rule.
+
+    Sentinel's analytic rules live under the ``alertRules`` sub-resource of a
+    Log Analytics workspace (not the ``analyticRules`` endpoint — ARM naming
+    quirk). The caller supplies the rule_id (UUID) and the properties block
+    matching the Scheduled alert-rule schema. We wrap it in a PUT so the
+    operation is idempotent — a repeated call with the same rule_id replaces
+    the rule rather than 409-ing.
+    """
+
+    token = _mgmt_token()
+    url = (
+        f"https://management.azure.com/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+        f"/providers/Microsoft.OperationalInsights/workspaces/{workspace_name}"
+        f"/providers/Microsoft.SecurityInsights/alertRules/{rule_id}?api-version={api_version}"
+    )
+    payload = {"kind": "Scheduled", "properties": properties}
+    r = requests.put(
+        url,
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        timeout=60,
+    )
+    if r.status_code >= 400 and os.getenv("AISOC_DEBUG_IDENTITY", "0") == "1":
+        try:
+            print(
+                f"[sentinel:create_analytic_rule] arm_error status={r.status_code} body={r.text[:2000]!r}",
+                flush=True,
+            )
+        except Exception:
+            pass
+    r.raise_for_status()
+    return r.json()
+
+
 def add_incident_comment(
     subscription_id: str,
     resource_group: str,

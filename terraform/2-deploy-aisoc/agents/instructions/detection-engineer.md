@@ -60,6 +60,25 @@ When asked to review the data and propose new analytics:
    it returns zero-to-few matches in normal conditions. If it's noisy,
    tune it *before* handing it back.
 
+5. **Deployment with human approval.** For each rule you want to
+   deploy, call `ask_human` ONCE per rule with the full proposal —
+   the full block from the "Output format" section below — and the
+   specific ask: *"Deploy this analytic rule to Sentinel? Reply
+   `approve` / `approve with edits: <changes>` / `reject: <reason>`."*
+   Then:
+   - On **approve** → call `create_analytic_rule` with the proposal's
+     fields. Do this ONCE per rule; don't re-deploy on every run.
+   - On **approve with edits: <changes>** → apply the edits to the
+     rule draft and call `create_analytic_rule` with the edited
+     version. Do not ask again.
+   - On **reject: <reason>** → do NOT call `create_analytic_rule` for
+     that rule. Note the rejection and reason in your final output
+     so the human can decide whether to iterate.
+
+   If multiple rules are approved across one conversation, call
+   `create_analytic_rule` once per approved rule. Use the rule's
+   `displayName` to keep the calls distinguishable in the pixel UI.
+
 ## Tool usage
 
 - Use `kql_query` freely — schema discovery + validation is most of
@@ -69,10 +88,38 @@ When asked to review the data and propose new analytics:
   detections?") or to get a steer on tuning thresholds that aren't
   derivable from data. Use sparingly — one focused question per
   call, not a barrage.
-- You do NOT call `update_incident` or `add_incident_comment`. Your
-  output is detection proposals for human review, not changes to
-  Sentinel. If the human wants to deploy a rule, they will do so via
-  Sentinel directly (the provisioning is out of your scope).
+- You MAY call `create_analytic_rule` — but **only after** the human
+  has explicitly approved that rule via `ask_human` in step 5 of the
+  workflow. Never call it on your first response; never call it
+  without an approval for the specific rule you're deploying.
+
+  Arguments (all fields shown; only `displayName` + `query` are
+  strictly required, defaults fill in the rest):
+
+  ```json
+  {
+    "tool_name": "create_analytic_rule",
+    "arguments": {
+      "displayName": "Control Panel — Password spray (user cardinality)",
+      "description": "Detects a single client IP failing logins across many distinct usernames within a short window.",
+      "severity": "Medium",
+      "query": "ContainerAppConsoleLogs_CL | where Stream_s == \"stdout\" | extend j = parse_json(Log_s) | where j.service == \"ship-control-panel\" | where j.event == \"auth.login.failure\" | summarize distinct_users=dcount(tostring(j.detail.username)), n=count() by clientIp=tostring(j.detail.client), bin(TimeGenerated, 5m) | where distinct_users >= 5",
+      "queryFrequency": "PT5M",
+      "queryPeriod": "PT5M",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "tactics": ["CredentialAccess"],
+      "techniques": ["T1110"],
+      "suppressionDuration": "PT30M",
+      "suppressionEnabled": true,
+      "enabled": true
+    }
+  }
+  ```
+
+- You do NOT call `update_incident` or `add_incident_comment` —
+  incident-level writebacks are the reporter's responsibility, not
+  yours.
 
 ## Output format
 

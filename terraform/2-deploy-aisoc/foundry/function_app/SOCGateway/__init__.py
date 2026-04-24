@@ -3,7 +3,13 @@ import os
 import azure.functions as func
 
 from shared.log_analytics import query_law
-from shared.sentinel import list_incidents, get_incident, update_incident, add_incident_comment
+from shared.sentinel import (
+    add_incident_comment,
+    create_analytic_rule,
+    get_incident,
+    list_incidents,
+    update_incident,
+)
 from shared.auth import get_openrouter_api_key_from_env_or_kv
 from shared.permissions import require_key
 
@@ -87,6 +93,32 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             if not isinstance(props, dict):
                 return func.HttpResponse("Missing properties patch", status_code=400)
             return func.HttpResponse(json.dumps(update_incident(sub, rg, ws, incident_id, props)), mimetype="application/json")
+
+        # Create/replace a Sentinel analytic rule:
+        #   PUT /sentinel/analytic_rules/{ruleId}
+        # Body: { "properties": {...Scheduled rule props...} }
+        if route and route.startswith("sentinel/analytic_rules/") and req.method.upper() == "PUT":
+            require_key(req, "AISOC_WRITE_KEY")
+            sub = os.environ["AZURE_SUBSCRIPTION_ID"]
+            rg = os.environ["AZURE_RESOURCE_GROUP"]
+            ws = os.environ["LAW_WORKSPACE_NAME"]
+
+            parts = route.split("/")
+            if len(parts) < 3:
+                return func.HttpResponse("Missing rule id", status_code=400)
+            rule_id = parts[2]
+            if not rule_id:
+                return func.HttpResponse("Missing rule id", status_code=400)
+
+            body = _json(req)
+            props = body.get("properties")
+            if not isinstance(props, dict):
+                return func.HttpResponse("Missing properties (Scheduled rule properties object)", status_code=400)
+
+            return func.HttpResponse(
+                json.dumps(create_analytic_rule(sub, rg, ws, rule_id, props)),
+                mimetype="application/json",
+            )
 
         # Create comment: POST /sentinel/incidents/{id}/comments
         if route and route.startswith("sentinel/incidents/") and route.endswith("/comments") and req.method.upper() == "POST":
