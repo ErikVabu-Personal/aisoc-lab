@@ -1,5 +1,6 @@
 import os
 import uuid
+from typing import Any
 
 import requests
 
@@ -98,14 +99,72 @@ def get_incident(subscription_id: str, resource_group: str, workspace_name: str,
 
 
 def update_incident(subscription_id: str, resource_group: str, workspace_name: str, incident_id: str, properties_patch: dict, api_version: str = "2024-03-01") -> dict:
+    """Update specific properties on a Sentinel incident.
+
+    The Sentinel REST API for incidents documents "Create or Update" as a
+    PUT operation that takes the full incident body plus an `etag` for
+    concurrency control. PATCH on the incident root with partial
+    properties is technically supported by the schema but often returns
+    "502 Server Error: Forbidden" from the ARM frontdoor — observed in
+    this repo for owner / description / labels updates against the
+    2024-03-01 api-version.
+
+    To avoid that, do a GET → merge → PUT round trip. We strip server-
+    set read-only fields before the PUT so ARM doesn't reject the body.
+    """
+
     token = _mgmt_token()
     url = (
         f"https://management.azure.com/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
         f"/providers/Microsoft.OperationalInsights/workspaces/{workspace_name}"
         f"/providers/Microsoft.SecurityInsights/incidents/{incident_id}?api-version={api_version}"
     )
-    payload = {"properties": properties_patch}
-    r = requests.patch(
+
+    # 1) GET current incident (we need both the etag and the full
+    #    properties block so PUT-with-merged-properties is idempotent).
+    g = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
+    if g.status_code >= 400 and os.getenv("AISOC_DEBUG_IDENTITY", "0") == "1":
+        try:
+            print(
+                f"[sentinel:update_incident] get_for_put status={g.status_code} body={g.text[:2000]!r}",
+                flush=True,
+            )
+        except Exception:
+            pass
+    g.raise_for_status()
+    current = g.json() if isinstance(g.json(), dict) else {}
+    etag = current.get("etag")
+    current_props = current.get("properties") or {}
+
+    # 2) Merge — caller's patch wins on conflict, including explicit
+    #    `null` values (so the orchestrator can use {owner: null} to
+    #    unassign).
+    READ_ONLY = {
+        "createdTimeUtc",
+        "lastModifiedTimeUtc",
+        "lastActivityTimeUtc",
+        "firstActivityTimeUtc",
+        "incidentNumber",
+        "additionalData",
+        "relatedAnalyticRuleIds",
+        "incidentUrl",
+        "providerName",
+        "providerIncidentId",
+    }
+    merged_props = {
+        k: v for k, v in current_props.items() if k not in READ_ONLY
+    }
+    if isinstance(properties_patch, dict):
+        for k, v in properties_patch.items():
+            merged_props[k] = v
+
+    # 3) PUT — etag in the body (Sentinel's documented form, not as a
+    #    header) so concurrent edits would 412 instead of clobbering.
+    payload: dict[str, Any] = {"properties": merged_props}
+    if etag:
+        payload["etag"] = etag
+
+    r = requests.put(
         url,
         json=payload,
         headers={
