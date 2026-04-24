@@ -89,37 +89,22 @@ def api_agents_state() -> dict[str, Any]:
             },
         )
 
-    cooldown = float(os.getenv("PIXELAGENTS_ACTIVE_COOLDOWN_SEC", "20"))
-    # Short grace window after an explicit tool.call.end so the UI gets a
-    # brief flash of activity for the last call, then settles. The full
-    # cooldown is only used when we don't have an explicit end signal.
-    end_grace = float(os.getenv("PIXELAGENTS_END_GRACE_SEC", "3"))
+    # Single-knob activity model: any event (start, end, chat, whatever)
+    # keeps the agent "active" for `cooldown` seconds. A new event refreshes
+    # the window. No special casing for event types — easier to reason about
+    # and much smoother to watch in the UI.
+    cooldown = float(os.getenv("PIXELAGENTS_ACTIVE_COOLDOWN_SEC", "15"))
 
     def inferred_status(agent_record: dict[str, Any]) -> str:
-        # Option B: infer "agent is working" for a short time after a tool call.
-        # This provides richer animation despite runner-only telemetry.
         state = (agent_record.get("state") or "idle").lower()
         last_event = agent_record.get("last_event") or {}
-        last_event_type = str(last_event.get("type") or "").lower()
         last_ts = float(last_event.get("ts") or agent_record.get("updated_at") or 0)
         age = now - last_ts
 
         if state in ("error", "failed"):
             return "error"
 
-        if state == "typing":
-            return "typing"
-
-        # If the last event was an explicit tool.call.end, respect it and
-        # drop to idle after a short flash. Otherwise (e.g. a lone start,
-        # synthetic events, or unknown types) fall back to the full cooldown.
-        if last_event_type == "tool.call.end":
-            return "reading" if age < end_grace else "idle"
-
-        if age <= cooldown:
-            return "reading"
-
-        return "idle"
+        return "reading" if age <= cooldown else "idle"
 
     # Return stable roster first, then any dynamically discovered agents.
     roster = _default_agent_roster()
