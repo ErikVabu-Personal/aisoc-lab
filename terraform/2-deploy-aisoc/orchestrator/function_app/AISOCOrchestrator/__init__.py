@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from typing import Any, Dict
 
@@ -10,6 +11,20 @@ import requests
 from azure.identity import DefaultAzureCredential
 
 from shared.kv import get_kv_secret
+
+
+# Case-sensitive marker the reporter emits when a human rejects its
+# proposed case note / status change and wants the case re-investigated.
+# See agents/instructions/reporter.md for how the reporter is instructed
+# to emit this.
+_REINVESTIGATION_RE = re.compile(r"NEEDS_REINVESTIGATION:\s*(.+?)(?:\n|$)")
+
+
+def _extract_reinvestigation(text: str) -> str | None:
+    if not isinstance(text, str):
+        return None
+    m = _REINVESTIGATION_RE.search(text)
+    return m.group(1).strip() if m else None
 
 
 def _json(req: func.HttpRequest) -> dict:
@@ -250,17 +265,68 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             ),
         )
 
-        writeback = bool(body.get("writeback"))
-        rep_out, rep_raw = _invoke_agent(
-            project_endpoint,
-            "reporter",
-            user_text=(
-                "You are the REPORTER agent. Write an exec-ready summary and a Sentinel-ready case note. "
-                + ("writeback=true: Add the case note as a Sentinel incident comment using the AISOC Runner OpenAPI tool. " if writeback else "")
-                + "\n\n"
-                + f"INCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}\n\nINVESTIGATOR_OUTPUT:\n{_clip(inv_out, 8000)}"
-            ),
-        )
+        # Writeback is now controlled by the reporter's own prompt (it must
+        # gate on ask_human). The body flag is kept for backwards compat but
+        # no longer injected into the prompt text — the reporter decides.
+        _ = bool(body.get("writeback"))
+
+        def _invoke_reporter(investigator_output: str) -> tuple[str, dict]:
+            return _invoke_agent(
+                project_endpoint,
+                "reporter",
+                user_text=(
+                    "You are the REPORTER agent. Produce an executive summary, draft "
+                    "a Sentinel-ready case note, and propose a status change. Per "
+                    "your instructions, call ask_human to validate before writing "
+                    "anything back via add_incident_comment / update_incident.\n\n"
+                    + f"INCIDENT_REF:\n{incident_json}\n\n"
+                    + f"TRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}\n\n"
+                    + f"INVESTIGATOR_OUTPUT:\n{_clip(investigator_output, 8000)}"
+                ),
+            )
+
+        rep_out, rep_raw = _invoke_reporter(inv_out)
+
+        # Reinvestigation loop — if the reporter emits NEEDS_REINVESTIGATION,
+        # re-run the investigator with the human's feedback as extra context
+        # and then re-run the reporter. Capped to avoid infinite loops.
+        MAX_REINVESTIGATIONS = 1
+        reinvestigation_count = 0
+        reinvestigation_history: list[dict] = []
+        while reinvestigation_count < MAX_REINVESTIGATIONS:
+            note = _extract_reinvestigation(rep_out)
+            if not note:
+                break
+
+            reinvestigation_count += 1
+            prior_inv_out = inv_out  # snapshot for the record
+            prior_rep_out = rep_out
+
+            inv_out, _ = _invoke_agent(
+                project_endpoint,
+                "investigator",
+                user_text=(
+                    "You are the INVESTIGATOR agent. The reporter flagged the case "
+                    "for reinvestigation after a human review. Re-investigate with "
+                    "the new context below. Run additional KQL queries as needed; "
+                    "do not simply restate the prior investigation.\n\n"
+                    + f"INCIDENT_REF:\n{incident_json}\n\n"
+                    + f"PRIOR_TRIAGE:\n{_clip(triage_out, 3000)}\n\n"
+                    + f"PRIOR_INVESTIGATION:\n{_clip(prior_inv_out, 5000)}\n\n"
+                    + f"HUMAN_FEEDBACK_VIA_REPORTER:\n{note}"
+                ),
+            )
+
+            rep_out, rep_raw = _invoke_reporter(inv_out)
+
+            reinvestigation_history.append(
+                {
+                    "note": note,
+                    "investigation": _clip(inv_out, 4000),
+                    "report": _clip(rep_out, 4000),
+                    "prior_report": _clip(prior_rep_out, 2000),
+                }
+            )
 
         # Detect whether the reporter actually invoked a write tool inside Foundry.
         # Without this the response would carry a perpetual null for wrote_comment.
@@ -305,6 +371,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             "report": _maybe_json(rep_out),
             "did_close": did_close,
             "wrote_comment": wrote_comment,
+            # Number of reinvestigation loops the reporter triggered
+            # (0 = the first reporter run was approved or wrote directly;
+            # N > 0 = the human rejected N times and the investigator +
+            # reporter re-ran). Full per-iteration trace lives in
+            # reinvestigation_history for debugging.
+            "reinvestigations": reinvestigation_count,
+            "reinvestigation_history": reinvestigation_history,
         }
         return func.HttpResponse(json.dumps(out), mimetype="application/json")
 

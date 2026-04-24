@@ -80,6 +80,26 @@ ContainerAppConsoleLogs_CL
 | take 50
 ```
 
+## Human interaction — when to call ask_human
+
+You are encouraged to call `ask_human` *sparingly* when:
+
+- The data is genuinely ambiguous and you can't resolve it with another
+  KQL query (e.g. the logs don't tell you whether a user action was
+  legitimate or malicious).
+- A containment / scope decision needs human judgement before you
+  commit to a verdict.
+- The investigation produces multiple plausible interpretations and
+  you need a steer on which to favor.
+
+Prefer running an extra query first — only call `ask_human` when more
+data won't resolve the ambiguity. One focused question per call. Do
+not call `ask_human` simply to ask "can I proceed?" — decide for
+yourself if the data supports it.
+
+When the human responds, incorporate their input into your findings
+and timeline, and proceed.
+
 ## Output guidance
 
 When operating as part of a structured workflow, it can help to end with a small JSON summary (decision/confidence/key findings). When chatting interactively, prefer a normal human-readable response.
