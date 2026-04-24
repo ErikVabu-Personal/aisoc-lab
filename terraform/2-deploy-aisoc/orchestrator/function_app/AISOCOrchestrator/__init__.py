@@ -61,7 +61,14 @@ def _response_text(data: Any) -> str:
     return json.dumps(data)[:12000]
 
 
-def _invoke_agent(project_endpoint: str, agent_name: str, user_text: str) -> str:
+def _invoke_agent(project_endpoint: str, agent_name: str, user_text: str) -> tuple[str, dict]:
+    """Invoke a Foundry agent and return (text, raw_response).
+
+    Returning the raw response lets callers inspect structured output items
+    (e.g. ``openapi_call`` invocations) to tell whether the agent actually
+    hit any of its attached tools — text alone can't answer that.
+    """
+
     # Invoke agent via OpenAI v1 Responses endpoint under the project.
     # NOTE: When using /openai/v1 paths, the service rejects api-version query params.
     url = project_endpoint.rstrip("/") + "/openai/v1/responses"
@@ -89,13 +96,45 @@ def _invoke_agent(project_endpoint: str, agent_name: str, user_text: str) -> str
             j = r.json()
             err = (j.get("error") or {}) if isinstance(j, dict) else {}
             if r.status_code == 400 and err.get("code") == "tool_user_error":
-                return f"[TOOL_USER_ERROR:{agent_name}] {json.dumps(j)[:4000]}"
+                return f"[TOOL_USER_ERROR:{agent_name}] {json.dumps(j)[:4000]}", (j if isinstance(j, dict) else {})
         except Exception:
             pass
 
         raise RuntimeError(f"Agent '{agent_name}' response failed ({r.status_code}): {r.text[:4000]}")
 
-    return _response_text(r.json())
+    data = r.json()
+    return _response_text(data), (data if isinstance(data, dict) else {})
+
+
+def _detect_tool_calls(raw: dict, tool_names: set[str]) -> list[dict]:
+    """Return a list of tool invocations in a Foundry Responses payload whose
+    underlying tool_name matches one of ``tool_names``.
+
+    Best-effort: the exact field names inside ``openapi_call`` / ``tool_call``
+    items can vary by API version, so we check the common places.
+    """
+
+    hits: list[dict] = []
+    output = (raw or {}).get("output") or []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") not in ("openapi_call", "tool_call", "function_call"):
+            continue
+        args = item.get("arguments") or {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {}
+        name = (
+            (args.get("tool_name") if isinstance(args, dict) else None)
+            or item.get("name")
+            or (item.get("tool") or {}).get("name")
+        )
+        if name in tool_names:
+            hits.append({"name": name, "arguments": args if isinstance(args, dict) else {}})
+    return hits
 
 
 def _clip(s: str, max_chars: int) -> str:
@@ -154,7 +193,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         incident_json = json.dumps(inc.get("result"), indent=2)[:12000]
 
         # Call agents via Foundry Agent Service runtime (agents + responses).
-        triage_out = _invoke_agent(
+        triage_out, _ = _invoke_agent(
             project_endpoint,
             "triage",
             user_text=(
@@ -173,7 +212,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
-        inv_out = _invoke_agent(
+        inv_out, _ = _invoke_agent(
             project_endpoint,
             "investigator",
             user_text=(
@@ -184,7 +223,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         writeback = bool(body.get("writeback"))
-        rep_out = _invoke_agent(
+        rep_out, rep_raw = _invoke_agent(
             project_endpoint,
             "reporter",
             user_text=(
@@ -195,7 +234,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             ),
         )
 
-        wrote_comment = None
+        # Detect whether the reporter actually invoked a write tool inside Foundry.
+        # Without this the response would carry a perpetual null for wrote_comment.
+        write_hits = _detect_tool_calls(rep_raw, {"add_incident_comment", "update_incident"})
+        wrote_comment: Any = (
+            {"count": len(write_hits), "calls": write_hits} if write_hits else False
+        )
 
         auto_close = os.environ.get("AISOC_AUTO_CLOSE", "0") == "1"
         did_close = False
