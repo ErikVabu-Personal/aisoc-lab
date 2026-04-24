@@ -1,4 +1,6 @@
 import os
+import uuid
+
 import requests
 
 
@@ -134,15 +136,18 @@ def add_incident_comment(
 ) -> dict:
     """Create a comment on a Sentinel incident.
 
-    Uses the incidentComments sub-resource.
+    Uses the ``comments`` sub-resource. Sentinel's REST API requires the caller
+    to generate the comment's own GUID and PUT to that exact path (POST to the
+    collection is not supported).
     """
 
     token = _mgmt_token()
+    comment_id = str(uuid.uuid4())
     url = (
         f"https://management.azure.com/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
         f"/providers/Microsoft.OperationalInsights/workspaces/{workspace_name}"
         f"/providers/Microsoft.SecurityInsights/incidents/{incident_id}"
-        f"/incidentComments?api-version={api_version}"
+        f"/comments/{comment_id}?api-version={api_version}"
     )
 
     payload = {
@@ -151,7 +156,7 @@ def add_incident_comment(
         }
     }
 
-    r = requests.post(
+    r = requests.put(
         url,
         json=payload,
         headers={
