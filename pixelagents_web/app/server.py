@@ -89,21 +89,24 @@ def api_agents_state() -> dict[str, Any]:
             },
         )
 
-    # Single-knob activity model: any event (start, end, chat, whatever)
-    # keeps the agent "active" for `cooldown` seconds. A new event refreshes
-    # the window. No special casing for event types — easier to reason about
-    # and much smoother to watch in the UI.
+    # Activity window opens on any event that indicates the agent is
+    # *starting* to do something (tool.call.start, chat, etc.). An explicit
+    # tool.call.end does NOT refresh the window — semantically it means
+    # "I'm done," which shouldn't keep the character animating. The
+    # last_start_ts field is maintained by ingest_event below.
     cooldown = float(os.getenv("PIXELAGENTS_ACTIVE_COOLDOWN_SEC", "15"))
 
     def inferred_status(agent_record: dict[str, Any]) -> str:
         state = (agent_record.get("state") or "idle").lower()
-        last_event = agent_record.get("last_event") or {}
-        last_ts = float(last_event.get("ts") or agent_record.get("updated_at") or 0)
-        age = now - last_ts
+        last_start_ts = float(agent_record.get("last_start_ts") or 0)
 
         if state in ("error", "failed"):
             return "error"
 
+        if last_start_ts == 0:
+            return "idle"  # agent has never been active
+
+        age = now - last_start_ts
         return "reading" if age <= cooldown else "idle"
 
     # Return stable roster first, then any dynamically discovered agents.
@@ -141,6 +144,60 @@ def _ai_projects_token() -> str:
     from azure.identity import DefaultAzureCredential
 
     return DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
+
+
+def _emit_agent_start(agent_name: str, tool_name: str) -> None:
+    """Record a synthetic tool.call.start for ``agent_name`` so the pixel
+    character reacts immediately, without waiting on a downstream runner to
+    emit the event.
+
+    Mirrors the shape the runner emits so everything downstream treats it
+    identically. Updates both the EVENTS deque (for the SSE stream) and the
+    per-agent AGENTS record (for /api/agents/state inferred_status).
+    """
+
+    now = time.time()
+    event = {
+        "type": "tool.call.start",
+        "agent": agent_name,
+        "state": "reading",
+        "tool_name": tool_name,
+        "ts": now,
+    }
+    EVENTS.append(event)
+    AGENTS[agent_name] = {
+        **AGENTS.get(agent_name, {}),
+        "agent": agent_name,
+        "state": "reading",
+        "last_event": event,
+        "last_start_ts": now,
+        "updated_at": now,
+    }
+
+
+def _emit_agent_end(agent_name: str, tool_name: str) -> None:
+    """Record a synthetic tool.call.end — informational only; does NOT
+    extend the activity window (that's what "end" means)."""
+
+    now = time.time()
+    event = {
+        "type": "tool.call.end",
+        "agent": agent_name,
+        "state": "idle",
+        "tool_name": tool_name,
+        "ts": now,
+    }
+    EVENTS.append(event)
+    prev = AGENTS.get(agent_name, {})
+    AGENTS[agent_name] = {
+        **prev,
+        "agent": agent_name,
+        "state": "idle",
+        "last_event": event,
+        # Intentionally leave last_start_ts alone.
+        "last_start_ts": float(prev.get("last_start_ts") or 0),
+        "updated_at": now,
+    }
 
 
 def _response_text(data: Any) -> str:
@@ -242,6 +299,10 @@ async def send_message_to_agent(
     if not agent_name or agent_name == "unknown":
         raise HTTPException(status_code=400, detail="Invalid agent id")
 
+    # Flash the pixel character active *now*, before we block on Foundry,
+    # so the user sees the agent react immediately to their message.
+    _emit_agent_start(agent_name, "adhoc_chat")
+
     project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
     if not project_endpoint:
         raise HTTPException(status_code=500, detail="Missing AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
@@ -283,25 +344,9 @@ async def send_message_to_agent(
     text = _response_text(raw)
     tool_calls = _detect_tool_calls(raw)
 
-    # Record a synthetic activity event so the PixelAgents UI can show the
-    # agent reacting even on runs that don't happen to call a runner tool.
-    now = time.time()
-    EVENTS.append(
-        {
-            "type": "tool.call.end",
-            "agent": agent_name,
-            "state": "idle",
-            "tool_name": "adhoc_chat",
-            "ts": now,
-        }
-    )
-    AGENTS[agent_name] = {
-        **AGENTS.get(agent_name, {}),
-        "agent": agent_name,
-        "state": "idle",
-        "last_event": {"type": "tool.call.end", "tool_name": "adhoc_chat", "ts": now},
-        "updated_at": now,
-    }
+    # Record a synthetic end event — informational; the start at the top
+    # of the handler is what opened the activity window.
+    _emit_agent_end(agent_name, "adhoc_chat")
 
     return {
         "ok": True,
@@ -536,6 +581,10 @@ async def stream_message_to_agent(
     if not agent_name or agent_name == "unknown":
         raise HTTPException(status_code=400, detail="Invalid agent id")
 
+    # Flash the pixel character active *now* so the user sees immediate
+    # feedback instead of waiting for the first streamed delta.
+    _emit_agent_start(agent_name, "adhoc_chat")
+
     project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
     if not project_endpoint:
         raise HTTPException(status_code=500, detail="Missing AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
@@ -662,29 +711,10 @@ async def stream_message_to_agent(
             except Exception:
                 pass
 
-            # Synthetic PixelAgents activity event so the pixel character
-            # reacts even if the agent produced text without calling a tool.
-            now = time.time()
-            EVENTS.append(
-                {
-                    "type": "tool.call.end",
-                    "agent": agent_name,
-                    "state": "idle",
-                    "tool_name": "adhoc_chat",
-                    "ts": now,
-                }
-            )
-            AGENTS[agent_name] = {
-                **AGENTS.get(agent_name, {}),
-                "agent": agent_name,
-                "state": "idle",
-                "last_event": {
-                    "type": "tool.call.end",
-                    "tool_name": "adhoc_chat",
-                    "ts": now,
-                },
-                "updated_at": now,
-            }
+            # Synthetic end for the chat — informational only, doesn't
+            # extend the activity window (the start at the top of the
+            # handler already opened it).
+            _emit_agent_end(agent_name, "adhoc_chat")
 
             yield _sse_event("done", {"tool_calls": tool_calls_observed})
 
@@ -716,12 +746,23 @@ async def ingest_event(
     agent_raw = body.get("agent") or "unknown"
     agent = _slug_agent(str(agent_raw))
 
-    # Keep a very small per-agent summary for the UI
+    event_type = str(body.get("type") or "").lower()
+    is_end_event = event_type == "tool.call.end"
+
+    prev = AGENTS[agent]
+    prev_last_start_ts = float(prev.get("last_start_ts") or 0)
+    # tool.call.end updates the last_event record (so tool_name / UI is
+    # current) but does not reset the activity window — that's what
+    # "end" means. Anything else is treated as an activity-inducing
+    # event and refreshes last_start_ts.
+    new_last_start_ts = prev_last_start_ts if is_end_event else body["ts"]
+
     AGENTS[agent] = {
         "agent": agent,
         "agent_display": str(agent_raw),
-        "state": body.get("state") or AGENTS[agent].get("state") or "idle",
+        "state": body.get("state") or prev.get("state") or "idle",
         "last_event": body,
+        "last_start_ts": new_last_start_ts,
         "updated_at": body["ts"],
     }
 
