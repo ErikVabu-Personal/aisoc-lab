@@ -89,11 +89,11 @@ resource "azurerm_container_app" "pixelagents" {
       }
 
       # Foundry project endpoint for the ad-hoc chat endpoint.
-      # Empty string is allowed: the endpoint will 500 with a clear error
-      # rather than silently breaking other features.
+      # Inherited from Phase 2 — same value the orchestrator uses, so the two
+      # components never drift out of sync.
       env {
         name  = "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"
-        value = var.foundry_project_endpoint
+        value = data.terraform_remote_state.aisoc.outputs.foundry_project_endpoint
       }
     }
   }

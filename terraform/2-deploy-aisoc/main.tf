@@ -221,15 +221,22 @@ output "foundry_project_id" {
   description = "Foundry project resource id (computed). The project is created post-apply via script." 
 }
 
-# We can't reliably output the project endpoint from Terraform when project creation is scripted.
-# The deploy_foundry_project.py script can read the project resource after creation.
-output "foundry_project_endpoint" {
-  value       = null
-  description = "Foundry project endpoint (AI Foundry API). Created post-apply; discover via script/UI."
+# The Foundry API endpoint follows a deterministic template:
+#   https://<customSubDomainName>.services.ai.azure.com/api/projects/<projectName>
+# (Matches the example in orchestrator/function_app/local.settings.json.example
+# and the value returned by ARM's properties.endpoints["AI Foundry API"].)
+#
+# The project itself is created post-apply via scripts/deploy_foundry_project.py,
+# but both the account's custom subdomain and the project name are fixed by
+# Terraform, so the URL is predictable at apply time — we no longer need to
+# ask the user to set it manually on the orchestrator / PixelAgents env vars.
+locals {
+  foundry_project_endpoint_effective = "https://${local.foundry_custom_subdomain}.services.ai.azure.com/api/projects/${local.foundry_project_name_effective}"
 }
 
-locals {
-  foundry_project_endpoint_effective = null
+output "foundry_project_endpoint" {
+  value       = local.foundry_project_endpoint_effective
+  description = "Foundry AI API endpoint for the project. Constructed from the account's custom subdomain and the project name; safe to consume before the project resource itself has been created."
 }
 
 output "key_vault_name" {

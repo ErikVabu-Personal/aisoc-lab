@@ -37,15 +37,7 @@ variable "create_log_analytics" {
   default     = true
 }
 
-variable "foundry_project_endpoint" {
-  type        = string
-  description = <<-EOT
-    Azure AI Foundry project endpoint, e.g.
-    "https://<account>.services.ai.azure.com/api/projects/<project>".
-    Required for the ad-hoc chat endpoint (POST /api/agents/{id}/message).
-    Leave empty to disable chat — the endpoint will return a clear 500 in that case.
-    Mirrors the orchestrator's env var; Foundry does not expose a reliable
-    Terraform output for this, so it is wired manually after project creation.
-  EOT
-  default     = ""
-}
+# Note: the Foundry project endpoint used by the ad-hoc chat endpoint is
+# inherited from Phase 2's `foundry_project_endpoint` output; it is no longer
+# a Phase 3 variable. If Phase 2's output scheme ever needs overriding,
+# reintroduce a variable here and wrap the consumer in coalesce().
