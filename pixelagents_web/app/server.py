@@ -32,6 +32,16 @@ TOKEN_ENV = "PIXELAGENTS_TOKEN"
 AGENTS: Dict[str, Dict[str, Any]] = defaultdict(dict)
 EVENTS: Deque[dict[str, Any]] = deque(maxlen=2000)
 
+# Human-in-the-loop questions raised by agents via the runner's ask_human
+# tool. Keyed by a server-generated UUID. Each record is:
+#   { id, agent, question, asked_at, status: "pending"|"answered"|"cancelled",
+#     answer, answered_at }
+# The runner long-polls /api/hitl/wait/{id} until status is no longer
+# "pending"; the UI reads /api/hitl/pending and submits via
+# /api/hitl/answer/{id}. In-memory storage is fine for the demo — a restart
+# of the container will drop any in-flight questions.
+HITL_QUESTIONS: Dict[str, Dict[str, Any]] = {}
+
 app = FastAPI(title=APP_TITLE)
 
 # Serve vendored Pixel Agents assets
@@ -550,6 +560,150 @@ async def orchestrate_incident(
         return {"raw": r.text[:4000]}
 
 
+# ─── Human-in-the-loop (HITL) ────────────────────────────────────────────
+#
+# The runner exposes an `ask_human` tool that agents can call when they
+# need clarification. When invoked, the runner POSTs the question to
+# /api/hitl/questions below, gets back a UUID, and long-polls
+# /api/hitl/wait/{id} until a human answers (or a short timeout). The UI
+# reads /api/hitl/pending and submits via /api/hitl/answer/{id}.
+
+
+def _hitl_public(q: dict[str, Any]) -> dict[str, Any]:
+    """Strip internals before sending a question record to the UI/runner."""
+
+    return {
+        "id": q.get("id"),
+        "agent": q.get("agent"),
+        "agent_display": q.get("agent_display"),
+        "question": q.get("question"),
+        "asked_at": q.get("asked_at"),
+        "status": q.get("status"),
+        "answer": q.get("answer"),
+        "answered_at": q.get("answered_at"),
+    }
+
+
+@app.post("/api/hitl/questions")
+async def hitl_create_question(
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Called by the runner when an agent invokes ask_human."""
+
+    _require_token(x_pixelagents_token)
+
+    import uuid as _uuid
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    agent_raw = body.get("agent") or "unknown"
+    question = body.get("question")
+    if not isinstance(question, str) or not question.strip():
+        raise HTTPException(status_code=400, detail="Missing question")
+
+    qid = str(_uuid.uuid4())
+    record = {
+        "id": qid,
+        "agent": _slug_agent(str(agent_raw)),
+        "agent_display": str(agent_raw),
+        "question": question.strip(),
+        "asked_at": time.time(),
+        "status": "pending",
+        "answer": None,
+        "answered_at": None,
+    }
+    HITL_QUESTIONS[qid] = record
+    return _hitl_public(record)
+
+
+@app.get("/api/hitl/pending")
+def hitl_list_pending(
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """UI reads this to show currently-pending questions."""
+
+    _require_token(x_pixelagents_token)
+    pending = [
+        _hitl_public(q) for q in HITL_QUESTIONS.values() if q.get("status") == "pending"
+    ]
+    pending.sort(key=lambda q: q.get("asked_at") or 0)
+    return {"questions": pending, "ts": time.time()}
+
+
+@app.post("/api/hitl/answer/{qid}")
+async def hitl_submit_answer(
+    qid: str,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """UI submits a human answer for a given question id."""
+
+    _require_token(x_pixelagents_token)
+
+    q = HITL_QUESTIONS.get(qid)
+    if not q:
+        raise HTTPException(status_code=404, detail="Unknown question id")
+    if q.get("status") != "pending":
+        raise HTTPException(status_code=409, detail=f"Question already {q.get('status')}")
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    answer = body.get("answer")
+    if not isinstance(answer, str):
+        raise HTTPException(status_code=400, detail="Missing answer (string)")
+
+    q["answer"] = answer
+    q["answered_at"] = time.time()
+    q["status"] = "answered"
+    return _hitl_public(q)
+
+
+@app.get("/api/hitl/wait/{qid}")
+async def hitl_wait(
+    qid: str,
+    timeout: int = 30,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Long-poll variant for the runner.
+
+    Holds the connection open for up to `timeout` seconds, returning as
+    soon as the question transitions out of "pending". The runner can
+    call this repeatedly to wait for longer than a single HTTP timeout.
+    Safe to call with timeout=0 for a cheap non-blocking poll.
+    """
+
+    import asyncio as _asyncio
+
+    _require_token(x_pixelagents_token)
+
+    q = HITL_QUESTIONS.get(qid)
+    if not q:
+        raise HTTPException(status_code=404, detail="Unknown question id")
+
+    # Clamp so a misconfigured runner can't park us forever.
+    timeout = max(0, min(int(timeout), 60))
+
+    deadline = time.time() + timeout
+    while True:
+        q = HITL_QUESTIONS.get(qid) or {}
+        if q.get("status") != "pending":
+            return _hitl_public(q)
+        if time.time() >= deadline:
+            return _hitl_public(q)
+        await _asyncio.sleep(1.0)
+
+
 @app.post("/api/agents/{agent_id}/message/stream")
 async def stream_message_to_agent(
     agent_id: str,
@@ -842,6 +996,7 @@ def index() -> HTMLResponse:
         f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js} }};</script>'
         f'<script src="/static/chat_drawer.js" defer></script>'
         f'<script src="/static/incidents_panel.js" defer></script>'
+        f'<script src="/static/hitl_panel.js" defer></script>'
         f'<script src="/static/agent_activity.js" defer></script>'
     )
 
