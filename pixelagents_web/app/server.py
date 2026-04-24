@@ -809,6 +809,7 @@ def index() -> HTMLResponse:
         f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js} }};</script>'
         f'<script src="/static/chat_drawer.js" defer></script>'
         f'<script src="/static/incidents_panel.js" defer></script>'
+        f'<script src="/static/agent_activity.js" defer></script>'
     )
 
     if "</body>" in html:
