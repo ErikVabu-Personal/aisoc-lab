@@ -54,5 +54,21 @@ def query_law(kql: str, timespan: str = "PT1H") -> dict:
     payload = {"query": kql, "timespan": timespan}
 
     r = requests.post(url, json=payload, headers={"Authorization": f"Bearer {token}"}, timeout=60)
-    r.raise_for_status()
+    if r.status_code >= 400:
+        # Surface the Log Analytics error body. `raise_for_status()` only
+        # includes a generic message ("400 Client Error: ... for url ..."),
+        # which is useless when diagnosing why a KQL query was rejected —
+        # e.g. reserved names in a `by` clause, unknown functions, malformed
+        # timespans. Including the body in the exception means the Gateway's
+        # outer catch-all will pass it through to the caller.
+        body = r.text[:4000]
+        if os.getenv("AISOC_DEBUG_IDENTITY", "0") == "1":
+            try:
+                print(
+                    f"[log_analytics:query_law] status={r.status_code} body={body!r}",
+                    flush=True,
+                )
+            except Exception:
+                pass
+        raise RuntimeError(f"Log Analytics returned {r.status_code}: {body}")
     return r.json()
