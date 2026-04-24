@@ -21,7 +21,7 @@ def _slug_agent(name: str) -> str:
     s = re.sub(r"-+$", "", s)
     return s or "unknown"
 
-from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 APP_TITLE = "pixelagents-web"
@@ -375,14 +375,39 @@ async def _sleep(seconds: float) -> None:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> FileResponse:
-    # Serve Pixel Agents webview UI build if present
-    dist_index = os.path.join(os.path.dirname(__file__), "ui_dist", "index.html")
-    if os.path.exists(dist_index):
-        return FileResponse(dist_index)
+def index() -> HTMLResponse:
+    """Serve the Pixel Agents UI, with the AISOC chat drawer injected.
 
-    # Fallback
-    return HTMLResponse("PixelAgents UI not built yet. Run the build and redeploy.")
+    We don't touch the vendored ui_dist/index.html on disk — instead we read it
+    at request time, inject the chat drawer config + script tag before
+    ``</body>``, and return the modified HTML. Keeps ui_dist/ a pure vendor
+    artifact that can be updated from upstream without merge conflicts.
+    """
+
+    dist_index = os.path.join(os.path.dirname(__file__), "ui_dist", "index.html")
+    if not os.path.exists(dist_index):
+        return HTMLResponse("PixelAgents UI not built yet. Run the build and redeploy.")
+
+    with open(dist_index, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    token = os.getenv(TOKEN_ENV, "")
+    # The token is injected into the served HTML so the browser-side chat drawer
+    # can authenticate to POST /api/agents/{id}/message. Anyone with the page
+    # URL can see it — same threat surface as the already-public /api/agents/state.
+    # Gate the URL itself (e.g. ACA Easy Auth) before trusting this in production.
+    token_js = json.dumps(token)
+    injection = (
+        f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js} }};</script>'
+        f'<script src="/static/chat_drawer.js" defer></script>'
+    )
+
+    if "</body>" in html:
+        html = html.replace("</body>", injection + "</body>", 1)
+    else:
+        html = html + injection
+
+    return HTMLResponse(html)
 
 
 # Serve UI assets at root-relative paths (e.g. /assets/...) because the built index.html uses ./assets/...
