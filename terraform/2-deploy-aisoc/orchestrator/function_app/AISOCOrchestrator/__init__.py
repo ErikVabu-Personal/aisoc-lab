@@ -298,13 +298,28 @@ def _assign_incident_owner(
     """Set incident.owner.assignedTo to `display_name` before each phase.
 
     Uses the runner's update_incident tool so the existing RBAC path
-    (Gateway's MI → Sentinel Contributor) is reused. Sentinel accepts a
-    partial owner object — a string assignedTo is enough for the UI to
-    render. We don't set objectId/email because the agents aren't real
-    Entra users.
+    (Gateway's MI → Sentinel Contributor) is reused. Sentinel's incident
+    owner object has multiple fields; we send ownerType=User + assignedTo
+    + a dummy objectId so API versions that require an identity still
+    accept the payload. The UI reads assignedTo so the display is
+    driven by that one field regardless.
     """
 
-    args: dict[str, Any] = {"properties": {"owner": {"assignedTo": display_name}}}
+    args: dict[str, Any] = {
+        "properties": {
+            "owner": {
+                "assignedTo": display_name,
+                "ownerType": "User",
+                # Deterministic zero-GUID so repeated assignments don't
+                # churn objectId; Sentinel doesn't validate that it
+                # resolves to a real Entra object for ownerType=User
+                # in most API versions.
+                "objectId": "00000000-0000-0000-0000-000000000000",
+                "email": None,
+                "userPrincipalName": None,
+            }
+        }
+    }
     if incident_number is not None:
         args["incidentNumber"] = incident_number
     elif incident_id is not None:
@@ -313,16 +328,27 @@ def _assign_incident_owner(
         return
 
     try:
-        _runner_post(
+        result = _runner_post(
             runner_url,
             runner_bearer,
             {"tool_name": "update_incident", "arguments": args},
             agent="orchestrator",
         )
+        # The runner wraps tool errors as {ok: false} inside a 200 OK
+        # response (so agents can recover). _runner_post only raises on
+        # non-2xx, so we have to inspect the envelope here to see real
+        # ARM errors (e.g. incident-owner schema validation).
+        body = result.get("result") if isinstance(result, dict) else None
+        if isinstance(body, dict) and body.get("ok") is False:
+            err = body.get("error") or body
+            print(
+                f"[orchestrator] owner assign to {display_name!r} rejected: {err}",
+                flush=True,
+            )
     except Exception as e:
         # Ownership is nice-to-have visual; don't block the pipeline.
         print(
-            f"[orchestrator] owner assign to {display_name!r} failed: {e!r}",
+            f"[orchestrator] owner assign to {display_name!r} raised: {e!r}",
             flush=True,
         )
 
