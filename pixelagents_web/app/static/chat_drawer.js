@@ -49,13 +49,9 @@
   // ── Styles (scoped via the root id) ──────────────────────────────────────
   const styleEl = document.createElement('style');
   styleEl.textContent = `
-    #${rootId}, #${rootId} * {
-      /* The vendored Pixel Agents CSS has a * { font-family: 'FS Pixel Sans' }
-         rule which bleeds into our panel and makes the text look smaller
-         (and oddly pixelated) once the webfont loads. Scope a higher-
-         specificity override so the panel keeps a readable system font. */
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
+    /* Inherit FS Pixel Sans from the vendored Pixel Agents global styles so
+       the drawer matches the rest of the UI. Sizes are bumped to compensate
+       for pixel fonts rendering visually smaller than the system fallback. */
     #${rootId} {
       position: fixed;
       right: 16px;
@@ -68,8 +64,8 @@
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 8px;
       color: #e7e9ee;
-      font-size: 19px;
-      line-height: 1.45;
+      font-size: 22px;
+      line-height: 1.4;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
       z-index: 9999;
       display: flex;
@@ -102,7 +98,7 @@
       border-radius: 4px;
       padding: 4px 10px;
       cursor: pointer;
-      font-size: 15px;
+      font-size: 18px;
     }
     #${rootId} header .back:hover {
       background: rgba(255, 255, 255, 0.06);
@@ -186,12 +182,14 @@
       background: rgba(239, 68, 68, 0.2);
       border: 1px solid rgba(239, 68, 68, 0.4);
       color: #fecaca;
+      /* Errors + tool-call chips keep a monospace font for alignment of
+         status codes / tool names; reads fine beside the pixel text. */
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 14px;
+      font-size: 16px;
     }
     #${rootId} .msg .tool-calls {
       margin-top: 4px;
-      font-size: 14px;
+      font-size: 16px;
       opacity: 0.7;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }

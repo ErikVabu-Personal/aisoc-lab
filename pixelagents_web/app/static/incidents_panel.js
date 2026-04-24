@@ -47,26 +47,22 @@
   // ── Styles ───────────────────────────────────────────────────────────────
   const styleEl = document.createElement('style');
   styleEl.textContent = `
-    #${rootId}, #${rootId} * {
-      /* See chat_drawer.js for the rationale — the vendored * { font-family:
-         'FS Pixel Sans' } rule would otherwise override per-child inheritance
-         and make the text look smaller once the webfont loads. */
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
+    /* Inherit FS Pixel Sans from the vendored global styles so the panel
+       matches the rest of the UI. See chat_drawer.js for sizing rationale. */
     #${rootId} {
       position: fixed;
       right: 16px;
       top: 16px;
       width: 520px;
-      max-height: 45vh;
+      max-height: 55vh;
       background: rgba(10, 12, 18, 0.82);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 8px;
       color: #e7e9ee;
-      font-size: 18px;
-      line-height: 1.45;
+      font-size: 20px;
+      line-height: 1.4;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
       z-index: 9999;
       display: flex;
@@ -97,7 +93,7 @@
       border: 1px solid rgba(96, 165, 250, 0.5);
       border-radius: 999px;
       padding: 2px 8px;
-      font-size: 13px;
+      font-size: 16px;
       font-weight: 600;
     }
     #${rootId} header .toggle {
@@ -116,7 +112,7 @@
     #${rootId} table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 15px;
+      font-size: 18px;
     }
     #${rootId} thead th {
       text-align: left;
@@ -148,9 +144,9 @@
     }
     #${rootId} .sev {
       display: inline-block;
-      padding: 2px 7px;
+      padding: 3px 8px;
       border-radius: 4px;
-      font-size: 12px;
+      font-size: 14px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -178,7 +174,7 @@
       border: 1px solid rgba(96, 165, 250, 0.4);
     }
     #${rootId} .status {
-      font-size: 13px;
+      font-size: 16px;
       opacity: 0.85;
       white-space: nowrap;
     }
@@ -225,7 +221,7 @@
     }
     #${rootId} .notice {
       padding: 8px 12px;
-      font-size: 14px;
+      font-size: 16px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       display: flex;
       align-items: center;
@@ -263,10 +259,10 @@
       border: 1px solid rgba(96, 165, 250, 0.5);
       color: #dbeafe;
       border-radius: 4px;
-      padding: 4px 12px;
+      padding: 5px 14px;
       cursor: pointer;
       font: inherit;
-      font-size: 13px;
+      font-size: 16px;
       font-weight: 600;
       white-space: nowrap;
     }
