@@ -65,31 +65,29 @@
     }
     #${rootId} .card {
       pointer-events: auto;
-      background: rgba(10, 12, 18, 0.9);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid rgba(250, 204, 21, 0.45);
-      border-radius: 8px;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
-      color: #e7e9ee;
+      background: var(--color-bg, #1e1e2e);
+      border: 2px solid var(--color-warning, #ff8d14);
+      border-radius: 6px;
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
+      color: var(--color-text, #ffffffe6);
       font-size: 18px;
       line-height: 1.4;
       overflow: hidden;
       animation: aisoc-hitl-pulse 2.4s ease-in-out infinite;
     }
     @keyframes aisoc-hitl-pulse {
-      0%, 100% { box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), 0 0 0 0 rgba(250, 204, 21, 0.0); }
-      50%      { box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), 0 0 0 6px rgba(250, 204, 21, 0.22); }
+      0%, 100% { box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14), 0 0 0 0 rgba(255, 141, 20, 0.0); }
+      50%      { box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14), 0 0 0 6px rgba(255, 141, 20, 0.22); }
     }
     #${rootId} .card .head {
       padding: 10px 14px;
-      background: rgba(250, 204, 21, 0.12);
-      border-bottom: 1px solid rgba(250, 204, 21, 0.25);
+      background: var(--color-warning, #ff8d14);
+      border-bottom: 2px solid var(--color-border, #4a4a6a);
       display: flex;
       align-items: center;
       gap: 10px;
-      font-weight: 600;
-      color: #fde68a;
+      font-weight: 700;
+      color: #1e1e2e;
     }
     #${rootId} .card .head .who {
       text-transform: capitalize;
@@ -115,10 +113,10 @@
     #${rootId} .card textarea {
       flex: 1;
       resize: none;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: var(--color-bg-dark, #181828);
+      border: 2px solid var(--color-border, #4a4a6a);
       border-radius: 4px;
-      color: #e7e9ee;
+      color: var(--color-text, #ffffffe6);
       padding: 8px 10px;
       font: inherit;
       min-height: 48px;
@@ -126,20 +124,21 @@
     }
     #${rootId} .card textarea:focus {
       outline: none;
-      border-color: rgba(250, 204, 21, 0.6);
+      border-color: var(--color-warning, #ff8d14);
     }
     #${rootId} .card button {
-      background: rgba(250, 204, 21, 0.25);
-      border: 1px solid rgba(250, 204, 21, 0.55);
-      color: #fde68a;
+      background: var(--color-warning, #ff8d14);
+      border: 2px solid var(--color-border, #4a4a6a);
+      color: #1e1e2e;
       border-radius: 4px;
-      padding: 0 16px;
+      padding: 0 18px;
       cursor: pointer;
       font: inherit;
-      font-weight: 600;
+      font-weight: 700;
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
     }
     #${rootId} .card button:hover:not(:disabled) {
-      background: rgba(250, 204, 21, 0.4);
+      filter: brightness(1.1);
     }
     #${rootId} .card button:disabled {
       opacity: 0.5;

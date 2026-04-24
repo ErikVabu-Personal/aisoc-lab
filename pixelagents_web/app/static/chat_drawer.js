@@ -50,23 +50,23 @@
   const styleEl = document.createElement('style');
   styleEl.textContent = `
     /* Inherit FS Pixel Sans from the vendored Pixel Agents global styles so
-       the drawer matches the rest of the UI. Sizes are bumped to compensate
-       for pixel fonts rendering visually smaller than the system fallback. */
+       the drawer matches the rest of the UI. Colors pull from the vendored
+       CSS custom properties so the panel restyles automatically if the
+       upstream theme changes; fallbacks kick in if the webfont CSS hasn't
+       parsed yet. */
     #${rootId} {
       position: fixed;
       right: 16px;
       bottom: 16px;
       width: 520px;
       max-height: 75vh;
-      background: rgba(10, 12, 18, 0.82);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 8px;
-      color: #e7e9ee;
+      background: var(--color-bg, #1e1e2e);
+      border: 2px solid var(--color-border, #4a4a6a);
+      border-radius: 6px;
+      color: var(--color-text, #ffffffe6);
       font-size: 22px;
       line-height: 1.4;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
       z-index: 9999;
       display: flex;
       flex-direction: column;
@@ -81,30 +81,31 @@
       align-items: center;
       gap: 8px;
       padding: 10px 12px;
-      background: rgba(255, 255, 255, 0.04);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--color-accent, #6030ff);
+      border-bottom: 2px solid var(--color-border, #4a4a6a);
+      color: #fff;
       cursor: pointer;
       user-select: none;
     }
     #${rootId} header .title {
       flex: 1;
-      font-weight: 600;
+      font-weight: 700;
       letter-spacing: 0.02em;
     }
     #${rootId} header .back {
-      background: transparent;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      color: #e7e9ee;
+      background: var(--color-btn-bg, #353445);
+      border: 2px solid var(--color-border, #4a4a6a);
+      color: var(--color-text, #ffffffe6);
       border-radius: 4px;
       padding: 4px 10px;
       cursor: pointer;
       font-size: 18px;
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
     }
     #${rootId} header .back:hover {
-      background: rgba(255, 255, 255, 0.06);
+      background: var(--color-btn-hover, #4e4b68);
     }
     #${rootId} header .toggle {
-      opacity: 0.6;
       font-size: 16px;
       line-height: 1;
     }
@@ -221,19 +222,19 @@
       50% { opacity: 0; }
     }
     #${rootId} .compose {
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      border-top: 2px solid var(--color-border, #4a4a6a);
       padding: 8px;
       display: flex;
       gap: 6px;
-      background: rgba(255, 255, 255, 0.02);
+      background: var(--color-bg-dark, #181828);
     }
     #${rootId} .compose textarea {
       flex: 1;
       resize: none;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: var(--color-bg-dark, #181828);
+      border: 2px solid var(--color-border, #4a4a6a);
       border-radius: 4px;
-      color: #e7e9ee;
+      color: var(--color-text, #ffffffe6);
       padding: 8px 10px;
       font: inherit;
       min-height: 52px;
@@ -241,20 +242,21 @@
     }
     #${rootId} .compose textarea:focus {
       outline: none;
-      border-color: rgba(96, 165, 250, 0.6);
+      border-color: var(--color-accent, #6030ff);
     }
     #${rootId} .compose button {
-      background: rgba(96, 165, 250, 0.25);
-      border: 1px solid rgba(96, 165, 250, 0.5);
-      color: #dbeafe;
+      background: var(--color-accent, #6030ff);
+      border: 2px solid var(--color-border, #4a4a6a);
+      color: #fff;
       border-radius: 4px;
-      padding: 0 12px;
+      padding: 0 16px;
       cursor: pointer;
       font: inherit;
-      font-weight: 600;
+      font-weight: 700;
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
     }
     #${rootId} .compose button:hover:not(:disabled) {
-      background: rgba(96, 165, 250, 0.4);
+      background: var(--color-accent-bright, #746fff);
     }
     #${rootId} .compose button:disabled {
       opacity: 0.4;

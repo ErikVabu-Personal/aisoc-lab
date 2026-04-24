@@ -47,23 +47,20 @@
   // ── Styles ───────────────────────────────────────────────────────────────
   const styleEl = document.createElement('style');
   styleEl.textContent = `
-    /* Inherit FS Pixel Sans from the vendored global styles so the panel
-       matches the rest of the UI. See chat_drawer.js for sizing rationale. */
+    /* Inherit FS Pixel Sans + palette from the vendored Pixel Agents CSS. */
     #${rootId} {
       position: fixed;
       right: 16px;
       top: 16px;
       width: 520px;
       max-height: 55vh;
-      background: rgba(10, 12, 18, 0.82);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 8px;
-      color: #e7e9ee;
+      background: var(--color-bg, #1e1e2e);
+      border: 2px solid var(--color-border, #4a4a6a);
+      border-radius: 6px;
+      color: var(--color-text, #ffffffe6);
       font-size: 20px;
       line-height: 1.4;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
       z-index: 9999;
       display: flex;
       flex-direction: column;
@@ -76,28 +73,28 @@
     #${rootId} header {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       padding: 10px 12px;
-      background: rgba(255, 255, 255, 0.04);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--color-accent, #6030ff);
+      border-bottom: 2px solid var(--color-border, #4a4a6a);
+      color: #fff;
       cursor: pointer;
       user-select: none;
     }
     #${rootId} header .title {
       flex: 1;
-      font-weight: 600;
+      font-weight: 700;
       letter-spacing: 0.02em;
     }
     #${rootId} header .count {
-      background: rgba(96, 165, 250, 0.25);
-      border: 1px solid rgba(96, 165, 250, 0.5);
+      background: var(--color-bg-dark, #181828);
+      border: 2px solid #fff4;
       border-radius: 999px;
-      padding: 2px 8px;
+      padding: 2px 10px;
       font-size: 16px;
-      font-weight: 600;
+      font-weight: 700;
     }
     #${rootId} header .toggle {
-      opacity: 0.6;
       font-size: 16px;
       line-height: 1;
     }
@@ -117,21 +114,21 @@
     #${rootId} thead th {
       text-align: left;
       padding: 8px 10px;
-      background: rgba(255, 255, 255, 0.02);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      font-weight: 600;
+      background: var(--color-bg-dark, #181828);
+      border-bottom: 2px solid var(--color-border, #4a4a6a);
+      font-weight: 700;
       position: sticky;
       top: 0;
       z-index: 1;
-      color: rgba(231, 233, 238, 0.75);
+      color: var(--color-text-muted, #ffffff80);
     }
     #${rootId} tbody td {
       padding: 6px 10px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      border-bottom: 1px solid var(--color-border, #4a4a6a);
       vertical-align: top;
     }
     #${rootId} tbody tr:hover {
-      background: rgba(255, 255, 255, 0.04);
+      background: var(--color-active-bg, #2c2b6d);
     }
     #${rootId} .num {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -255,19 +252,20 @@
     #${rootId} .notice .dismiss:hover { opacity: 1; }
 
     #${rootId} .run-btn {
-      background: rgba(96, 165, 250, 0.2);
-      border: 1px solid rgba(96, 165, 250, 0.5);
-      color: #dbeafe;
+      background: var(--color-accent, #6030ff);
+      border: 2px solid var(--color-border, #4a4a6a);
+      color: #fff;
       border-radius: 4px;
       padding: 5px 14px;
       cursor: pointer;
       font: inherit;
       font-size: 16px;
-      font-weight: 600;
+      font-weight: 700;
       white-space: nowrap;
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
     }
     #${rootId} .run-btn:hover:not(:disabled) {
-      background: rgba(96, 165, 250, 0.35);
+      background: var(--color-accent-bright, #746fff);
     }
     #${rootId} .run-btn:disabled {
       opacity: 0.5;
