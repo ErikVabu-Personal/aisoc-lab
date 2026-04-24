@@ -33,9 +33,6 @@
     // Latest notice banner.
     // { kind: 'info' | 'success' | 'error', message, incidentNumber, ts }
     notice: null,
-    // Context menu (right-click) state.
-    // { x, y, incident: {number, id, title} }
-    contextMenu: null,
   };
 
   // ── Root DOM ─────────────────────────────────────────────────────────────
@@ -256,47 +253,24 @@
     }
     #${rootId} .notice .dismiss:hover { opacity: 1; }
 
-    /* Context menu lives outside the panel root so it can overflow. */
-    #aisoc-incidents-ctxmenu {
-      position: fixed;
-      background: rgba(15, 18, 26, 0.96);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      border-radius: 6px;
-      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
-      z-index: 10001;
-      min-width: 220px;
-      padding: 4px 0;
-      color: #e7e9ee;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 14px;
-    }
-    #aisoc-incidents-ctxmenu .ctx-header {
-      padding: 6px 12px 4px 12px;
-      font-size: 12px;
-      opacity: 0.6;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      margin-bottom: 4px;
-      white-space: nowrap;
-      max-width: 320px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    #aisoc-incidents-ctxmenu .ctx-item {
-      padding: 8px 14px;
+    #${rootId} .run-btn {
+      background: rgba(96, 165, 250, 0.2);
+      border: 1px solid rgba(96, 165, 250, 0.5);
+      color: #dbeafe;
+      border-radius: 4px;
+      padding: 3px 10px;
       cursor: pointer;
-      user-select: none;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
     }
-    #aisoc-incidents-ctxmenu .ctx-item:hover {
-      background: rgba(96, 165, 250, 0.18);
+    #${rootId} .run-btn:hover:not(:disabled) {
+      background: rgba(96, 165, 250, 0.35);
     }
-    #aisoc-incidents-ctxmenu .ctx-item[data-disabled="true"] {
+    #${rootId} .run-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
-    }
-    #aisoc-incidents-ctxmenu .ctx-item[data-disabled="true"]:hover {
-      background: transparent;
     }
   `;
   document.head.appendChild(styleEl);
@@ -396,12 +370,23 @@
             ? `<span class="row-spinner"></span>${escapeHtml(num)}`
             : escapeHtml(num);
           const numberAttr = inc.number == null ? '' : String(inc.number);
+          const canRun = inc.number != null && !isRunning;
+          const btnLabel = isRunning ? 'Running…' : 'Run workflow';
           return `
-            <tr class="${isRunning ? 'running' : ''}" data-incident-number="${escapeHtml(numberAttr)}" data-incident-title="${escapeHtml(title)}">
+            <tr class="${isRunning ? 'running' : ''}">
               <td class="num">${numCell}</td>
               <td class="title-cell">${escapeHtml(title)}</td>
               <td><span class="sev ${sevClass(sev)}">${escapeHtml(sev)}</span></td>
               <td><span class="status ${statusClass(status)}">${escapeHtml(status)}</span></td>
+              <td>
+                <button
+                  class="run-btn"
+                  data-action="run-workflow"
+                  data-incident-number="${escapeHtml(numberAttr)}"
+                  data-incident-title="${escapeHtml(title)}"
+                  ${canRun ? '' : 'disabled'}
+                >${btnLabel}</button>
+              </td>
             </tr>
           `;
         })
@@ -414,6 +399,7 @@
               <th>Title</th>
               <th>Severity</th>
               <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -422,55 +408,6 @@
     }
 
     rootEl.innerHTML = `${header}${noticeHtml}<div class="body">${body}</div>`;
-
-    renderContextMenu();
-  }
-
-  // ── Context menu ─────────────────────────────────────────────────────────
-  const ctxMenuId = 'aisoc-incidents-ctxmenu';
-
-  function renderContextMenu() {
-    let menu = document.getElementById(ctxMenuId);
-    if (!state.contextMenu) {
-      if (menu) menu.remove();
-      return;
-    }
-    if (!menu) {
-      menu = document.createElement('div');
-      menu.id = ctxMenuId;
-      document.body.appendChild(menu);
-    }
-
-    const { x, y, incident } = state.contextMenu;
-    const running =
-      incident.number != null && state.orchestrating[incident.number];
-    const disabled = running || incident.number == null;
-    const disabledAttr = disabled ? 'true' : 'false';
-
-    const label =
-      incident.number == null
-        ? '(no incident number)'
-        : `#${incident.number} — ${incident.title || '(untitled)'}`;
-
-    menu.innerHTML = `
-      <div class="ctx-header">${escapeHtml(label)}</div>
-      <div class="ctx-item" data-action="assign-workflow" data-disabled="${disabledAttr}">
-        ${running ? 'Workflow running…' : 'Assign to workflow (triage → investigator → reporter)'}
-      </div>
-    `;
-
-    // Position, clamping inside the viewport.
-    menu.style.left = '0px';
-    menu.style.top = '0px';
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const rect = menu.getBoundingClientRect();
-    const w = rect.width;
-    const h = rect.height;
-    const left = Math.min(x, vw - w - 8);
-    const top = Math.min(y, vh - h - 8);
-    menu.style.left = `${Math.max(8, left)}px`;
-    menu.style.top = `${Math.max(8, top)}px`;
   }
 
   // ── Notice auto-dismiss ──────────────────────────────────────────────────
@@ -572,77 +509,13 @@
     } else if (action === 'dismiss-notice') {
       state.notice = null;
       render();
-    }
-  });
-
-  // Registered on `document` with `capture: true` because the vendored
-  // Pixel Agents bundle attaches its own `contextmenu` handlers and can
-  // stopPropagation() on the bubble phase — if we listen only on rootEl
-  // we never see the event. Capture-phase runs before target-phase, so
-  // we get the event first and can intervene only for rows inside our panel.
-  document.addEventListener(
-    'contextmenu',
-    (ev) => {
-      if (!rootEl.contains(ev.target)) return; // not ours, let it pass
-      const row = ev.target.closest('tr[data-incident-number]');
-      if (!row) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      const rawNum = row.getAttribute('data-incident-number');
+    } else if (action === 'run-workflow') {
+      if (t.disabled) return;
+      const rawNum = t.getAttribute('data-incident-number');
       const number = rawNum === '' ? null : Number(rawNum);
-      const title = row.getAttribute('data-incident-title') || '';
-      state.contextMenu = {
-        // clientX/Y because the menu is position: fixed (viewport-relative).
-        x: ev.clientX,
-        y: ev.clientY,
-        incident: { number, title },
-      };
-      render();
-    },
-    true,
-  );
-
-  // Click/contextmenu anywhere outside the menu closes it.
-  document.addEventListener('click', (ev) => {
-    if (!state.contextMenu) return;
-    const menu = document.getElementById(ctxMenuId);
-    if (menu && menu.contains(ev.target)) {
-      const item = ev.target.closest('.ctx-item');
-      if (item && item.getAttribute('data-disabled') !== 'true') {
-        const action = item.getAttribute('data-action');
-        if (action === 'assign-workflow') {
-          const inc = state.contextMenu.incident;
-          state.contextMenu = null;
-          render();
-          startOrchestration(inc.number, inc.title);
-          return;
-        }
-      }
-      // Clicked inside but on a disabled item or header: just close.
+      const title = t.getAttribute('data-incident-title') || '';
+      startOrchestration(number, title);
     }
-    state.contextMenu = null;
-    render();
-  });
-  document.addEventListener(
-    'contextmenu',
-    (ev) => {
-      if (!state.contextMenu) return;
-      // Right-clicking another row inside the panel reopens the menu via the
-      // capture-phase handler above, which gets to the event before this one.
-      if (rootEl.contains(ev.target)) return;
-      state.contextMenu = null;
-      render();
-    },
-    true, // capture-phase, mirrors the open handler
-  );
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && state.contextMenu) {
-      state.contextMenu = null;
-      render();
-    }
-  });
-  window.addEventListener('resize', () => {
-    if (state.contextMenu) renderContextMenu();
   });
 
   // ── Boot ─────────────────────────────────────────────────────────────────
