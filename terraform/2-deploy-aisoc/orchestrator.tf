@@ -107,3 +107,26 @@ output "orchestrator_principal_id" {
   value       = azurerm_linux_function_app.orchestrator.identity[0].principal_id
   description = "Orchestrator managed identity principal id."
 }
+
+# Base URL + default host key so other services (e.g. PixelAgents Web) can
+# invoke the orchestrator over HTTP without us having to wire per-caller
+# credentials. The data source reads the live function key at apply time,
+# which means it will pick up any rotation that happens as a side effect
+# of redeploying the function code.
+data "azurerm_function_app_host_keys" "orchestrator" {
+  name                = azurerm_linux_function_app.orchestrator.name
+  resource_group_name = data.terraform_remote_state.sentinel.outputs.resource_group
+
+  depends_on = [azurerm_linux_function_app.orchestrator]
+}
+
+output "orchestrator_url" {
+  value       = "https://${azurerm_linux_function_app.orchestrator.default_hostname}/api/orchestrate"
+  description = "Base URL for the AISOC Orchestrator Function App. Append /incident/pipeline for the full triage→investigator→reporter route."
+}
+
+output "orchestrator_function_key" {
+  value       = data.azurerm_function_app_host_keys.orchestrator.default_function_key
+  sensitive   = true
+  description = "Default host function key for invoking the orchestrator. Required because the orchestrator uses authLevel=function."
+}

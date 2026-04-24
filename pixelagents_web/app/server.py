@@ -418,6 +418,81 @@ def list_sentinel_incidents(
     return payload
 
 
+@app.post("/api/sentinel/incidents/{incident_number}/orchestrate")
+async def orchestrate_incident(
+    incident_number: int,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Kick off the AISOC Orchestrator pipeline for a specific incident.
+
+    Proxies to the Orchestrator Function App (see terraform/2-deploy-aisoc/
+    orchestrator.tf). The orchestrator itself runs triage → investigator →
+    reporter in sequence; this is a blocking call that returns the
+    orchestrator's JSON result once the pipeline completes.
+
+    Body (all optional):
+      {
+        "mode": "full" | "triage_only"  (default: "full")
+        "writeback": bool               (default: true — reporter adds Sentinel comment)
+      }
+    """
+
+    _require_token(x_pixelagents_token)
+
+    orch_base = os.getenv("ORCHESTRATOR_URL", "")
+    orch_key = os.getenv("ORCHESTRATOR_FUNCTION_KEY", "")
+    if not orch_base or not orch_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Orchestrator not configured (ORCHESTRATOR_URL / ORCHESTRATOR_FUNCTION_KEY missing).",
+        )
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    mode = body.get("mode") or "full"
+    writeback = body["writeback"] if "writeback" in body else True
+
+    import requests as _requests
+
+    url = f"{orch_base.rstrip('/')}/incident/pipeline?code={orch_key}"
+    try:
+        r = _requests.post(
+            url,
+            json={
+                "incidentNumber": incident_number,
+                "mode": mode,
+                "writeback": bool(writeback),
+            },
+            # Orchestrator pipeline runs three agents in sequence and can take
+            # 1-3 minutes for tool-heavy incidents. Generous client timeout.
+            timeout=600,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Orchestrator call failed: {e!r}") from e
+
+    if r.status_code >= 400:
+        detail: Any
+        try:
+            detail = r.json()
+        except Exception:
+            detail = r.text[:4000]
+        raise HTTPException(
+            status_code=502,
+            detail={"orchestrator_status": r.status_code, "body": detail},
+        )
+
+    try:
+        return r.json()
+    except Exception:
+        return {"raw": r.text[:4000]}
+
+
 @app.post("/api/agents/{agent_id}/message/stream")
 async def stream_message_to_agent(
     agent_id: str,

@@ -27,6 +27,15 @@
     loadedOnce: false,
     lastError: null,
     open: true,
+    // In-flight orchestrations, keyed by incident number.
+    // { [number]: { startedAt: ms } }
+    orchestrating: {},
+    // Latest notice banner.
+    // { kind: 'info' | 'success' | 'error', message, incidentNumber, ts }
+    notice: null,
+    // Context menu (right-click) state.
+    // { x, y, incident: {number, id, title} }
+    contextMenu: null,
   };
 
   // ── Root DOM ─────────────────────────────────────────────────────────────
@@ -195,6 +204,100 @@
       text-align: left;
       white-space: pre-wrap;
     }
+    #${rootId} tbody tr.running {
+      background: rgba(96, 165, 250, 0.08);
+    }
+    #${rootId} .row-spinner {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border: 2px solid rgba(96, 165, 250, 0.4);
+      border-top-color: #60a5fa;
+      border-radius: 50%;
+      animation: aisoc-inc-spin 0.9s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes aisoc-inc-spin {
+      to { transform: rotate(360deg); }
+    }
+    #${rootId} .notice {
+      padding: 8px 12px;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #${rootId} .notice.info {
+      background: rgba(96, 165, 250, 0.15);
+      color: #dbeafe;
+    }
+    #${rootId} .notice.success {
+      background: rgba(34, 197, 94, 0.15);
+      color: #bbf7d0;
+    }
+    #${rootId} .notice.error {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fecaca;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    #${rootId} .notice .dismiss {
+      margin-left: auto;
+      background: transparent;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+      opacity: 0.7;
+      font-size: 14px;
+      padding: 0 4px;
+    }
+    #${rootId} .notice .dismiss:hover { opacity: 1; }
+
+    /* Context menu lives outside the panel root so it can overflow. */
+    #aisoc-incidents-ctxmenu {
+      position: fixed;
+      background: rgba(15, 18, 26, 0.96);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+      z-index: 10001;
+      min-width: 220px;
+      padding: 4px 0;
+      color: #e7e9ee;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+    }
+    #aisoc-incidents-ctxmenu .ctx-header {
+      padding: 6px 12px 4px 12px;
+      font-size: 12px;
+      opacity: 0.6;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 4px;
+      white-space: nowrap;
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #aisoc-incidents-ctxmenu .ctx-item {
+      padding: 8px 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+    #aisoc-incidents-ctxmenu .ctx-item:hover {
+      background: rgba(96, 165, 250, 0.18);
+    }
+    #aisoc-incidents-ctxmenu .ctx-item[data-disabled="true"] {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #aisoc-incidents-ctxmenu .ctx-item[data-disabled="true"]:hover {
+      background: transparent;
+    }
   `;
   document.head.appendChild(styleEl);
 
@@ -263,6 +366,16 @@
       </header>
     `;
 
+    let noticeHtml = '';
+    if (state.notice) {
+      noticeHtml = `
+        <div class="notice ${state.notice.kind}">
+          <div>${escapeHtml(state.notice.message)}</div>
+          <button class="dismiss" data-action="dismiss-notice" title="Dismiss">✕</button>
+        </div>
+      `;
+    }
+
     let body;
     if (state.lastError) {
       body = `<div class="error">${escapeHtml(state.lastError)}</div>`;
@@ -277,9 +390,15 @@
           const title = inc.title || '(untitled)';
           const sev = inc.severity || 'Informational';
           const status = inc.status || '';
+          const isRunning =
+            inc.number != null && state.orchestrating[inc.number];
+          const numCell = isRunning
+            ? `<span class="row-spinner"></span>${escapeHtml(num)}`
+            : escapeHtml(num);
+          const numberAttr = inc.number == null ? '' : String(inc.number);
           return `
-            <tr>
-              <td class="num">${escapeHtml(num)}</td>
+            <tr class="${isRunning ? 'running' : ''}" data-incident-number="${escapeHtml(numberAttr)}" data-incident-title="${escapeHtml(title)}">
+              <td class="num">${numCell}</td>
               <td class="title-cell">${escapeHtml(title)}</td>
               <td><span class="sev ${sevClass(sev)}">${escapeHtml(sev)}</span></td>
               <td><span class="status ${statusClass(status)}">${escapeHtml(status)}</span></td>
@@ -302,16 +421,213 @@
       `;
     }
 
-    rootEl.innerHTML = `${header}<div class="body">${body}</div>`;
+    rootEl.innerHTML = `${header}${noticeHtml}<div class="body">${body}</div>`;
+
+    renderContextMenu();
   }
 
+  // ── Context menu ─────────────────────────────────────────────────────────
+  const ctxMenuId = 'aisoc-incidents-ctxmenu';
+
+  function renderContextMenu() {
+    let menu = document.getElementById(ctxMenuId);
+    if (!state.contextMenu) {
+      if (menu) menu.remove();
+      return;
+    }
+    if (!menu) {
+      menu = document.createElement('div');
+      menu.id = ctxMenuId;
+      document.body.appendChild(menu);
+    }
+
+    const { x, y, incident } = state.contextMenu;
+    const running =
+      incident.number != null && state.orchestrating[incident.number];
+    const disabled = running || incident.number == null;
+    const disabledAttr = disabled ? 'true' : 'false';
+
+    const label =
+      incident.number == null
+        ? '(no incident number)'
+        : `#${incident.number} — ${incident.title || '(untitled)'}`;
+
+    menu.innerHTML = `
+      <div class="ctx-header">${escapeHtml(label)}</div>
+      <div class="ctx-item" data-action="assign-workflow" data-disabled="${disabledAttr}">
+        ${running ? 'Workflow running…' : 'Assign to workflow (triage → investigator → reporter)'}
+      </div>
+    `;
+
+    // Position, clamping inside the viewport.
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const rect = menu.getBoundingClientRect();
+    const w = rect.width;
+    const h = rect.height;
+    const left = Math.min(x, vw - w - 8);
+    const top = Math.min(y, vh - h - 8);
+    menu.style.left = `${Math.max(8, left)}px`;
+    menu.style.top = `${Math.max(8, top)}px`;
+  }
+
+  // ── Notice auto-dismiss ──────────────────────────────────────────────────
+  function setNotice(notice, autoDismissMs) {
+    state.notice = notice;
+    render();
+    if (autoDismissMs && notice) {
+      const ts = notice.ts;
+      setTimeout(() => {
+        if (state.notice && state.notice.ts === ts) {
+          state.notice = null;
+          render();
+        }
+      }, autoDismissMs);
+    }
+  }
+
+  // ── Orchestration trigger ────────────────────────────────────────────────
+  async function startOrchestration(incidentNumber, incidentTitle) {
+    if (incidentNumber == null) return;
+    if (state.orchestrating[incidentNumber]) return;
+
+    state.orchestrating[incidentNumber] = { startedAt: Date.now() };
+    setNotice(
+      {
+        kind: 'info',
+        message: `Running workflow for incident #${incidentNumber}…`,
+        incidentNumber,
+        ts: Date.now(),
+      },
+      null, // no auto-dismiss while it's in progress
+    );
+
+    try {
+      const res = await fetch(
+        `/api/sentinel/incidents/${encodeURIComponent(incidentNumber)}/orchestrate`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-pixelagents-token': TOKEN,
+          },
+          body: JSON.stringify({ mode: 'full', writeback: true }),
+        },
+      );
+
+      if (!res.ok) {
+        let bodyText = '';
+        try {
+          bodyText = JSON.stringify(await res.json(), null, 2);
+        } catch (_) {
+          bodyText = await res.text();
+        }
+        throw new Error(`HTTP ${res.status}\n${bodyText}`);
+      }
+
+      const data = await res.json();
+      const wroteComment =
+        data && data.wrote_comment && data.wrote_comment.count;
+      const summary = wroteComment
+        ? `wrote ${data.wrote_comment.count} Sentinel comment(s)`
+        : 'no Sentinel comment written';
+      setNotice(
+        {
+          kind: 'success',
+          message: `Workflow complete for incident #${incidentNumber} — ${summary}.`,
+          incidentNumber,
+          ts: Date.now(),
+        },
+        12000,
+      );
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      setNotice(
+        {
+          kind: 'error',
+          message: `Workflow failed for incident #${incidentNumber}:\n${msg}`,
+          incidentNumber,
+          ts: Date.now(),
+        },
+        null, // errors stay put until dismissed
+      );
+    } finally {
+      delete state.orchestrating[incidentNumber];
+      render();
+      // Refresh the incident list so any status/comment changes show up.
+      loadIncidents();
+    }
+  }
+
+  // ── Event wiring ─────────────────────────────────────────────────────────
   rootEl.addEventListener('click', (ev) => {
     const t = ev.target.closest('[data-action]');
     if (!t) return;
-    if (t.getAttribute('data-action') === 'toggle') {
+    const action = t.getAttribute('data-action');
+    if (action === 'toggle') {
       state.open = !state.open;
       render();
+    } else if (action === 'dismiss-notice') {
+      state.notice = null;
+      render();
     }
+  });
+
+  rootEl.addEventListener('contextmenu', (ev) => {
+    const row = ev.target.closest('tr[data-incident-number]');
+    if (!row) return;
+    ev.preventDefault();
+    const rawNum = row.getAttribute('data-incident-number');
+    const number = rawNum === '' ? null : Number(rawNum);
+    const title = row.getAttribute('data-incident-title') || '';
+    state.contextMenu = {
+      // clientX/Y because the menu is position: fixed (viewport-relative).
+      x: ev.clientX,
+      y: ev.clientY,
+      incident: { number, title },
+    };
+    render();
+  });
+
+  // Click/contextmenu anywhere outside the menu closes it.
+  document.addEventListener('click', (ev) => {
+    if (!state.contextMenu) return;
+    const menu = document.getElementById(ctxMenuId);
+    if (menu && menu.contains(ev.target)) {
+      const item = ev.target.closest('.ctx-item');
+      if (item && item.getAttribute('data-disabled') !== 'true') {
+        const action = item.getAttribute('data-action');
+        if (action === 'assign-workflow') {
+          const inc = state.contextMenu.incident;
+          state.contextMenu = null;
+          render();
+          startOrchestration(inc.number, inc.title);
+          return;
+        }
+      }
+      // Clicked inside but on a disabled item or header: just close.
+    }
+    state.contextMenu = null;
+    render();
+  });
+  document.addEventListener('contextmenu', (ev) => {
+    if (!state.contextMenu) return;
+    // Allow contextmenu on another row to reposition the menu; rootEl
+    // handler above will call render() again. Anywhere else, close.
+    if (rootEl.contains(ev.target)) return;
+    state.contextMenu = null;
+    render();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && state.contextMenu) {
+      state.contextMenu = null;
+      render();
+    }
+  });
+  window.addEventListener('resize', () => {
+    if (state.contextMenu) renderContextMenu();
   });
 
   // ── Boot ─────────────────────────────────────────────────────────────────

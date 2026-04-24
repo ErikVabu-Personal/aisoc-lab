@@ -113,12 +113,30 @@ resource "azurerm_container_app" "pixelagents" {
         name  = "SENTINEL_WORKSPACE_NAME"
         value = data.terraform_remote_state.sentinel.outputs.log_analytics_workspace_name
       }
+
+      # Orchestrator trigger — lets the incidents panel kick off the
+      # triage→investigator→reporter pipeline on a specific incident. URL
+      # and function key come from Phase 2.
+      env {
+        name  = "ORCHESTRATOR_URL"
+        value = data.terraform_remote_state.aisoc.outputs.orchestrator_url
+      }
+
+      env {
+        name        = "ORCHESTRATOR_FUNCTION_KEY"
+        secret_name = "orchestrator-function-key"
+      }
     }
   }
 
   secret {
     name  = "pixelagents-token"
     value = random_password.pixelagents_token.result
+  }
+
+  secret {
+    name  = "orchestrator-function-key"
+    value = data.terraform_remote_state.aisoc.outputs.orchestrator_function_key
   }
 }
 
