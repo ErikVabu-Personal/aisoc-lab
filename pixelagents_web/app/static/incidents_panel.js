@@ -575,21 +575,32 @@
     }
   });
 
-  rootEl.addEventListener('contextmenu', (ev) => {
-    const row = ev.target.closest('tr[data-incident-number]');
-    if (!row) return;
-    ev.preventDefault();
-    const rawNum = row.getAttribute('data-incident-number');
-    const number = rawNum === '' ? null : Number(rawNum);
-    const title = row.getAttribute('data-incident-title') || '';
-    state.contextMenu = {
-      // clientX/Y because the menu is position: fixed (viewport-relative).
-      x: ev.clientX,
-      y: ev.clientY,
-      incident: { number, title },
-    };
-    render();
-  });
+  // Registered on `document` with `capture: true` because the vendored
+  // Pixel Agents bundle attaches its own `contextmenu` handlers and can
+  // stopPropagation() on the bubble phase — if we listen only on rootEl
+  // we never see the event. Capture-phase runs before target-phase, so
+  // we get the event first and can intervene only for rows inside our panel.
+  document.addEventListener(
+    'contextmenu',
+    (ev) => {
+      if (!rootEl.contains(ev.target)) return; // not ours, let it pass
+      const row = ev.target.closest('tr[data-incident-number]');
+      if (!row) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const rawNum = row.getAttribute('data-incident-number');
+      const number = rawNum === '' ? null : Number(rawNum);
+      const title = row.getAttribute('data-incident-title') || '';
+      state.contextMenu = {
+        // clientX/Y because the menu is position: fixed (viewport-relative).
+        x: ev.clientX,
+        y: ev.clientY,
+        incident: { number, title },
+      };
+      render();
+    },
+    true,
+  );
 
   // Click/contextmenu anywhere outside the menu closes it.
   document.addEventListener('click', (ev) => {
@@ -612,14 +623,18 @@
     state.contextMenu = null;
     render();
   });
-  document.addEventListener('contextmenu', (ev) => {
-    if (!state.contextMenu) return;
-    // Allow contextmenu on another row to reposition the menu; rootEl
-    // handler above will call render() again. Anywhere else, close.
-    if (rootEl.contains(ev.target)) return;
-    state.contextMenu = null;
-    render();
-  });
+  document.addEventListener(
+    'contextmenu',
+    (ev) => {
+      if (!state.contextMenu) return;
+      // Right-clicking another row inside the panel reopens the menu via the
+      // capture-phase handler above, which gets to the event before this one.
+      if (rootEl.contains(ev.target)) return;
+      state.contextMenu = null;
+      render();
+    },
+    true, // capture-phase, mirrors the open handler
+  );
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && state.contextMenu) {
       state.contextMenu = null;
