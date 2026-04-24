@@ -312,6 +312,112 @@ def _sse_event(event_name: str, data: dict) -> str:
     return f"event: {event_name}\ndata: {json.dumps(data)}\n\n"
 
 
+# ─── Sentinel incidents table (read-only, proxied via managed identity) ───
+_INCIDENTS_CACHE: Dict[str, Any] = {"ts": 0.0, "payload": None}
+_INCIDENTS_CACHE_TTL_SEC = 10.0
+
+
+def _arm_token() -> str:
+    """Acquire a bearer token for Azure Resource Manager."""
+
+    from azure.identity import DefaultAzureCredential
+
+    return DefaultAzureCredential().get_token("https://management.azure.com/.default").token
+
+
+@app.get("/api/sentinel/incidents")
+def list_sentinel_incidents(
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Return a summary list of Sentinel incidents for the lab workspace.
+
+    Queries ARM directly with the Container App's managed identity so we
+    don't have to thread the runner bearer token through. The MI must have
+    `Microsoft Sentinel Reader` (or higher) on the workspace — that's wired
+    up in terraform/3-deploy-pixelagents-web/main.tf.
+
+    The response is cached in-process for a short TTL so the UI can poll
+    without hammering ARM.
+    """
+
+    _require_token(x_pixelagents_token)
+
+    now = time.time()
+    cached = _INCIDENTS_CACHE.get("payload")
+    if cached is not None and (now - float(_INCIDENTS_CACHE.get("ts") or 0)) < _INCIDENTS_CACHE_TTL_SEC:
+        return cached
+
+    sub = os.getenv("AZURE_SUBSCRIPTION_ID", "")
+    rg = os.getenv("AZURE_RESOURCE_GROUP", "")
+    ws = os.getenv("SENTINEL_WORKSPACE_NAME", "")
+    missing = [n for n, v in (("AZURE_SUBSCRIPTION_ID", sub), ("AZURE_RESOURCE_GROUP", rg), ("SENTINEL_WORKSPACE_NAME", ws)) if not v]
+    if missing:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Missing env vars for Sentinel incidents query: {missing}",
+        )
+
+    try:
+        token = _arm_token()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ARM auth failed: {e!r}") from e
+
+    import requests as _requests
+
+    url = (
+        f"https://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}"
+        f"/providers/Microsoft.OperationalInsights/workspaces/{ws}"
+        f"/providers/Microsoft.SecurityInsights/incidents"
+        f"?api-version=2024-03-01&$top=50&$orderby=properties/lastModifiedTimeUtc desc"
+    )
+
+    r = _requests.get(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+    )
+    if r.status_code >= 400:
+        detail: Any
+        try:
+            detail = r.json()
+        except Exception:
+            detail = r.text[:4000]
+        raise HTTPException(
+            status_code=502,
+            detail={"arm_status": r.status_code, "body": detail},
+        )
+
+    try:
+        data = r.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ARM returned non-JSON body: {e!r}") from e
+
+    incidents: list[dict[str, Any]] = []
+    for item in (data.get("value") or []):
+        props = item.get("properties") or {}
+        incidents.append(
+            {
+                "id": item.get("name"),  # incident GUID
+                "arm_id": item.get("id"),
+                "number": props.get("incidentNumber"),
+                "title": props.get("title"),
+                "severity": props.get("severity"),
+                "status": props.get("status"),
+                "created": props.get("createdTimeUtc"),
+                "last_modified": props.get("lastModifiedTimeUtc"),
+            }
+        )
+
+    payload = {
+        "incidents": incidents,
+        "count": len(incidents),
+        "ts": now,
+    }
+    _INCIDENTS_CACHE["payload"] = payload
+    _INCIDENTS_CACHE["ts"] = now
+    return payload
+
+
 @app.post("/api/agents/{agent_id}/message/stream")
 async def stream_message_to_agent(
     agent_id: str,
@@ -607,6 +713,7 @@ def index() -> HTMLResponse:
     injection = (
         f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js} }};</script>'
         f'<script src="/static/chat_drawer.js" defer></script>'
+        f'<script src="/static/incidents_panel.js" defer></script>'
     )
 
     if "</body>" in html:

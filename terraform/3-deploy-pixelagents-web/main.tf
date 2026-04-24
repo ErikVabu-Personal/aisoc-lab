@@ -95,6 +95,24 @@ resource "azurerm_container_app" "pixelagents" {
         name  = "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"
         value = data.terraform_remote_state.aisoc.outputs.foundry_project_endpoint
       }
+
+      # Sentinel incidents table — the backend queries ARM directly with
+      # the Container App's managed identity (see the Sentinel Reader
+      # role assignment below).
+      env {
+        name  = "AZURE_SUBSCRIPTION_ID"
+        value = data.terraform_remote_state.aisoc.outputs.subscription_id
+      }
+
+      env {
+        name  = "AZURE_RESOURCE_GROUP"
+        value = data.terraform_remote_state.sentinel.outputs.resource_group
+      }
+
+      env {
+        name  = "SENTINEL_WORKSPACE_NAME"
+        value = data.terraform_remote_state.sentinel.outputs.log_analytics_workspace_name
+      }
     }
   }
 
@@ -128,6 +146,15 @@ resource "azurerm_role_assignment" "pixelagents_foundry_openai_user" {
 resource "azurerm_role_assignment" "pixelagents_foundry_ai_user" {
   scope                = data.terraform_remote_state.aisoc.outputs.foundry_account_id
   role_definition_name = "Azure AI User"
+  principal_id         = local.pixelagents_principal_id
+}
+
+# Sentinel read access for the incidents table endpoint. Scoped to the Log
+# Analytics workspace Sentinel runs on (same scope as the SOC Gateway's
+# Microsoft Sentinel Contributor assignment in Phase 2, just narrower).
+resource "azurerm_role_assignment" "pixelagents_sentinel_reader" {
+  scope                = data.terraform_remote_state.sentinel.outputs.log_analytics_workspace_id
+  role_definition_name = "Microsoft Sentinel Reader"
   principal_id         = local.pixelagents_principal_id
 }
 
