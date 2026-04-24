@@ -306,6 +306,213 @@ async def send_message_to_agent(
     }
 
 
+def _sse_event(event_name: str, data: dict) -> str:
+    """Format a single SSE event block (event: X\\ndata: {...}\\n\\n)."""
+
+    return f"event: {event_name}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.post("/api/agents/{agent_id}/message/stream")
+async def stream_message_to_agent(
+    agent_id: str,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> StreamingResponse:
+    """Streaming variant of the ad-hoc chat endpoint.
+
+    Opens a streaming POST to Foundry's Responses API and relays the events
+    to the browser as Server-Sent Events. We translate Foundry's event
+    vocabulary into a smaller, stable shape so the UI doesn't have to care
+    about upstream API versioning:
+
+      - event: delta,     data: {"text": "<chunk>"}
+      - event: tool_call, data: {"name": "<tool_name>", "arguments": {...}}
+      - event: done,      data: {"tool_calls": [...]}
+      - event: error,     data: {"status": <int>, "body": <string|object>}
+
+    See send_message_to_agent above for the request-body contract and caveats.
+    """
+
+    _require_token(x_pixelagents_token)
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    message = body.get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise HTTPException(status_code=400, detail="Missing arguments.message (string)")
+
+    agent_name = _slug_agent(agent_id)
+    if not agent_name or agent_name == "unknown":
+        raise HTTPException(status_code=400, detail="Invalid agent id")
+
+    project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
+    if not project_endpoint:
+        raise HTTPException(status_code=500, detail="Missing AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
+
+    try:
+        token = _ai_projects_token()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Foundry auth failed: {e!r}") from e
+
+    import requests as _requests
+
+    url = project_endpoint.rstrip("/") + "/openai/v1/responses"
+    payload = {
+        "input": message.strip(),
+        "agent_reference": {"name": agent_name, "type": "agent_reference"},
+        "stream": True,
+    }
+
+    def generate():
+        """Blocking generator — FastAPI runs it in a threadpool."""
+
+        tool_calls_observed: list[dict] = []
+
+        # Open the upstream streaming request inside the generator so any
+        # connection failures surface as an SSE error rather than a 5xx.
+        try:
+            upstream = _requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                json=payload,
+                stream=True,
+                timeout=240,
+            )
+        except Exception as e:
+            yield _sse_event("error", {"status": 0, "body": f"connection failed: {e!r}"})
+            yield _sse_event("done", {"tool_calls": []})
+            return
+
+        try:
+            if upstream.status_code >= 400:
+                detail: Any
+                try:
+                    detail = upstream.json()
+                except Exception:
+                    detail = upstream.text[:4000]
+                yield _sse_event("error", {"status": upstream.status_code, "body": detail})
+                return
+
+            current_event: str | None = None
+            data_lines: list[str] = []
+
+            # Foundry streams SSE: lines are either "event: X", "data: {...}",
+            # comments starting with ':', or blank (event terminator).
+            for line in upstream.iter_lines(decode_unicode=True):
+                if line is None:
+                    continue
+                if line == "":
+                    # Flush accumulated event
+                    if current_event and data_lines:
+                        data_str = "".join(data_lines)
+                        try:
+                            ev_data = json.loads(data_str)
+                        except Exception:
+                            ev_data = None
+
+                        if (
+                            current_event == "response.output_text.delta"
+                            and isinstance(ev_data, dict)
+                        ):
+                            delta = ev_data.get("delta")
+                            if isinstance(delta, str) and delta:
+                                yield _sse_event("delta", {"text": delta})
+
+                        elif (
+                            current_event == "response.output_item.done"
+                            and isinstance(ev_data, dict)
+                        ):
+                            item = ev_data.get("item") or {}
+                            if isinstance(item, dict) and item.get("type") in (
+                                "openapi_call",
+                                "tool_call",
+                                "function_call",
+                            ):
+                                args = item.get("arguments") or {}
+                                if isinstance(args, str):
+                                    try:
+                                        args = json.loads(args)
+                                    except Exception:
+                                        args = {}
+                                name = (
+                                    (args.get("tool_name") if isinstance(args, dict) else None)
+                                    or item.get("name")
+                                    or (item.get("tool") or {}).get("name")
+                                )
+                                if name:
+                                    entry = {
+                                        "name": name,
+                                        "arguments": args if isinstance(args, dict) else {},
+                                    }
+                                    tool_calls_observed.append(entry)
+                                    yield _sse_event("tool_call", entry)
+
+                    current_event = None
+                    data_lines = []
+                elif line.startswith(":"):
+                    # SSE comment / heartbeat — ignore.
+                    continue
+                elif line.startswith("event:"):
+                    current_event = line[len("event:"):].strip()
+                elif line.startswith("data:"):
+                    # Per SSE spec, trim exactly one leading space if present.
+                    chunk = line[len("data:"):]
+                    if chunk.startswith(" "):
+                        chunk = chunk[1:]
+                    data_lines.append(chunk)
+                # other field types (id:, retry:) ignored
+        finally:
+            try:
+                upstream.close()
+            except Exception:
+                pass
+
+            # Synthetic PixelAgents activity event so the pixel character
+            # reacts even if the agent produced text without calling a tool.
+            now = time.time()
+            EVENTS.append(
+                {
+                    "type": "tool.call.end",
+                    "agent": agent_name,
+                    "state": "idle",
+                    "tool_name": "adhoc_chat",
+                    "ts": now,
+                }
+            )
+            AGENTS[agent_name] = {
+                **AGENTS.get(agent_name, {}),
+                "agent": agent_name,
+                "state": "idle",
+                "last_event": {
+                    "type": "tool.call.end",
+                    "tool_name": "adhoc_chat",
+                    "ts": now,
+                },
+                "updated_at": now,
+            }
+
+            yield _sse_event("done", {"tool_calls": tool_calls_observed})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            # Disable proxy buffering so chunks reach the browser promptly.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/events")
 async def ingest_event(
     req: Request,

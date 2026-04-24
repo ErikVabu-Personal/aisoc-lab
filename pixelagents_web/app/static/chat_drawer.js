@@ -189,11 +189,32 @@
       opacity: 0.7;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    #${rootId} .thinking {
-      align-self: flex-start;
-      padding: 8px 10px;
-      opacity: 0.6;
+    #${rootId} .thinking-dots {
+      opacity: 0.7;
       font-style: italic;
+    }
+    #${rootId} .thinking-dots .dots {
+      display: inline-block;
+      animation: aisoc-chat-dots 1.1s steps(3, end) infinite;
+      overflow: hidden;
+      vertical-align: bottom;
+      width: 1.2em;
+      white-space: nowrap;
+    }
+    @keyframes aisoc-chat-dots {
+      0%   { clip-path: inset(0 1em 0 0); }
+      33%  { clip-path: inset(0 0.66em 0 0); }
+      66%  { clip-path: inset(0 0.33em 0 0); }
+      100% { clip-path: inset(0 0 0 0); }
+    }
+    #${rootId} .cursor {
+      display: inline-block;
+      margin-left: 2px;
+      opacity: 0.6;
+      animation: aisoc-chat-cursor 1s steps(2, end) infinite;
+    }
+    @keyframes aisoc-chat-cursor {
+      50% { opacity: 0; }
     }
     #${rootId} .compose {
       border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -293,20 +314,73 @@
     }
   }
 
+  function parseSseBlock(block) {
+    // Parse a single SSE event block (lines terminated by \n, block by \n\n).
+    let eventName = null;
+    const dataLines = [];
+    for (const rawLine of block.split('\n')) {
+      const line = rawLine.replace(/\r$/, '');
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        let chunk = line.slice(5);
+        if (chunk.startsWith(' ')) chunk = chunk.slice(1);
+        dataLines.push(chunk);
+      }
+      // ignore id:, retry:, comments starting with ':'
+    }
+    if (!eventName) return null;
+    let data = null;
+    if (dataLines.length) {
+      const raw = dataLines.join('');
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        data = raw;
+      }
+    }
+    return { event: eventName, data: data == null ? {} : data };
+  }
+
   async function sendMessage(agent, text) {
     state.loading = true;
     state.error = null;
     getConversation(agent).push({ role: 'user', text });
+
+    // Placeholder that grows as deltas arrive.
+    const placeholder = {
+      role: 'assistant',
+      text: '',
+      toolCalls: [],
+      streaming: true,
+    };
+    getConversation(agent).push(placeholder);
     render();
+
+    let lastRender = Date.now();
+    const RENDER_THROTTLE_MS = 60; // ~15fps max
+
+    const renderSoon = () => {
+      const now = Date.now();
+      if (now - lastRender >= RENDER_THROTTLE_MS) {
+        lastRender = now;
+        render();
+      }
+    };
+
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agent)}/message`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-pixelagents-token': TOKEN,
+      const res = await fetch(
+        `/api/agents/${encodeURIComponent(agent)}/message/stream`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-pixelagents-token': TOKEN,
+            Accept: 'text/event-stream',
+          },
+          body: JSON.stringify({ message: text }),
         },
-        body: JSON.stringify({ message: text }),
-      });
+      );
       if (!res.ok) {
         let bodyText = '';
         try {
@@ -316,17 +390,65 @@
         }
         throw new Error(`HTTP ${res.status}\n${bodyText}`);
       }
-      const data = await res.json();
-      getConversation(agent).push({
-        role: 'assistant',
-        text: data.text || '(no text returned)',
-        toolCalls: data.tool_calls || [],
-      });
+      if (!res.body) {
+        throw new Error('Response has no stream body.');
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      let errored = false;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Split on SSE event boundary (\n\n). Keep the tail for next chunk.
+        let boundary;
+        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const ev = parseSseBlock(block);
+          if (!ev) continue;
+
+          if (ev.event === 'delta' && ev.data && typeof ev.data.text === 'string') {
+            placeholder.text += ev.data.text;
+            renderSoon();
+          } else if (ev.event === 'tool_call' && ev.data && ev.data.name) {
+            placeholder.toolCalls.push({
+              name: ev.data.name,
+              arguments: ev.data.arguments || {},
+            });
+            renderSoon();
+          } else if (ev.event === 'error') {
+            const bodyStr =
+              typeof ev.data.body === 'string'
+                ? ev.data.body
+                : JSON.stringify(ev.data.body, null, 2);
+            // Convert the placeholder into an error bubble.
+            placeholder.role = 'error';
+            placeholder.text = `Foundry error (HTTP ${ev.data.status}):\n${bodyStr}`;
+            placeholder.streaming = false;
+            errored = true;
+            render();
+          } else if (ev.event === 'done') {
+            placeholder.streaming = false;
+            render();
+          }
+        }
+      }
+
+      placeholder.streaming = false;
+      if (!errored) {
+        if (!placeholder.text && (!placeholder.toolCalls || !placeholder.toolCalls.length)) {
+          placeholder.text = '(no text returned)';
+        }
+      }
     } catch (e) {
-      getConversation(agent).push({
-        role: 'error',
-        text: e && e.message ? e.message : String(e),
-      });
+      placeholder.role = 'error';
+      placeholder.text = e && e.message ? e.message : String(e);
+      placeholder.streaming = false;
     } finally {
       state.loading = false;
       render();
@@ -344,6 +466,20 @@
         existingTextarea.selectionEnd || 0,
       ];
       state.draftHadFocus = document.activeElement === existingTextarea;
+    }
+
+    // Capture scroll state before we rebuild the DOM so streaming deltas
+    // don't scroll the user back to the top of the thread on every chunk.
+    let prevScrollTop = 0;
+    let prevWasNearBottom = true;
+    const existingMessages = rootEl.querySelector('.messages');
+    if (existingMessages) {
+      prevScrollTop = existingMessages.scrollTop;
+      prevWasNearBottom =
+        existingMessages.scrollHeight -
+          existingMessages.scrollTop -
+          existingMessages.clientHeight <
+        50;
     }
 
     rootEl.setAttribute('data-collapsed', state.open ? 'false' : 'true');
@@ -371,15 +507,22 @@
                       .map((t) => escapeHtml(t.name || ''))
                       .join(', ')}</div>`
                   : '';
-              return `<div class="msg ${m.role}">${escapeHtml(m.text)}${toolsHtml}</div>`;
+              // While streaming with no text yet, show a subtle thinking
+              // indicator in the bubble instead of an empty box.
+              const textHtml =
+                m.streaming && !m.text
+                  ? `<span class="thinking-dots">Agent is thinking<span class="dots">…</span></span>`
+                  : escapeHtml(m.text);
+              const cursor =
+                m.streaming && m.text
+                  ? `<span class="cursor">▋</span>`
+                  : '';
+              return `<div class="msg ${m.role}">${textHtml}${cursor}${toolsHtml}</div>`;
             })
             .join('')
         : `<div class="empty">Send a message to start.</div>`;
-      const thinking = state.loading
-        ? `<div class="thinking">Agent is thinking…</div>`
-        : '';
       body = `
-        <div class="messages">${msgsHtml}${thinking}</div>
+        <div class="messages">${msgsHtml}</div>
         <div class="compose">
           <textarea placeholder="Ask ${escapeHtml(
             capitalize(state.selectedAgent),
@@ -408,6 +551,16 @@
     }
 
     rootEl.innerHTML = `${header}<div class="body">${body}</div>`;
+
+    // Restore (or auto-scroll) the messages container.
+    const newMessages = rootEl.querySelector('.messages');
+    if (newMessages) {
+      if (prevWasNearBottom) {
+        newMessages.scrollTop = newMessages.scrollHeight;
+      } else {
+        newMessages.scrollTop = prevScrollTop;
+      }
+    }
 
     const textarea = rootEl.querySelector('textarea[data-role="input"]');
     if (textarea) {
