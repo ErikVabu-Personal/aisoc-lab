@@ -801,6 +801,26 @@ async def stream_message_to_agent(
             current_event: str | None = None
             data_lines: list[str] = []
 
+            # Track whether we've actually streamed any text out to the
+            # client. Some agents / Foundry flows don't emit per-token
+            # deltas and instead deliver text as a completed message item;
+            # in that case we extract text from output_item.done or, as
+            # a last resort, from response.completed.
+            total_text_emitted = 0
+            # Diagnostic: count each distinct upstream event type we saw
+            # so the frontend can surface "the agent emitted X item.done
+            # events but no text" when things look weird.
+            event_type_counts: Dict[str, int] = {}
+
+            def _text_from_message_item(item: dict) -> str:
+                parts: list[str] = []
+                content = item.get("content") or []
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and isinstance(block.get("text"), str):
+                            parts.append(block["text"])
+                return "".join(parts)
+
             # Foundry streams SSE: lines are either "event: X", "data: {...}",
             # comments starting with ':', or blank (event terminator).
             for line in upstream.iter_lines(decode_unicode=True):
@@ -809,6 +829,9 @@ async def stream_message_to_agent(
                 if line == "":
                     # Flush accumulated event
                     if current_event and data_lines:
+                        event_type_counts[current_event] = (
+                            event_type_counts.get(current_event, 0) + 1
+                        )
                         data_str = "".join(data_lines)
                         try:
                             ev_data = json.loads(data_str)
@@ -821,6 +844,7 @@ async def stream_message_to_agent(
                         ):
                             delta = ev_data.get("delta")
                             if isinstance(delta, str) and delta:
+                                total_text_emitted += len(delta)
                                 yield _sse_event("delta", {"text": delta})
 
                         elif (
@@ -828,11 +852,10 @@ async def stream_message_to_agent(
                             and isinstance(ev_data, dict)
                         ):
                             item = ev_data.get("item") or {}
-                            if isinstance(item, dict) and item.get("type") in (
-                                "openapi_call",
-                                "tool_call",
-                                "function_call",
-                            ):
+                            if not isinstance(item, dict):
+                                item = {}
+                            item_type = item.get("type")
+                            if item_type in ("openapi_call", "tool_call", "function_call"):
                                 args = item.get("arguments") or {}
                                 if isinstance(args, str):
                                     try:
@@ -851,6 +874,37 @@ async def stream_message_to_agent(
                                     }
                                     tool_calls_observed.append(entry)
                                     yield _sse_event("tool_call", entry)
+                            elif item_type == "message":
+                                # Some agents emit messages as a single
+                                # completed item rather than per-token
+                                # deltas. If we haven't streamed any text
+                                # yet, surface the whole thing now so the
+                                # UI at least shows the response.
+                                if total_text_emitted == 0:
+                                    txt = _text_from_message_item(item)
+                                    if txt:
+                                        total_text_emitted += len(txt)
+                                        yield _sse_event("delta", {"text": txt})
+
+                        elif (
+                            current_event == "response.completed"
+                            and isinstance(ev_data, dict)
+                            and total_text_emitted == 0
+                        ):
+                            # Last-resort fallback: walk the final response's
+                            # output array and extract text from any message
+                            # items we may have missed.
+                            response = ev_data.get("response") or {}
+                            output = response.get("output") or []
+                            if isinstance(output, list):
+                                collected = "".join(
+                                    _text_from_message_item(it)
+                                    for it in output
+                                    if isinstance(it, dict) and it.get("type") == "message"
+                                )
+                                if collected:
+                                    total_text_emitted += len(collected)
+                                    yield _sse_event("delta", {"text": collected})
 
                     current_event = None
                     data_lines = []
@@ -877,7 +931,14 @@ async def stream_message_to_agent(
             # handler already opened it).
             _emit_agent_end(agent_name, "adhoc_chat")
 
-            yield _sse_event("done", {"tool_calls": tool_calls_observed})
+            yield _sse_event(
+                "done",
+                {
+                    "tool_calls": tool_calls_observed,
+                    "text_chars": total_text_emitted,
+                    "event_counts": event_type_counts,
+                },
+            )
 
     return StreamingResponse(
         generate(),

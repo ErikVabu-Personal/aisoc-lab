@@ -445,6 +445,13 @@
             errored = true;
             render();
           } else if (ev.event === 'done') {
+            // Surface the diagnostic in the browser console so we can see
+            // what the upstream Foundry stream actually emitted without
+            // touching server logs. Useful when the response is empty.
+            try {
+              // eslint-disable-next-line no-console
+              console.debug('[chat-drawer] stream done', ev.data);
+            } catch (_) {}
             placeholder.streaming = false;
             render();
           }
@@ -452,10 +459,11 @@
       }
 
       placeholder.streaming = false;
-      if (!errored) {
-        if (!placeholder.text && (!placeholder.toolCalls || !placeholder.toolCalls.length)) {
-          placeholder.text = '(no text returned)';
-        }
+      if (!errored && !placeholder.text) {
+        const hadTools = placeholder.toolCalls && placeholder.toolCalls.length;
+        placeholder.text = hadTools
+          ? '(the agent ran tools but produced no text reply — try asking again or rephrase the question)'
+          : '(no text returned)';
       }
     } catch (e) {
       placeholder.role = 'error';
