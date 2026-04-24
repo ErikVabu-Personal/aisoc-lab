@@ -47,11 +47,17 @@
   // ── Styles ───────────────────────────────────────────────────────────────
   const styleEl = document.createElement('style');
   styleEl.textContent = `
+    #${rootId}, #${rootId} * {
+      /* See chat_drawer.js for the rationale — the vendored * { font-family:
+         'FS Pixel Sans' } rule would otherwise override per-child inheritance
+         and make the text look smaller once the webfont loads. */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
     #${rootId} {
       position: fixed;
       right: 16px;
       top: 16px;
-      width: 480px;
+      width: 520px;
       max-height: 45vh;
       background: rgba(10, 12, 18, 0.82);
       backdrop-filter: blur(8px);
@@ -59,8 +65,7 @@
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 8px;
       color: #e7e9ee;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 17px;
+      font-size: 18px;
       line-height: 1.45;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
       z-index: 9999;
@@ -138,7 +143,7 @@
       white-space: nowrap;
     }
     #${rootId} .title-cell {
-      max-width: 240px;
+      max-width: 260px;
       word-wrap: break-word;
     }
     #${rootId} .sev {

@@ -49,11 +49,18 @@
   // ── Styles (scoped via the root id) ──────────────────────────────────────
   const styleEl = document.createElement('style');
   styleEl.textContent = `
+    #${rootId}, #${rootId} * {
+      /* The vendored Pixel Agents CSS has a * { font-family: 'FS Pixel Sans' }
+         rule which bleeds into our panel and makes the text look smaller
+         (and oddly pixelated) once the webfont loads. Scope a higher-
+         specificity override so the panel keeps a readable system font. */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
     #${rootId} {
       position: fixed;
       right: 16px;
       bottom: 16px;
-      width: 480px;
+      width: 520px;
       max-height: 75vh;
       background: rgba(10, 12, 18, 0.82);
       backdrop-filter: blur(8px);
@@ -61,8 +68,7 @@
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 8px;
       color: #e7e9ee;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 18px;
+      font-size: 19px;
       line-height: 1.45;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
       z-index: 9999;
