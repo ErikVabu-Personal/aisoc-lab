@@ -112,6 +112,12 @@ resource "azurerm_linux_function_app" "soc_gateway" {
 
     # Optional direct key (NOT recommended); keep disabled by default
     "OPENROUTER_API_KEY" = ""
+
+    # Send Function logs (including the AISOC_DEBUG_IDENTITY ARM-error
+    # captures in shared/sentinel.py + log_analytics.py) to the Phase 1
+    # Application Insights instance so we can query them historically.
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"      = data.terraform_remote_state.sentinel.outputs.application_insights_connection_string
+    "ApplicationInsightsAgent_EXTENSION_VERSION" = "~3"
   }
 
   tags = local.tags

@@ -67,6 +67,14 @@ resource "azurerm_linux_function_app" "orchestrator" {
     # (similar to configure_runner_pixelagents_env.sh — cross-phase wiring).
     "TOKEN_PRICE_EUR_PER_1M_INPUT"  = tostring(var.foundry_model_price_eur_per_1m_in)
     "TOKEN_PRICE_EUR_PER_1M_OUTPUT" = tostring(var.foundry_model_price_eur_per_1m_out)
+
+    # Send logs to the Phase 1 Application Insights instance (shared
+    # with ShipCP). Without this, the orchestrator's `print()` lines
+    # are only reachable via `az webapp log tail`, which doesn't
+    # support querying historic data.
+    "APPLICATIONINSIGHTS_CONNECTION_STRING" = data.terraform_remote_state.sentinel.outputs.application_insights_connection_string
+    # Functions-runtime hook so the host streams traces too.
+    "ApplicationInsightsAgent_EXTENSION_VERSION" = "~3"
   }
 
   tags = local.tags
