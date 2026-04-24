@@ -66,7 +66,7 @@
     #${rootId} .card {
       pointer-events: auto;
       background: var(--color-bg, #1e1e2e);
-      border: 2px solid var(--color-warning, #ff8d14);
+      border: 2px solid #facc15; /* bright yellow — attention signal */
       border-radius: 6px;
       box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
       color: var(--color-text, #ffffffe6);
@@ -94,18 +94,18 @@
       gap: 8px;
     }
     @keyframes aisoc-hitl-pulse {
-      0%, 100% { box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14), 0 0 0 0 rgba(255, 141, 20, 0.0); }
-      50%      { box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14), 0 0 0 6px rgba(255, 141, 20, 0.22); }
+      0%, 100% { box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14), 0 0 0 0 rgba(250, 204, 21, 0.0); }
+      50%      { box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14), 0 0 0 6px rgba(250, 204, 21, 0.28); }
     }
     #${rootId} .card .head {
       padding: 10px 14px;
-      background: var(--color-warning, #ff8d14);
-      border-bottom: 2px solid var(--color-border, #4a4a6a);
+      background: rgba(250, 204, 21, 0.12);
+      border-bottom: 2px solid rgba(250, 204, 21, 0.35);
       display: flex;
       align-items: center;
       gap: 10px;
       font-weight: 700;
-      color: #1e1e2e;
+      color: #fde68a;
     }
     #${rootId} .card .head .who {
       text-transform: capitalize;
@@ -145,12 +145,12 @@
     }
     #${rootId} .card textarea:focus {
       outline: none;
-      border-color: var(--color-warning, #ff8d14);
+      border-color: #facc15;
     }
     #${rootId} .card button {
-      background: var(--color-warning, #ff8d14);
-      border: 2px solid var(--color-border, #4a4a6a);
-      color: #1e1e2e;
+      background: rgba(250, 204, 21, 0.25);
+      border: 2px solid rgba(250, 204, 21, 0.6);
+      color: #fde68a;
       border-radius: 4px;
       padding: 0 18px;
       cursor: pointer;
@@ -159,7 +159,7 @@
       box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
     }
     #${rootId} .card button:hover:not(:disabled) {
-      filter: brightness(1.1);
+      background: rgba(250, 204, 21, 0.4);
     }
     #${rootId} .card button:disabled {
       opacity: 0.5;
