@@ -60,6 +60,17 @@ resource "azurerm_container_app" "pixelagents" {
   }
 
   template {
+    # Pin to a single replica. The HITL questions (and the polled
+    # event/agent state) live in the Python process memory, so a
+    # multi-replica deployment will serve stale or missing records
+    # depending on which replica a given request lands on — the UI
+    # sees "Unknown question id" on answer POSTs whenever the create
+    # and submit hit different instances. For the demo this is fine;
+    # if we ever need horizontal scale, back HITL_QUESTIONS / EVENTS
+    # with Redis or Cosmos and relax this.
+    min_replicas = 1
+    max_replicas = 1
+
     container {
       name   = "pixelagents-web"
       image  = var.image
