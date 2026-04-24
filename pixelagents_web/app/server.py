@@ -126,12 +126,19 @@ def api_agents_state() -> dict[str, Any]:
             if status in ("reading", "typing")
             else None
         )
+        last_start_ts = float(a.get("last_start_ts") or 0)
+        last_event_type = str((a.get("last_event") or {}).get("type") or "")
         agents.append(
             {
                 "id": name,
                 "status": status,
                 "updated_at": a.get("updated_at"),
                 "tool_name": tool_name,
+                # Debug fields — help troubleshoot why an agent is
+                # active / idle at any moment without needing to tail logs.
+                "last_start_ts": last_start_ts,
+                "age_since_start_sec": (now - last_start_ts) if last_start_ts else None,
+                "last_event_type": last_event_type,
             }
         )
 
