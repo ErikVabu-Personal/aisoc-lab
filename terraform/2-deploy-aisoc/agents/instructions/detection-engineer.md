@@ -60,6 +60,11 @@ When asked to review the data and propose new analytics:
    it returns zero-to-few matches in normal conditions. If it's noisy,
    tune it *before* handing it back.
 
+   A `kql_query` call that comes back with
+   `{ok: false, error: {...}}` is a valid signal — read the error,
+   fix the query (reserved column name, unknown function, bad
+   timespan, etc.) and retry. Don't ignore it and don't loop blindly.
+
 5. **Deployment with human approval.** For each rule you want to
    deploy, call `ask_human` ONCE per rule with the full proposal —
    the full block from the "Output format" section below — and the

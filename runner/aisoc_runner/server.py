@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any, Literal
@@ -584,8 +585,42 @@ def tools_execute(
             detail=f"Unknown tool_name: {tool_name!r}; payload_keys={sorted(list(payload.keys()))}",
         )
 
-    except HTTPException:
-        raise
+    except HTTPException as http_err:
+        # Convert HTTPException into a *structured* 200 response so the
+        # calling agent can read the error and decide how to recover
+        # (retry with different args, explain the limitation to the user,
+        # ask a human, etc.) rather than having Foundry terminate the
+        # response with tool_user_error.
+        #
+        # We deliberately DON'T do this for bearer auth — that's checked
+        # by _require_bearer *before* this try block and fires its own
+        # HTTP 401/403. Anything that reaches here is either an agent
+        # input problem (400 — missing args, unknown tool) or an upstream
+        # Gateway/ARM/LAW problem (4xx/5xx); both are things the agent
+        # can reason about if we let it see them.
+        detail = http_err.detail
+        if not isinstance(detail, str):
+            try:
+                detail = json.dumps(detail)
+            except Exception:
+                detail = str(detail)
+        try:
+            print(
+                f"[tools_execute] tool_error tool_name={tool_name!r} status={http_err.status_code} detail={detail[:400]!r}",
+                flush=True,
+            )
+        except Exception:
+            pass
+        return {
+            "result": {
+                "ok": False,
+                "error": {
+                    "type": "tool_error",
+                    "status": http_err.status_code,
+                    "message": detail,
+                },
+            }
+        }
     except Exception as e:
         # Ensure we always get a deterministic traceback in Container Apps logs.
         try:
@@ -598,7 +633,18 @@ def tools_execute(
             traceback.print_exc()
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail="Unhandled runner exception (see logs)")
+        # Same principle as above: surface the exception as a structured
+        # 200 so the agent stays alive and can report the failure instead
+        # of Foundry nuking the whole response.
+        return {
+            "result": {
+                "ok": False,
+                "error": {
+                    "type": "runner_exception",
+                    "message": f"{type(e).__name__}: {e}",
+                },
+            }
+        }
 
     finally:
         ended = time.time()
