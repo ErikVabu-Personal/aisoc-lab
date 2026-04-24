@@ -906,6 +906,35 @@ async def stream_message_to_agent(
                                     total_text_emitted += len(collected)
                                     yield _sse_event("delta", {"text": collected})
 
+                        elif current_event in ("response.failed", "response.incomplete"):
+                            # Upstream explicitly signalled a failure mid-
+                            # stream (token limit, content filter, tool
+                            # error, etc.). Surface it as a proper error so
+                            # the chat drawer renders a red bubble with the
+                            # actual reason instead of "(no text returned)".
+                            resp = (
+                                ev_data.get("response")
+                                if isinstance(ev_data, dict)
+                                else None
+                            ) or {}
+                            err = resp.get("error") if isinstance(resp, dict) else None
+                            yield _sse_event(
+                                "error",
+                                {
+                                    "status": 0,
+                                    "body": err
+                                    or resp
+                                    or ev_data
+                                    or {"reason": current_event},
+                                },
+                            )
+
+                        elif current_event == "error" and isinstance(ev_data, dict):
+                            # Top-level error event from Foundry's stream.
+                            yield _sse_event(
+                                "error", {"status": 0, "body": ev_data}
+                            )
+
                     current_event = None
                     data_lines = []
                 elif line.startswith(":"):
