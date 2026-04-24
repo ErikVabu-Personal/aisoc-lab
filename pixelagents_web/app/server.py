@@ -90,12 +90,17 @@ def api_agents_state() -> dict[str, Any]:
         )
 
     cooldown = float(os.getenv("PIXELAGENTS_ACTIVE_COOLDOWN_SEC", "20"))
+    # Short grace window after an explicit tool.call.end so the UI gets a
+    # brief flash of activity for the last call, then settles. The full
+    # cooldown is only used when we don't have an explicit end signal.
+    end_grace = float(os.getenv("PIXELAGENTS_END_GRACE_SEC", "3"))
 
     def inferred_status(agent_record: dict[str, Any]) -> str:
         # Option B: infer "agent is working" for a short time after a tool call.
         # This provides richer animation despite runner-only telemetry.
         state = (agent_record.get("state") or "idle").lower()
         last_event = agent_record.get("last_event") or {}
+        last_event_type = str(last_event.get("type") or "").lower()
         last_ts = float(last_event.get("ts") or agent_record.get("updated_at") or 0)
         age = now - last_ts
 
@@ -105,7 +110,12 @@ def api_agents_state() -> dict[str, Any]:
         if state == "typing":
             return "typing"
 
-        # Keep "reading" (active) briefly after any tool call end/start.
+        # If the last event was an explicit tool.call.end, respect it and
+        # drop to idle after a short flash. Otherwise (e.g. a lone start,
+        # synthetic events, or unknown types) fall back to the full cooldown.
+        if last_event_type == "tool.call.end":
+            return "reading" if age < end_grace else "idle"
+
         if age <= cooldown:
             return "reading"
 
@@ -118,12 +128,22 @@ def api_agents_state() -> dict[str, Any]:
     agents = []
     for name in roster + dynamic:
         a = AGENTS.get(name, {})
+        status = inferred_status(a)
+        # Only surface the current tool while we're actually treating the
+        # agent as active. Otherwise the stale name sticks around after the
+        # cooldown/grace window and the adapter keeps dispatching chip
+        # events for a finished call.
+        tool_name = (
+            (a.get("last_event") or {}).get("tool_name")
+            if status in ("reading", "typing")
+            else None
+        )
         agents.append(
             {
                 "id": name,
-                "status": inferred_status(a),
+                "status": status,
                 "updated_at": a.get("updated_at"),
-                "tool_name": (a.get("last_event") or {}).get("tool_name"),
+                "tool_name": tool_name,
             }
         )
 
