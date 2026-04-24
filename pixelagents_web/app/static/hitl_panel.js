@@ -74,6 +74,24 @@
       line-height: 1.4;
       overflow: hidden;
       animation: aisoc-hitl-pulse 2.4s ease-in-out infinite;
+      /* Cap the card so long proposed case notes get a scrollbar inside
+         the card body rather than overflowing the viewport. Leave room
+         for the pulse ring + top offset. */
+      max-height: calc(100vh - 48px);
+      display: flex;
+      flex-direction: column;
+    }
+    #${rootId} .card .head {
+      flex-shrink: 0;
+    }
+    #${rootId} .card .compose-wrap {
+      flex-shrink: 0;
+      border-top: 2px solid var(--color-border, #4a4a6a);
+      background: var(--color-bg-dark, #181828);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
     @keyframes aisoc-hitl-pulse {
       0%, 100% { box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14), 0 0 0 0 rgba(255, 141, 20, 0.0); }
@@ -99,12 +117,15 @@
       font-weight: 400;
     }
     #${rootId} .card .body {
-      padding: 12px 14px 14px 14px;
+      padding: 12px 14px;
+      /* Grows to fill the card and scrolls when the question text is long. */
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
     }
     #${rootId} .card .q {
       white-space: pre-wrap;
       word-wrap: break-word;
-      margin-bottom: 10px;
     }
     #${rootId} .card .compose {
       display: flex;
@@ -285,6 +306,8 @@
             </div>
             <div class="body">
               <div class="q">${escapeHtml(q.question)}</div>
+            </div>
+            <div class="compose-wrap">
               <div class="compose">
                 <textarea
                   data-qid="${escapeHtml(q.id)}"
