@@ -30,6 +30,11 @@
     loading: false,             // request in flight
     open: false,                // drawer open/collapsed
     error: null,
+    // Composer state preserved across renders so the roster refresh timer
+    // doesn't wipe what the user is typing.
+    draft: '',
+    draftSelection: [0, 0],
+    draftHadFocus: false,
   };
 
   // ── Root DOM ─────────────────────────────────────────────────────────────
@@ -264,11 +269,25 @@
       const res = await fetch('/api/agents/state');
       if (!res.ok) return;
       const data = await res.json();
-      state.agents = (data.agents || []).map((a) => ({
+      const next = (data.agents || []).map((a) => ({
         id: a.id,
         status: a.status || 'idle',
       }));
-      render();
+
+      // When the user is in chat view, we only need to re-render if the set
+      // of agents actually changed (so a new agent appears in the back-list).
+      // Status flips (idle ↔ reading) don't affect what's on screen and would
+      // otherwise clobber the composer.
+      const prevIds = state.agents.map((a) => a.id).sort().join('|');
+      const nextIds = next.map((a) => a.id).sort().join('|');
+      const rosterChanged = prevIds !== nextIds;
+      const inListView = state.selectedAgent === null;
+
+      state.agents = next;
+
+      if (inListView || rosterChanged) {
+        render();
+      }
     } catch (e) {
       console.warn('[chat-drawer] loadAgents failed', e);
     }
@@ -316,6 +335,17 @@
 
   // ── Render ──────────────────────────────────────────────────────────────
   function render() {
+    // Capture any in-flight composer state before we blow away the DOM.
+    const existingTextarea = rootEl.querySelector('textarea[data-role="input"]');
+    if (existingTextarea) {
+      state.draft = existingTextarea.value;
+      state.draftSelection = [
+        existingTextarea.selectionStart || 0,
+        existingTextarea.selectionEnd || 0,
+      ];
+      state.draftHadFocus = document.activeElement === existingTextarea;
+    }
+
     rootEl.setAttribute('data-collapsed', state.open ? 'false' : 'true');
 
     const header = state.selectedAgent
@@ -381,7 +411,36 @@
 
     const textarea = rootEl.querySelector('textarea[data-role="input"]');
     if (textarea) {
-      textarea.focus();
+      // Restore the draft value. Only re-focus / restore selection if the
+      // user was already typing; otherwise don't steal focus on every poll.
+      textarea.value = state.draft || '';
+      if (state.draftHadFocus) {
+        textarea.focus();
+        try {
+          textarea.setSelectionRange(
+            state.draftSelection[0],
+            state.draftSelection[1],
+          );
+        } catch (_) {
+          // setSelectionRange throws on some inputs pre-render; ignore.
+        }
+      }
+
+      textarea.addEventListener('input', (ev) => {
+        state.draft = ev.target.value;
+        state.draftSelection = [
+          ev.target.selectionStart || 0,
+          ev.target.selectionEnd || 0,
+        ];
+      });
+
+      textarea.addEventListener('focus', () => {
+        state.draftHadFocus = true;
+      });
+      textarea.addEventListener('blur', () => {
+        state.draftHadFocus = false;
+      });
+
       textarea.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter' && !ev.shiftKey) {
           ev.preventDefault();
@@ -399,6 +458,8 @@
     const text = (textarea.value || '').trim();
     if (!text) return;
     textarea.value = '';
+    state.draft = '';
+    state.draftSelection = [0, 0];
     sendMessage(state.selectedAgent, text);
   }
 
@@ -412,9 +473,14 @@
     } else if (action === 'pick') {
       state.selectedAgent = t.getAttribute('data-agent');
       state.open = true;
+      state.draft = '';
+      state.draftSelection = [0, 0];
+      state.draftHadFocus = true; // let the new composer grab focus
       render();
     } else if (action === 'back') {
       state.selectedAgent = null;
+      state.draft = '';
+      state.draftSelection = [0, 0];
       render();
     } else if (action === 'send') {
       onSend();
