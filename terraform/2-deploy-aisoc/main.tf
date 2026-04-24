@@ -263,3 +263,13 @@ output "foundry_model_version" {
   value       = var.foundry_model_version
   description = "Model version string for the Foundry deployment (e.g. 2026-03-17)."
 }
+
+output "foundry_model_price_eur_per_1m_in" {
+  value       = var.foundry_model_price_eur_per_1m_in
+  description = "EUR per 1M input tokens for per-incident cost accounting."
+}
+
+output "foundry_model_price_eur_per_1m_out" {
+  value       = var.foundry_model_price_eur_per_1m_out
+  description = "EUR per 1M output tokens for per-incident cost accounting."
+}

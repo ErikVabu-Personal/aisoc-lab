@@ -185,6 +185,148 @@ def _clip(s: str, max_chars: int) -> str:
     return s if len(s) <= max_chars else (s[: max_chars - 3] + "...")
 
 
+# ─── Cost tracking ────────────────────────────────────────────────────────
+#
+# We pull response.usage off every Foundry call and ship a per-call cost
+# record to PixelAgents Web, which accumulates them in-process so the
+# incident panel can show EUR per incident in real time. The LAW-based
+# Option A Workbook is deliberately NOT part of this path — this is the
+# per-incident story. Prices come from env vars (set by Phase 2 Terraform
+# from module-level variables) so re-pricing doesn't require a code change.
+
+
+def _pixelagents_base_url() -> str:
+    """Base URL for PixelAgents Web; strips a trailing /events if present.
+
+    PIXELAGENTS_URL historically points at the telemetry ingestion endpoint
+    (/events). For the new /api/cost/record call we need the bare base.
+    """
+    url = (os.getenv("PIXELAGENTS_URL", "") or "").strip().rstrip("/")
+    for suffix in ("/events", "/events/"):
+        if url.endswith(suffix):
+            url = url[: -len(suffix)]
+            break
+    return url.rstrip("/")
+
+
+def _price_eur_per_token(kind: str) -> float:
+    """EUR-per-token unit price, from TOKEN_PRICE_EUR_PER_1M_{INPUT,OUTPUT}."""
+    if kind == "input":
+        raw = os.getenv("TOKEN_PRICE_EUR_PER_1M_INPUT", "0.35")
+    else:
+        raw = os.getenv("TOKEN_PRICE_EUR_PER_1M_OUTPUT", "1.40")
+    try:
+        return float(raw) / 1_000_000.0
+    except Exception:
+        return 0.0
+
+
+def _emit_cost_record(
+    *,
+    incident_number: Any,
+    incident_id: Any,
+    agent_name: str,
+    phase: str,
+    usage: Any,
+    workflow_run_id: str,
+) -> None:
+    """POST a per-call cost record to PixelAgents Web. Best-effort; never
+    raises so cost accounting can't break the pipeline."""
+
+    base = _pixelagents_base_url()
+    token = (os.getenv("PIXELAGENTS_TOKEN", "") or "").strip()
+    if not base or not token:
+        return
+    if not isinstance(usage, dict):
+        return
+
+    input_tokens = int(
+        usage.get("input_tokens")
+        or usage.get("prompt_tokens")
+        or 0
+    )
+    output_tokens = int(
+        usage.get("output_tokens")
+        or usage.get("completion_tokens")
+        or 0
+    )
+    if input_tokens == 0 and output_tokens == 0:
+        return
+
+    eur_cost = (
+        input_tokens * _price_eur_per_token("input")
+        + output_tokens * _price_eur_per_token("output")
+    )
+
+    record = {
+        "incident_number": incident_number,
+        "incident_id": incident_id,
+        "agent": agent_name,
+        "phase": phase,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "eur_cost": round(eur_cost, 6),
+        "workflow_run_id": workflow_run_id,
+        "ts": time.time(),
+    }
+
+    try:
+        requests.post(
+            f"{base}/api/cost/record",
+            headers={
+                "x-pixelagents-token": token,
+                "Content-Type": "application/json",
+            },
+            json=record,
+            timeout=5,
+        )
+    except Exception as e:
+        # Cost telemetry is best-effort; don't surface into the pipeline.
+        print(f"[orchestrator] cost-record POST failed: {e!r}", flush=True)
+
+
+# ─── Incident owner assignment ────────────────────────────────────────────
+
+
+def _assign_incident_owner(
+    runner_url: str,
+    runner_bearer: str,
+    incident_number: Any,
+    incident_id: Any,
+    display_name: str,
+) -> None:
+    """Set incident.owner.assignedTo to `display_name` before each phase.
+
+    Uses the runner's update_incident tool so the existing RBAC path
+    (Gateway's MI → Sentinel Contributor) is reused. Sentinel accepts a
+    partial owner object — a string assignedTo is enough for the UI to
+    render. We don't set objectId/email because the agents aren't real
+    Entra users.
+    """
+
+    args: dict[str, Any] = {"properties": {"owner": {"assignedTo": display_name}}}
+    if incident_number is not None:
+        args["incidentNumber"] = incident_number
+    elif incident_id is not None:
+        args["id"] = incident_id
+    else:
+        return
+
+    try:
+        _runner_post(
+            runner_url,
+            runner_bearer,
+            {"tool_name": "update_incident", "arguments": args},
+            agent="orchestrator",
+        )
+    except Exception as e:
+        # Ownership is nice-to-have visual; don't block the pipeline.
+        print(
+            f"[orchestrator] owner assign to {display_name!r} failed: {e!r}",
+            flush=True,
+        )
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     route = req.route_params.get("route") or ""
 
@@ -198,6 +340,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     # demo-friendly controls
     mode = (body.get("mode") or "triage_only").lower()  # triage_only | full
     max_chars = int(body.get("max_chars") or 1800)
+
+    # A single identifier so cost records + future correlation can group
+    # every agent invocation inside this orchestrator run.
+    import uuid as _uuid
+    workflow_run_id = str(_uuid.uuid4())
 
     if incident_number is None and incident_id is None:
         return func.HttpResponse("Missing incidentNumber or incidentId", status_code=400)
@@ -236,7 +383,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         incident_json = json.dumps(inc.get("result"), indent=2)[:12000]
 
         # Call agents via Foundry Agent Service runtime (agents + responses).
-        triage_out, _ = _invoke_agent(
+        # Each phase: (1) assign the incident to the agent so the UI +
+        # Sentinel reflect "who's handling this right now", (2) invoke
+        # the agent, (3) emit a cost record from response.usage.
+        _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Triage Agent")
+        triage_out, triage_raw = _invoke_agent(
             project_endpoint,
             "triage",
             user_text=(
@@ -244,6 +395,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "Return a concise triage summary and immediate next steps.\n\n"
                 + f"INCIDENT_REF:\n{incident_json}"
             ),
+        )
+        _emit_cost_record(
+            incident_number=incident_number,
+            incident_id=incident_id,
+            agent_name="triage",
+            phase="triage",
+            usage=triage_raw.get("usage"),
+            workflow_run_id=workflow_run_id,
         )
 
         if mode == "triage_only":
@@ -255,7 +414,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
-        inv_out, _ = _invoke_agent(
+        _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Investigator Agent")
+        inv_out, inv_raw = _invoke_agent(
             project_endpoint,
             "investigator",
             user_text=(
@@ -263,6 +423,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "Ground findings in evidence and produce a short timeline + verdict.\n\n"
                 + f"INCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}"
             ),
+        )
+        _emit_cost_record(
+            incident_number=incident_number,
+            incident_id=incident_id,
+            agent_name="investigator",
+            phase="investigator",
+            usage=inv_raw.get("usage"),
+            workflow_run_id=workflow_run_id,
         )
 
         # Writeback is now controlled by the reporter's own prompt (it must
@@ -285,7 +453,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 ),
             )
 
+        _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Reporter Agent")
         rep_out, rep_raw = _invoke_reporter(inv_out)
+        _emit_cost_record(
+            incident_number=incident_number,
+            incident_id=incident_id,
+            agent_name="reporter",
+            phase="reporter",
+            usage=rep_raw.get("usage"),
+            workflow_run_id=workflow_run_id,
+        )
 
         # Reinvestigation loop — if the reporter emits NEEDS_REINVESTIGATION,
         # re-run the investigator with the human's feedback as extra context
@@ -302,7 +479,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             prior_inv_out = inv_out  # snapshot for the record
             prior_rep_out = rep_out
 
-            inv_out, _ = _invoke_agent(
+            _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Investigator Agent (re-review)")
+            inv_out, inv_raw = _invoke_agent(
                 project_endpoint,
                 "investigator",
                 user_text=(
@@ -316,8 +494,25 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     + f"HUMAN_FEEDBACK_VIA_REPORTER:\n{note}"
                 ),
             )
+            _emit_cost_record(
+                incident_number=incident_number,
+                incident_id=incident_id,
+                agent_name="investigator",
+                phase=f"investigator-rerun-{reinvestigation_count}",
+                usage=inv_raw.get("usage"),
+                workflow_run_id=workflow_run_id,
+            )
 
+            _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Reporter Agent (re-review)")
             rep_out, rep_raw = _invoke_reporter(inv_out)
+            _emit_cost_record(
+                incident_number=incident_number,
+                incident_id=incident_id,
+                agent_name="reporter",
+                phase=f"reporter-rerun-{reinvestigation_count}",
+                usage=rep_raw.get("usage"),
+                workflow_run_id=workflow_run_id,
+            )
 
             reinvestigation_history.append(
                 {

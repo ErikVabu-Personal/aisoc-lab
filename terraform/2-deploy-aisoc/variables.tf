@@ -28,6 +28,30 @@ variable "foundry_hub_name" {
   default     = null
 }
 
+# -----------------------------
+# Per-incident cost accounting
+# -----------------------------
+
+variable "foundry_model_price_eur_per_1m_in" {
+  description = <<-EOT
+    EUR cost per 1 million INPUT tokens for the currently-deployed
+    Foundry model. Used by the orchestrator + PixelAgents Web to
+    compute per-incident cost. Re-apply when pricing or model changes.
+    Default tracks gpt-4.1-mini list pricing (~USD 0.40 → ~EUR 0.37).
+  EOT
+  type        = number
+  default     = 0.37
+}
+
+variable "foundry_model_price_eur_per_1m_out" {
+  description = <<-EOT
+    EUR cost per 1 million OUTPUT tokens. Default tracks gpt-4.1-mini
+    list pricing (~USD 1.60 → ~EUR 1.48).
+  EOT
+  type        = number
+  default     = 1.48
+}
+
 variable "foundry_project_name" {
   description = "Azure AI Foundry Project name to create/use."
   type        = string

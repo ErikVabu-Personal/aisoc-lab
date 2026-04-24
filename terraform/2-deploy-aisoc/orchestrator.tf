@@ -61,6 +61,12 @@ resource "azurerm_linux_function_app" "orchestrator" {
 
     # Gating
     "AISOC_AUTO_CLOSE" = "0"
+
+    # Per-incident cost accounting. PIXELAGENTS_URL + PIXELAGENTS_TOKEN
+    # are set post-apply by scripts/configure_orchestrator_pixelagents_env.sh
+    # (similar to configure_runner_pixelagents_env.sh — cross-phase wiring).
+    "TOKEN_PRICE_EUR_PER_1M_INPUT"  = tostring(var.foundry_model_price_eur_per_1m_in)
+    "TOKEN_PRICE_EUR_PER_1M_OUTPUT" = tostring(var.foundry_model_price_eur_per_1m_out)
   }
 
   tags = local.tags

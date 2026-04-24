@@ -42,6 +42,88 @@ EVENTS: Deque[dict[str, Any]] = deque(maxlen=2000)
 # of the container will drop any in-flight questions.
 HITL_QUESTIONS: Dict[str, Dict[str, Any]] = {}
 
+# Per-incident cost accumulators. Keyed by str(incident_number); a special
+# bucket "chat" aggregates ad-hoc chat-drawer calls that aren't tied to
+# a specific incident. Each bucket:
+#   {
+#     "total_eur": float,
+#     "total_input_tokens": int,
+#     "total_output_tokens": int,
+#     "records": [ {agent, phase, input_tokens, output_tokens, eur_cost, ts, ...}, ... ]
+#   }
+# Pinned-to-1-replica is already enforced in Terraform, so in-memory is
+# fine for the demo. Records list is trimmed to keep memory bounded.
+COSTS: Dict[str, Dict[str, Any]] = {}
+_COST_RECORDS_CAP = 500
+
+
+def _cost_bucket(key: str) -> Dict[str, Any]:
+    """Get-or-init the cost bucket for a key (incident number or 'chat')."""
+    bucket = COSTS.get(key)
+    if bucket is None:
+        bucket = {
+            "total_eur": 0.0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "records": [],
+        }
+        COSTS[key] = bucket
+    return bucket
+
+
+def _price_eur_per_token(kind: str) -> float:
+    """EUR-per-token unit price from env vars. Mirrors the orchestrator's
+    helper — used by the chat endpoints that capture usage locally."""
+    if kind == "input":
+        raw = os.getenv("TOKEN_PRICE_EUR_PER_1M_INPUT", "0.35")
+    else:
+        raw = os.getenv("TOKEN_PRICE_EUR_PER_1M_OUTPUT", "1.40")
+    try:
+        return float(raw) / 1_000_000.0
+    except Exception:
+        return 0.0
+
+
+def _record_usage_locally(
+    *,
+    incident_key: str,
+    agent: str,
+    phase: str,
+    usage: Any,
+) -> None:
+    """Compute EUR from a Foundry-usage dict and append to the right bucket.
+
+    Called by the chat endpoints — the orchestrator takes its own path via
+    POST /api/cost/record below because it lives in a different process.
+    """
+
+    if not isinstance(usage, dict):
+        return
+    input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+    output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+    if input_tokens == 0 and output_tokens == 0:
+        return
+    eur_cost = (
+        input_tokens * _price_eur_per_token("input")
+        + output_tokens * _price_eur_per_token("output")
+    )
+    bucket = _cost_bucket(incident_key)
+    bucket["total_eur"] += eur_cost
+    bucket["total_input_tokens"] += input_tokens
+    bucket["total_output_tokens"] += output_tokens
+    bucket["records"].append(
+        {
+            "agent": agent,
+            "phase": phase,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "eur_cost": round(eur_cost, 6),
+            "ts": time.time(),
+        }
+    )
+    if len(bucket["records"]) > _COST_RECORDS_CAP:
+        bucket["records"] = bucket["records"][-_COST_RECORDS_CAP:]
+
 app = FastAPI(title=APP_TITLE)
 
 # Serve vendored Pixel Agents assets
@@ -361,6 +443,16 @@ async def send_message_to_agent(
     text = _response_text(raw)
     tool_calls = _detect_tool_calls(raw)
 
+    # Chat-drawer calls aren't tied to a specific incident, so they land
+    # in the "chat" cost bucket. Still worth capturing for total-spend
+    # reporting.
+    _record_usage_locally(
+        incident_key="chat",
+        agent=agent_name,
+        phase="chat",
+        usage=raw.get("usage"),
+    )
+
     # Record a synthetic end event — informational; the start at the top
     # of the handler is what opened the activity window.
     _emit_agent_end(agent_name, "adhoc_chat")
@@ -462,6 +554,16 @@ def list_sentinel_incidents(
     incidents: list[dict[str, Any]] = []
     for item in (data.get("value") or []):
         props = item.get("properties") or {}
+        owner = props.get("owner") or {}
+        # Sentinel's owner object can contain assignedTo / email /
+        # userPrincipalName / objectId — pick the first non-empty
+        # display-friendly one. Agents only set assignedTo.
+        owner_display = (
+            (owner.get("assignedTo") if isinstance(owner, dict) else None)
+            or (owner.get("email") if isinstance(owner, dict) else None)
+            or (owner.get("userPrincipalName") if isinstance(owner, dict) else None)
+            or ""
+        )
         incidents.append(
             {
                 "id": item.get("name"),  # incident GUID
@@ -470,6 +572,7 @@ def list_sentinel_incidents(
                 "title": props.get("title"),
                 "severity": props.get("severity"),
                 "status": props.get("status"),
+                "owner": owner_display,
                 "created": props.get("createdTimeUtc"),
                 "last_modified": props.get("lastModifiedTimeUtc"),
             }
@@ -558,6 +661,111 @@ async def orchestrate_incident(
         return r.json()
     except Exception:
         return {"raw": r.text[:4000]}
+
+
+# ─── Cost tracking ────────────────────────────────────────────────────────
+
+
+@app.post("/api/cost/record")
+async def record_cost(
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Accept a per-call cost record from the orchestrator (or any other
+    server-side component). Records are aggregated in-memory by incident.
+
+    Body:
+      {
+        "incident_number": int | null,
+        "incident_id": str | null,
+        "agent": str,
+        "phase": str,
+        "input_tokens": int,
+        "output_tokens": int,
+        "eur_cost": float,
+        "workflow_run_id": str | null,
+        "ts": float (unix seconds),
+      }
+    """
+
+    _require_token(x_pixelagents_token)
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    input_tokens = int(body.get("input_tokens") or 0)
+    output_tokens = int(body.get("output_tokens") or 0)
+    eur = float(body.get("eur_cost") or 0.0)
+    if input_tokens == 0 and output_tokens == 0 and eur == 0.0:
+        # Empty record — accept but don't bother storing.
+        return {"ok": True, "stored": False}
+
+    incident_number = body.get("incident_number")
+    key = str(incident_number) if incident_number is not None else "unattributed"
+    bucket = _cost_bucket(key)
+    bucket["total_eur"] += eur
+    bucket["total_input_tokens"] += input_tokens
+    bucket["total_output_tokens"] += output_tokens
+    record = {
+        "agent": body.get("agent"),
+        "phase": body.get("phase"),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "eur_cost": eur,
+        "workflow_run_id": body.get("workflow_run_id"),
+        "ts": float(body.get("ts") or time.time()),
+    }
+    bucket["records"].append(record)
+    if len(bucket["records"]) > _COST_RECORDS_CAP:
+        bucket["records"] = bucket["records"][-_COST_RECORDS_CAP:]
+    return {"ok": True, "stored": True, "bucket": key}
+
+
+@app.get("/api/sentinel/incidents/{incident_number}/cost")
+def get_incident_cost(
+    incident_number: int,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Per-incident cost summary for the incidents panel."""
+
+    _require_token(x_pixelagents_token)
+    bucket = COSTS.get(str(incident_number)) or {
+        "total_eur": 0.0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "records": [],
+    }
+    return {
+        "incident_number": incident_number,
+        "total_eur": round(bucket["total_eur"], 6),
+        "total_input_tokens": bucket["total_input_tokens"],
+        "total_output_tokens": bucket["total_output_tokens"],
+        "record_count": len(bucket["records"]),
+    }
+
+
+@app.get("/api/sentinel/incidents/costs")
+def get_all_incident_costs(
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Aggregate cost map so the incidents panel can render a Cost column
+    in a single poll rather than N per-incident requests."""
+
+    _require_token(x_pixelagents_token)
+    out: dict[str, Any] = {}
+    for key, bucket in COSTS.items():
+        if not key.isdigit():
+            continue  # skip "chat" / "unattributed" buckets — UI is per-incident
+        out[key] = {
+            "total_eur": round(bucket["total_eur"], 6),
+            "total_input_tokens": bucket["total_input_tokens"],
+            "total_output_tokens": bucket["total_output_tokens"],
+        }
+    return {"costs": out, "ts": time.time()}
 
 
 # ─── Human-in-the-loop (HITL) ────────────────────────────────────────────
@@ -889,22 +1097,34 @@ async def stream_message_to_agent(
                         elif (
                             current_event == "response.completed"
                             and isinstance(ev_data, dict)
-                            and total_text_emitted == 0
                         ):
+                            response = ev_data.get("response") or {}
+
+                            # Capture token usage for the cost tracker
+                            # (best-effort; stays in the chat bucket).
+                            usage = response.get("usage") if isinstance(response, dict) else None
+                            if usage:
+                                _record_usage_locally(
+                                    incident_key="chat",
+                                    agent=agent_name,
+                                    phase="chat-stream",
+                                    usage=usage,
+                                )
+
                             # Last-resort fallback: walk the final response's
                             # output array and extract text from any message
                             # items we may have missed.
-                            response = ev_data.get("response") or {}
-                            output = response.get("output") or []
-                            if isinstance(output, list):
-                                collected = "".join(
-                                    _text_from_message_item(it)
-                                    for it in output
-                                    if isinstance(it, dict) and it.get("type") == "message"
-                                )
-                                if collected:
-                                    total_text_emitted += len(collected)
-                                    yield _sse_event("delta", {"text": collected})
+                            if total_text_emitted == 0:
+                                output = response.get("output") or []
+                                if isinstance(output, list):
+                                    collected = "".join(
+                                        _text_from_message_item(it)
+                                        for it in output
+                                        if isinstance(it, dict) and it.get("type") == "message"
+                                    )
+                                    if collected:
+                                        total_text_emitted += len(collected)
+                                        yield _sse_event("delta", {"text": collected})
 
                         elif current_event in ("response.failed", "response.incomplete"):
                             # Upstream explicitly signalled a failure mid-
@@ -1082,8 +1302,10 @@ def index() -> HTMLResponse:
     # URL can see it — same threat surface as the already-public /api/agents/state.
     # Gate the URL itself (e.g. ACA Easy Auth) before trusting this in production.
     token_js = json.dumps(token)
+    show_cost = os.getenv("SHOW_COST", "1").lower() in ("1", "true", "yes", "on")
+    show_cost_js = json.dumps(show_cost)
     injection = (
-        f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js} }};</script>'
+        f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js}, show_cost: {show_cost_js} }};</script>'
         f'<script src="/static/chat_drawer.js" defer></script>'
         f'<script src="/static/incidents_panel.js" defer></script>'
         f'<script src="/static/hitl_panel.js" defer></script>'

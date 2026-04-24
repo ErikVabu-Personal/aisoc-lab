@@ -137,6 +137,27 @@ resource "azurerm_container_app" "pixelagents" {
         name        = "ORCHESTRATOR_FUNCTION_KEY"
         secret_name = "orchestrator-function-key"
       }
+
+      # Per-incident cost accounting — chat-drawer calls also capture
+      # response.usage; these prices convert tokens → EUR locally.
+      # Sourced from Phase 2 so a price change happens in one place.
+      env {
+        name  = "TOKEN_PRICE_EUR_PER_1M_INPUT"
+        value = tostring(data.terraform_remote_state.aisoc.outputs.foundry_model_price_eur_per_1m_in)
+      }
+
+      env {
+        name  = "TOKEN_PRICE_EUR_PER_1M_OUTPUT"
+        value = tostring(data.terraform_remote_state.aisoc.outputs.foundry_model_price_eur_per_1m_out)
+      }
+
+      # Feature flag — set SHOW_COST=0 to hide the Cost column in the
+      # incidents panel (e.g. during a public demo where you don't want
+      # audience questions about EUR figures).
+      env {
+        name  = "SHOW_COST"
+        value = "1"
+      }
     }
   }
 

@@ -14,6 +14,7 @@
 
   const cfg = window.__PIXELAGENTS_CHAT || {};
   const TOKEN = cfg.token || '';
+  const SHOW_COST = cfg.show_cost !== false;
 
   if (!TOKEN) {
     console.warn('[incidents-panel] no token injected; panel disabled.');
@@ -33,6 +34,10 @@
     // Latest notice banner.
     // { kind: 'info' | 'success' | 'error', message, incidentNumber, ts }
     notice: null,
+    // Per-incident EUR totals, keyed by incident number (string).
+    // Refreshed on each loadIncidents poll so a running workflow shows
+    // its cost rising in real time.
+    costs: {},
   };
 
   // ── Root DOM ─────────────────────────────────────────────────────────────
@@ -52,7 +57,7 @@
       position: fixed;
       right: 16px;
       top: 16px;
-      width: 520px;
+      width: 720px;
       max-height: 55vh;
       background: var(--color-bg, #1e1e2e);
       border: 2px solid var(--color-border, #4a4a6a);
@@ -136,8 +141,33 @@
       white-space: nowrap;
     }
     #${rootId} .title-cell {
-      max-width: 260px;
+      max-width: 220px;
       word-wrap: break-word;
+    }
+    #${rootId} .owner-cell {
+      font-size: 14px;
+      white-space: nowrap;
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #${rootId} .owner-cell.agent-owner {
+      color: #dbeafe;
+      background: rgba(96, 165, 250, 0.18);
+      border: 1px solid rgba(96, 165, 250, 0.4);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-weight: 600;
+    }
+    #${rootId} .cost-cell {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 14px;
+      white-space: nowrap;
+      text-align: right;
+      color: #bbf7d0;
+    }
+    #${rootId} .cost-cell.zero {
+      color: var(--color-text-muted, #ffffff80);
     }
     #${rootId} .sev {
       display: inline-block;
@@ -319,6 +349,24 @@
       state.count = data.count || state.incidents.length;
       state.lastError = null;
       state.loadedOnce = true;
+
+      if (SHOW_COST) {
+        // Best-effort: fetch the cost map alongside the incidents list
+        // so the Cost column reflects in-flight workflow spend. Failure
+        // here doesn't disturb the main incidents view.
+        try {
+          const cRes = await fetch('/api/sentinel/incidents/costs', {
+            headers: { 'x-pixelagents-token': TOKEN },
+          });
+          if (cRes.ok) {
+            const cData = await cRes.json();
+            state.costs = cData.costs || {};
+          }
+        } catch (_) {
+          /* leave previous costs map in place */
+        }
+      }
+
       render();
     } catch (e) {
       state.lastError = e && e.message ? e.message : String(e);
@@ -371,12 +419,34 @@
           const numberAttr = inc.number == null ? '' : String(inc.number);
           const canRun = inc.number != null && !isRunning;
           const btnLabel = isRunning ? 'Running…' : 'Run workflow';
+
+          const owner = inc.owner || '';
+          const isAgent = /\bAgent\b/i.test(owner);
+          const ownerCell = owner
+            ? `<td class="owner-cell ${isAgent ? 'agent-owner' : ''}" title="${escapeHtml(owner)}">${escapeHtml(owner)}</td>`
+            : `<td class="owner-cell" style="opacity:0.5">—</td>`;
+
+          let costCell = '';
+          if (SHOW_COST) {
+            const c = inc.number != null ? state.costs[String(inc.number)] : null;
+            const eur = c ? Number(c.total_eur || 0) : 0;
+            if (eur > 0) {
+              // Format with up to 4 decimal places, trim trailing zeros.
+              const pretty = `€${eur.toFixed(4).replace(/\.?0+$/, '')}`;
+              costCell = `<td class="cost-cell" title="${c.total_input_tokens} in + ${c.total_output_tokens} out tokens">${escapeHtml(pretty)}</td>`;
+            } else {
+              costCell = `<td class="cost-cell zero">—</td>`;
+            }
+          }
+
           return `
             <tr class="${isRunning ? 'running' : ''}">
               <td class="num">${numCell}</td>
               <td class="title-cell">${escapeHtml(title)}</td>
               <td><span class="sev ${sevClass(sev)}">${escapeHtml(sev)}</span></td>
               <td><span class="status ${statusClass(status)}">${escapeHtml(status)}</span></td>
+              ${ownerCell}
+              ${costCell}
               <td>
                 <button
                   class="run-btn"
@@ -398,6 +468,8 @@
               <th>Title</th>
               <th>Severity</th>
               <th>Status</th>
+              <th>Assignee</th>
+              ${SHOW_COST ? '<th>Cost</th>' : ''}
               <th></th>
             </tr>
           </thead>
