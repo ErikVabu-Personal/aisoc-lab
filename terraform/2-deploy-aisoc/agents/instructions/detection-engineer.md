@@ -22,13 +22,14 @@ When asked to review the data and propose new analytics:
    cadence. Two good starting queries:
 
    ```kusto
-   // What event types exist and at what volume, last 24h
+   // What event types exist and at what volume, last 24h.
+   // NB: `first` / `last` are reserved in KQL — use `first_seen` etc.
    ContainerAppConsoleLogs_CL
    | where TimeGenerated > ago(24h)
    | where Stream_s == "stdout"
    | extend j = parse_json(Log_s)
    | where j.service == "ship-control-panel"
-   | summarize n = count(), first = min(TimeGenerated), last = max(TimeGenerated)
+   | summarize n = count(), first_seen = min(TimeGenerated), last_seen = max(TimeGenerated)
        by event = tostring(j.event)
    | order by n desc
    ```
