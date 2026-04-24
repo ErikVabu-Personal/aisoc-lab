@@ -323,12 +323,26 @@ def _assign_incident_owner(
     else:
         return
 
+    # Tag the runner call with the agent that's *taking over*, not
+    # "orchestrator". So when the assignee flips to "Triage Agent", the
+    # triage character lights up briefly via the runner's tool.call.start
+    # event — and we don't spawn a separate orchestrator character in
+    # the PixelAgents office. Derive the slug from display_name so the
+    # caller can keep using human-readable strings.
+    #   "Triage Agent"                    -> "triage"
+    #   "Investigator Agent (re-review)"  -> "investigator"
+    #   "Reporter Agent"                  -> "reporter"
+    lower = display_name.lower()
+    agent_slug = (
+        lower.split(" agent", 1)[0].strip().replace(" ", "-") or "orchestrator"
+    )
+
     try:
         result = _runner_post(
             runner_url,
             runner_bearer,
             {"tool_name": "update_incident", "arguments": args},
-            agent="orchestrator",
+            agent=agent_slug,
         )
         # The runner wraps tool errors as {ok: false} inside a 200 OK
         # response (so agents can recover). _runner_post only raises on
