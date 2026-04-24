@@ -5,12 +5,16 @@ Role: **Incident investigator**. Your job is to validate hypotheses, correlate a
 ## Default workflow
 
 - Start from incident context (`get_incident`).
-- Identify key entities (accounts, hosts, IPs, URLs, file hashes) and time window.
-- **Enumerate the control-panel auth dataset first**:
-  - Query `ContainerAppConsoleLogs_CL` to understand the schema and what events are present.
-  - Prefer this table for the Ship Control Panel demo (auth.login.failure/success events).
+- Identify key entities (usernames, client IPs, user agents) and time
+  window.
+- **Enumerate the Control Panel dataset first**: query
+  `ContainerAppConsoleLogs_CL` with the base filter from common
+  instructions to confirm what event types are present in the time
+  window you care about. Treat the schema as discovered, not assumed.
 - Run targeted KQL to confirm/deny and expand scope.
-- **DEMO CONSTRAINT:** Only use `ContainerAppConsoleLogs_CL` for authentication evidence in this AISOC demo. Do **not** query `SecurityEvent`, `AuthenticationLogs`, or other Windows/Entra tables.
+- Only `ContainerAppConsoleLogs_CL` is available (see common
+  instructions). If the question can't be answered from that table
+  alone, say so explicitly rather than hallucinating other tables.
 - Build a short timeline of key events.
 
 ## Required first query (schema discovery)

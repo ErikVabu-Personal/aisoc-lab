@@ -180,6 +180,15 @@
   document.head.appendChild(styleEl);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
+  function humanizeAgent(s) {
+    // "detection-engineer" -> "Detection Engineer".
+    return String(s || '')
+      .split(/[-_\s]+/)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+  }
+
   function escapeHtml(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;')
@@ -290,7 +299,7 @@
 
     const cards = state.questions
       .map((q) => {
-        const display = q.agent_display || q.agent || 'agent';
+        const display = humanizeAgent(q.agent_display || q.agent || 'agent');
         const draft = state.drafts[q.id] || '';
         const isSubmitting = !!state.submitting[q.id];
         const err = state.errors[q.id];

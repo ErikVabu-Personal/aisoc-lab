@@ -282,7 +282,13 @@
   }
 
   function capitalize(s) {
-    return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+    // Handles hyphenated / snake_cased agent slugs, so "detection-engineer"
+    // renders as "Detection Engineer" rather than "Detection-engineer".
+    return String(s || '')
+      .split(/[-_\s]+/)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
   }
 
   function getConversation(agent) {
