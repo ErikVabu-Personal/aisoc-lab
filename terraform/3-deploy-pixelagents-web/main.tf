@@ -104,6 +104,16 @@ resource "azurerm_container_app" "pixelagents" {
   }
 }
 
+# PixelAgents MI principal id, pulled through a splat so Terraform can propagate
+# the unknown value correctly when the identity block is being added to an
+# already-existing container app. Direct `identity[0].principal_id` indexing
+# can resolve to null during the refresh of an in-place update, causing
+# downstream role_assignments to report "missing principal_id" in a single-pass
+# apply. `one(... identity[*].principal_id)` avoids that.
+locals {
+  pixelagents_principal_id = one(azurerm_container_app.pixelagents.identity[*].principal_id)
+}
+
 # Foundry permissions for the PixelAgents MI — mirrors the orchestrator.
 #
 # - Cognitive Services OpenAI User: allows calling model deployments.
@@ -112,17 +122,17 @@ resource "azurerm_container_app" "pixelagents" {
 resource "azurerm_role_assignment" "pixelagents_foundry_openai_user" {
   scope                = data.terraform_remote_state.aisoc.outputs.foundry_account_id
   role_definition_name = "Cognitive Services OpenAI User"
-  principal_id         = azurerm_container_app.pixelagents.identity[0].principal_id
+  principal_id         = local.pixelagents_principal_id
 }
 
 resource "azurerm_role_assignment" "pixelagents_foundry_ai_user" {
   scope                = data.terraform_remote_state.aisoc.outputs.foundry_account_id
   role_definition_name = "Azure AI User"
-  principal_id         = azurerm_container_app.pixelagents.identity[0].principal_id
+  principal_id         = local.pixelagents_principal_id
 }
 
 output "pixelagents_principal_id" {
-  value       = azurerm_container_app.pixelagents.identity[0].principal_id
+  value       = local.pixelagents_principal_id
   description = "PixelAgents Web managed identity principal id (used for Foundry auth)."
 }
 

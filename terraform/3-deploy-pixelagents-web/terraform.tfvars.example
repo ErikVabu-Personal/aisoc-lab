@@ -1,0 +1,21 @@
+# PixelAgents Web (Phase 3) — example tfvars
+#
+# Copy to terraform.tfvars and edit as needed:
+#   cp terraform.tfvars.example terraform.tfvars
+
+# Optional overrides — defaults pick these up from Phase 1 state.
+# resource_group              = "rg-sentinel-test"
+# location                    = "westus"
+# container_app_environment_id = "/subscriptions/.../managedEnvironments/cae-..."
+
+# Container image tag. Deploy by SHA for reliable updates (see README Phase 4.3).
+# image = "ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:<GITHUB_SHA>"
+
+# Azure AI Foundry project endpoint for the ad-hoc chat endpoint
+# (POST /api/agents/{id}/message). Same value used on the orchestrator
+# Function App. Obtain after the Foundry project has been created via
+# scripts/deploy_foundry_project.py or the Azure Portal.
+#
+# Leave unset to deploy without chat capability — the endpoint will 500
+# with a clear error instead of silently breaking the rest of the UI.
+# foundry_project_endpoint = "https://<account>.services.ai.azure.com/api/projects/<project>"
