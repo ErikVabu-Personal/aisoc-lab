@@ -42,6 +42,13 @@ resource "azurerm_container_app" "pixelagents" {
   container_app_environment_id = local.env_id
   revision_mode                = "Single"
 
+  # System-assigned MI so the app can authenticate to Foundry for the ad-hoc
+  # chat endpoint (POST /api/agents/{id}/message). See the role assignments
+  # below for what this identity is granted.
+  identity {
+    type = "SystemAssigned"
+  }
+
   ingress {
     external_enabled = true
     target_port      = 8080
@@ -80,6 +87,14 @@ resource "azurerm_container_app" "pixelagents" {
         name  = "AISOC_RUNNER_BEARER_SECRET_NAME"
         value = try(data.terraform_remote_state.aisoc.outputs.runner_bearer_token_secret_name, "")
       }
+
+      # Foundry project endpoint for the ad-hoc chat endpoint.
+      # Empty string is allowed: the endpoint will 500 with a clear error
+      # rather than silently breaking other features.
+      env {
+        name  = "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT"
+        value = var.foundry_project_endpoint
+      }
     }
   }
 
@@ -87,6 +102,28 @@ resource "azurerm_container_app" "pixelagents" {
     name  = "pixelagents-token"
     value = random_password.pixelagents_token.result
   }
+}
+
+# Foundry permissions for the PixelAgents MI — mirrors the orchestrator.
+#
+# - Cognitive Services OpenAI User: allows calling model deployments.
+# - Azure AI User: allows invoking Foundry Agent Service operations
+#   (needed for /openai/v1/responses with agent_reference).
+resource "azurerm_role_assignment" "pixelagents_foundry_openai_user" {
+  scope                = data.terraform_remote_state.aisoc.outputs.foundry_account_id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = azurerm_container_app.pixelagents.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "pixelagents_foundry_ai_user" {
+  scope                = data.terraform_remote_state.aisoc.outputs.foundry_account_id
+  role_definition_name = "Azure AI User"
+  principal_id         = azurerm_container_app.pixelagents.identity[0].principal_id
+}
+
+output "pixelagents_principal_id" {
+  value       = azurerm_container_app.pixelagents.identity[0].principal_id
+  description = "PixelAgents Web managed identity principal id (used for Foundry auth)."
 }
 
 output "pixelagents_url" {

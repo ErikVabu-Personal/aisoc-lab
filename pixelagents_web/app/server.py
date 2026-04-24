@@ -8,6 +8,9 @@ from typing import Any, Deque, Dict
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
+# `requests` and `azure-identity` are imported lazily inside the chat handler so
+# the module stays import-safe in environments where the chat feature is unused.
+
 
 def _slug_agent(name: str) -> str:
     import re
@@ -125,6 +128,182 @@ def api_agents_state() -> dict[str, Any]:
         )
 
     return {"agents": agents, "ts": now, "cooldown_sec": cooldown, "roster": roster}
+
+
+def _ai_projects_token() -> str:
+    """Acquire a bearer token for the Foundry Responses API."""
+
+    from azure.identity import DefaultAzureCredential
+
+    return DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
+
+
+def _response_text(data: Any) -> str:
+    """Extract output text from an OpenAI Responses-shaped payload.
+
+    Mirrors the helper used in the orchestrator so behaviour is consistent
+    between the two call paths.
+    """
+
+    if isinstance(data, dict):
+        if isinstance(data.get("output_text"), str):
+            return data["output_text"]
+        out = data.get("output")
+        if isinstance(out, list):
+            texts: list[str] = []
+            for item in out:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        texts.append(block["text"])
+            if texts:
+                return "\n".join(texts)
+    return json.dumps(data)[:12000]
+
+
+def _detect_tool_calls(raw: dict, tool_names: set[str] | None = None) -> list[dict]:
+    """Return every tool invocation found in a Foundry Responses payload.
+
+    If ``tool_names`` is provided, only invocations whose resolved name is in
+    the set are returned. The shape of each item is {name, arguments}.
+    """
+
+    hits: list[dict] = []
+    output = (raw or {}).get("output") or []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") not in ("openapi_call", "tool_call", "function_call"):
+            continue
+        args = item.get("arguments") or {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {}
+        name = (
+            (args.get("tool_name") if isinstance(args, dict) else None)
+            or item.get("name")
+            or (item.get("tool") or {}).get("name")
+        )
+        if name is None:
+            continue
+        if tool_names is not None and name not in tool_names:
+            continue
+        hits.append({"name": name, "arguments": args if isinstance(args, dict) else {}})
+    return hits
+
+
+@app.post("/api/agents/{agent_id}/message")
+async def send_message_to_agent(
+    agent_id: str,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Send an ad-hoc user message to a Foundry agent and return its response.
+
+    Backend-only MVP for interactive PixelAgents: gated by the existing
+    ``x-pixelagents-token`` so it can be exercised by curl without a UI yet.
+    A proper user-auth story (e.g. ACA Easy Auth with Entra) should land
+    before this endpoint is surfaced to a browser.
+
+    Note: this does not enforce read-only scoping. Whatever tools the named
+    agent has attached in Foundry, it can call — including write tools if
+    the user's message convinces it to. Layer a scoping mechanism on top
+    before exposing broadly.
+    """
+
+    _require_token(x_pixelagents_token)
+
+    body: dict[str, Any]
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    message = body.get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise HTTPException(status_code=400, detail="Missing arguments.message (string)")
+
+    # Normalise agent id to the same slug form used elsewhere so "Triage",
+    # "triage", and "triage-agent" don't split into separate cache buckets.
+    agent_name = _slug_agent(agent_id)
+    if not agent_name or agent_name == "unknown":
+        raise HTTPException(status_code=400, detail="Invalid agent id")
+
+    project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
+    if not project_endpoint:
+        raise HTTPException(status_code=500, detail="Missing AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
+
+    import requests as _requests
+
+    url = project_endpoint.rstrip("/") + "/openai/v1/responses"
+    payload = {
+        "input": message.strip(),
+        "agent_reference": {"name": agent_name, "type": "agent_reference"},
+    }
+
+    try:
+        token = _ai_projects_token()
+    except Exception as e:  # credential acquisition failed (MI not assigned, etc.)
+        raise HTTPException(status_code=500, detail=f"Foundry auth failed: {e!r}") from e
+
+    r = _requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=240,
+    )
+
+    # Pass Foundry's status through as a 502 so the caller can tell the
+    # difference between "this service failed" and "the upstream agent failed".
+    if r.status_code >= 400:
+        detail: Any
+        try:
+            detail = r.json()
+        except Exception:
+            detail = r.text[:4000]
+        raise HTTPException(status_code=502, detail={"foundry_status": r.status_code, "body": detail})
+
+    raw = r.json() if isinstance(r.json(), dict) else {}
+    text = _response_text(raw)
+    tool_calls = _detect_tool_calls(raw)
+
+    # Record a synthetic activity event so the PixelAgents UI can show the
+    # agent reacting even on runs that don't happen to call a runner tool.
+    now = time.time()
+    EVENTS.append(
+        {
+            "type": "tool.call.end",
+            "agent": agent_name,
+            "state": "idle",
+            "tool_name": "adhoc_chat",
+            "ts": now,
+        }
+    )
+    AGENTS[agent_name] = {
+        **AGENTS.get(agent_name, {}),
+        "agent": agent_name,
+        "state": "idle",
+        "last_event": {"type": "tool.call.end", "tool_name": "adhoc_chat", "ts": now},
+        "updated_at": now,
+    }
+
+    return {
+        "ok": True,
+        "agent": agent_name,
+        "text": text,
+        "tool_calls": tool_calls,
+    }
 
 
 @app.post("/events")

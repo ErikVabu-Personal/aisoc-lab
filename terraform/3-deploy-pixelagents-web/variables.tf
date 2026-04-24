@@ -36,3 +36,16 @@ variable "create_log_analytics" {
   description = "Create a Log Analytics workspace for ACA (if env is created)"
   default     = true
 }
+
+variable "foundry_project_endpoint" {
+  type        = string
+  description = <<-EOT
+    Azure AI Foundry project endpoint, e.g.
+    "https://<account>.services.ai.azure.com/api/projects/<project>".
+    Required for the ad-hoc chat endpoint (POST /api/agents/{id}/message).
+    Leave empty to disable chat — the endpoint will return a clear 500 in that case.
+    Mirrors the orchestrator's env var; Foundry does not expose a reliable
+    Terraform output for this, so it is wired manually after project creation.
+  EOT
+  default     = ""
+}
