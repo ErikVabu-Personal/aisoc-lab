@@ -53,7 +53,7 @@
       position: fixed;
       right: 16px;
       bottom: 16px;
-      width: 440px;
+      width: 480px;
       max-height: 75vh;
       background: rgba(10, 12, 18, 0.82);
       backdrop-filter: blur(8px);
@@ -62,7 +62,7 @@
       border-radius: 8px;
       color: #e7e9ee;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 16px;
+      font-size: 18px;
       line-height: 1.45;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
       z-index: 9999;
@@ -96,7 +96,7 @@
       border-radius: 4px;
       padding: 4px 10px;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 15px;
     }
     #${rootId} header .back:hover {
       background: rgba(255, 255, 255, 0.06);
@@ -181,11 +181,11 @@
       border: 1px solid rgba(239, 68, 68, 0.4);
       color: #fecaca;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 13px;
+      font-size: 14px;
     }
     #${rootId} .msg .tool-calls {
       margin-top: 4px;
-      font-size: 13px;
+      font-size: 14px;
       opacity: 0.7;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
@@ -232,8 +232,8 @@
       color: #e7e9ee;
       padding: 8px 10px;
       font: inherit;
-      min-height: 44px;
-      max-height: 140px;
+      min-height: 52px;
+      max-height: 160px;
     }
     #${rootId} .compose textarea:focus {
       outline: none;

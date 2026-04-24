@@ -51,7 +51,7 @@
       position: fixed;
       right: 16px;
       top: 16px;
-      width: 440px;
+      width: 480px;
       max-height: 45vh;
       background: rgba(10, 12, 18, 0.82);
       backdrop-filter: blur(8px);
@@ -60,7 +60,7 @@
       border-radius: 8px;
       color: #e7e9ee;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 15px;
+      font-size: 17px;
       line-height: 1.45;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
       z-index: 9999;
@@ -92,7 +92,7 @@
       border: 1px solid rgba(96, 165, 250, 0.5);
       border-radius: 999px;
       padding: 2px 8px;
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 600;
     }
     #${rootId} header .toggle {
@@ -111,7 +111,7 @@
     #${rootId} table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 13px;
+      font-size: 15px;
     }
     #${rootId} thead th {
       text-align: left;
@@ -138,14 +138,14 @@
       white-space: nowrap;
     }
     #${rootId} .title-cell {
-      max-width: 210px;
+      max-width: 240px;
       word-wrap: break-word;
     }
     #${rootId} .sev {
       display: inline-block;
-      padding: 1px 6px;
+      padding: 2px 7px;
       border-radius: 4px;
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -173,7 +173,7 @@
       border: 1px solid rgba(96, 165, 250, 0.4);
     }
     #${rootId} .status {
-      font-size: 12px;
+      font-size: 13px;
       opacity: 0.85;
       white-space: nowrap;
     }
@@ -197,7 +197,7 @@
       color: #fecaca;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-style: normal;
-      font-size: 12px;
+      font-size: 13px;
       text-align: left;
       white-space: pre-wrap;
     }
@@ -220,7 +220,7 @@
     }
     #${rootId} .notice {
       padding: 8px 12px;
-      font-size: 13px;
+      font-size: 14px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       display: flex;
       align-items: center;
@@ -239,7 +239,7 @@
       color: #fecaca;
       white-space: pre-wrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 12px;
+      font-size: 13px;
     }
     #${rootId} .notice .dismiss {
       margin-left: auto;
@@ -258,10 +258,10 @@
       border: 1px solid rgba(96, 165, 250, 0.5);
       color: #dbeafe;
       border-radius: 4px;
-      padding: 3px 10px;
+      padding: 4px 12px;
       cursor: pointer;
       font: inherit;
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 600;
       white-space: nowrap;
     }
