@@ -1,17 +1,11 @@
-variable "resource_group" {
-  type        = string
-  description = "Optional override: Resource group name. If null, uses Phase 1 remote state output."
-  default     = null
-}
-
-variable "azure_location" {
-  type        = string
-  description = "Optional override: Azure region. If null, inherits Phase 1's selected_location."
-  default     = null
-}
-
 # NOTE: `pixelagents_token` is output as sensitive. This is fine for a demo stack, but be mindful
 # it will still exist in local terraform state.
+#
+# The resource group and Azure region are inherited directly from
+# Phase 1's remote-state outputs — no overrides here, matching how
+# Phase 2 handles the same concern. If you ever need to deploy
+# PixelAgents Web into a different RG / region than the rest of the
+# stack, reintroduce variables and wrap the consumers in coalesce().
 
 variable "container_app_environment_id" {
   type        = string

@@ -1,7 +1,7 @@
 locals {
-  # Default to Phase 1 (Sentinel) RG/location unless explicitly overridden.
-  rg_effective       = coalesce(var.resource_group, data.terraform_remote_state.sentinel.outputs.resource_group)
-  location_effective = coalesce(var.azure_location, data.terraform_remote_state.sentinel.outputs.selected_location)
+  # Inherit RG + region from Phase 1 (Sentinel) — same pattern as Phase 2.
+  rg_effective       = data.terraform_remote_state.sentinel.outputs.resource_group
+  location_effective = data.terraform_remote_state.sentinel.outputs.selected_location
 
   # Prefer reusing Phase 1 Container Apps Environment if available.
   phase1_env_id = try(data.terraform_remote_state.sentinel.outputs.container_app_environment_id, "")

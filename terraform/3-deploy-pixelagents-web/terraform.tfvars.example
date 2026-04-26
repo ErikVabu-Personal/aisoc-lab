@@ -3,9 +3,14 @@
 # Copy to terraform.tfvars and edit as needed:
 #   cp terraform.tfvars.example terraform.tfvars
 
-# Optional overrides — defaults pick these up from Phase 1 state.
-# resource_group              = "rg-sentinel-test"
-# azure_location              = "westus"
+# RG + Azure region are inherited directly from Phase 1 — no override
+# variables needed. If you want PixelAgents Web in a different RG /
+# region than the rest of the stack, reintroduce them in variables.tf
+# and wrap the consumers in coalesce().
+
+# Optional: reuse a pre-existing Container Apps Environment.
+# Leave unset to reuse Phase 1's env when available, or create a new
+# one if Phase 1 didn't expose one.
 # container_app_environment_id = "/subscriptions/.../managedEnvironments/cae-..."
 
 # Container image tag. Deploy by SHA for reliable updates (see README Phase 4.3).

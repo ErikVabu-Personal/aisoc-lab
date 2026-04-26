@@ -117,15 +117,11 @@ add_var() {
   USER_VARS["$tf_name"]="$value"
 }
 
-# Friendly alias: --resource-group=<name> sets BOTH the Phase-1
-# variable (`resource_group_name` — Phase 1 creates the RG with that
-# name) and the Phase-3 override (`resource_group` — explicitly tell
-# Phase 3 to use it instead of inheriting from Phase 1 remote state).
-# Saves the user from having to know the per-phase variable names.
+# Friendly alias: --resource-group=<name> maps to Phase 1's variable
+# `resource_group_name`. Phase 1 creates the RG with that name;
+# Phases 2 and 3 inherit it via Phase 1's remote-state output.
 set_resource_group() {
-  local rg="$1"
-  USER_VARS["resource_group_name"]="$rg"
-  USER_VARS["resource_group"]="$rg"
+  USER_VARS["resource_group_name"]="$1"
 }
 
 while [[ $# -gt 0 ]]; do
