@@ -5,9 +5,9 @@ variable "azure_location" {
 }
 
 variable "auto_select_location_and_sku" {
-  description = "If true, uses Azure CLI to pick the first available (location, VM SKU) from the candidate lists"
+  description = "If true, uses Azure CLI to pick the first available (location, VM SKU) from the candidate lists. Default is false so the deploy is deterministic — `azure_location` + `vm_size` are used as-is."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "location_candidates" {

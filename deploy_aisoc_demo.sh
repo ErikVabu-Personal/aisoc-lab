@@ -182,9 +182,12 @@ ok "prereqs satisfied"
 # so the workflows never hold a long-lived secret. Idempotent: if the
 # SP, federated credential, role assignment, and repo variables already
 # exist this is a no-op.
+OIDC_STATUS=""
 if [[ "$SKIP_OIDC" == "1" ]]; then
   say "Skipping OIDC bootstrap (--skip-oidc-bootstrap)"
   SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+  TENANT_ID="$(az account show --query tenantId -o tsv)"
+  OIDC_STATUS="skipped (--skip-oidc-bootstrap)"
 else
 say "Bootstrapping OIDC trust between GitHub and Azure"
 
@@ -245,6 +248,7 @@ gh variable set AZURE_TENANT_ID       --repo "$REPO" --body "$TENANT_ID"       >
 gh variable set AZURE_SUBSCRIPTION_ID --repo "$REPO" --body "$SUBSCRIPTION_ID" >/dev/null
 
 ok "OIDC trust ready (workflows will authenticate to subscription $SUBSCRIPTION_ID)"
+OIDC_STATUS="bootstrapped (subject=$OIDC_SUBJECT)"
 fi  # SKIP_OIDC
 
 # ── Pre-flight: required Phase 1 vars ────────────────────────────────
@@ -253,6 +257,48 @@ fi  # SKIP_OIDC
 if [[ -z "${TF_VAR_admin_password:-}" && ! -f "terraform/1-deploy-sentinel/terraform.tfvars" ]]; then
   die "admin_password is required for Phase 1.\n  Pass it via --admin-password='...', or set TF_VAR_admin_password in the env, or create terraform/1-deploy-sentinel/terraform.tfvars."
 fi
+
+# ── Plan summary ─────────────────────────────────────────────────────
+# Show the user exactly what's about to happen before any terraform
+# apply runs — subscription, RG, region, model choice, etc. Values are
+# resolved from CLI flags / env vars (TF_VAR_*) with the variable
+# defaults from each phase's variables.tf as fallbacks.
+print_plan_summary() {
+  local rg="${TF_VAR_resource_group_name:-rg-sentinel-test}"
+  local region="${TF_VAR_azure_location:-westeurope}"
+  local vm_size="${TF_VAR_vm_size:-Standard_D2s_v3}"
+  local admin_user="${TF_VAR_admin_username:-azureadmin}"
+  local foundry_region="${TF_VAR_foundry_location:-<inherits Phase 1 region>}"
+  local foundry_model="${TF_VAR_foundry_model_choice:-<unset; falls back to script default>}"
+  local sub_name
+  sub_name="$(az account show --query name -o tsv 2>/dev/null || echo '?')"
+
+  printf '\n%s%s── Deploy plan ──────────────────────────────────────────────────────%s\n' "$BOLD" "$CYAN" "$NC"
+  printf '  Subscription      : %s (%s)\n' "$SUBSCRIPTION_ID" "$sub_name"
+  printf '  Tenant            : %s\n' "$TENANT_ID"
+  printf '  Resource group    : %s   [Phase 1 will create / use]\n' "$rg"
+  printf '  Azure region      : %s   [Sentinel + lab VM]\n' "$region"
+  printf '  VM size           : %s\n' "$vm_size"
+  printf '  VM admin user     : %s\n' "$admin_user"
+  printf '  Foundry region    : %s   [Phase 2]\n' "$foundry_region"
+  printf '  Foundry model     : %s\n' "$foundry_model"
+  printf '  GitHub repo       : %s\n' "$REPO"
+  printf '  OIDC              : %s\n' "$OIDC_STATUS"
+  printf '%s%s─────────────────────────────────────────────────────────────────────%s\n' "$BOLD" "$CYAN" "$NC"
+
+  # Detect any per-phase tfvars files; their values silently override the
+  # banner above. Call them out explicitly so users aren't surprised.
+  local tfvars_files=()
+  for d in terraform/1-deploy-sentinel terraform/2-deploy-aisoc terraform/3-deploy-pixelagents-web; do
+    [[ -f "$d/terraform.tfvars" ]] && tfvars_files+=("$d/terraform.tfvars")
+  done
+  if [[ ${#tfvars_files[@]} -gt 0 ]]; then
+    warn "These terraform.tfvars files exist and will OVERRIDE the values shown above:"
+    for f in "${tfvars_files[@]}"; do printf '  - %s\n' "$f" >&2; done
+  fi
+  printf '\n'
+}
+print_plan_summary
 
 apply_phase() {
   local dir="$1"
