@@ -248,7 +248,11 @@ if [[ "$ACTION" == "destroy" ]]; then
       warn "$dir is not initialized (.terraform/ missing) — skipping"
       return 0
     fi
-    ( cd "$dir" && terraform destroy -auto-approve -input=false )
+    # init -upgrade reconciles the lock file in case providers were
+    # added since the last apply (e.g. we added null_resource blocks
+    # which require hashicorp/null). Without this, destroy fails with
+    # "Inconsistent dependency lock file".
+    ( cd "$dir" && terraform init -upgrade -input=false && terraform destroy -auto-approve -input=false )
   }
 
   destroy_phase terraform/3-deploy-pixelagents-web
