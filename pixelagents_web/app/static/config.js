@@ -155,16 +155,18 @@
     return `${Math.floor(sec / 86400)}d ago`;
   }
 
-  function statusOf(a) {
-    return (a && a.inferred_status) || a.state || 'idle';
-  }
+  // /api/agents/state returns each agent as
+  //   {id, status, tool_name, last_start_ts, last_event_type, ...}
+  // — wrap so the rest of this file can keep using readable accessors.
+  function statusOf(a) { return (a && a.status) || 'idle'; }
+  function nameOf(a)   { return (a && (a.id || a.agent)) || '?'; }
 
   function renderAgent(a) {
-    const name = String(a.agent || '?');
+    const name = String(nameOf(a));
     const status = statusOf(a);
-    const lastEvent = a.last_event || '—';
+    const lastEvent = a.last_event_type || '—';
     const lastStart = a.last_start_ts ? `${fmtTs(a.last_start_ts)} (${fmtAgo(a.last_start_ts)})` : null;
-    const toolName = a.last_tool_name || null;
+    const toolName = a.tool_name || null;
     const showRaw = expanded.has(name);
 
     let html = '<div class="card">';

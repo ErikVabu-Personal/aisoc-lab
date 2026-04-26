@@ -247,6 +247,11 @@
     return text || (last.role === 'assistant' ? 'Agent is thinking…' : '…');
   }
 
+  // /api/agents/state returns each agent as {id, status, tool_name, ...} —
+  // wrap so the rest of this file can keep reading `agent` / `status`.
+  function agentName(a) { return (a && (a.id || a.agent)) || ''; }
+  function agentStatus(a) { return (a && a.status) || 'idle'; }
+
   // ── Rendering ───────────────────────────────────────────────────────
   let rootEl = null;
 
@@ -286,13 +291,14 @@
   }
 
   function renderChatItem(a) {
-    const agent = a.agent;
+    const agent = agentName(a);
+    if (!agent) return '';
     const id = `chat-${agent}`;
     const expanded = STATE.expanded.has(id);
     const draft = STATE.drafts.chat[agent] || '';
     const sending = STATE.sending.has(id);
     const chev = expanded ? '▾' : '▸';
-    const status = (a && a.inferred_status) || a.state || 'idle';
+    const status = agentStatus(a);
     const head = `
       <div class="head" data-toggle="${id}">
         <span class="dot ${status}"></span>
