@@ -293,8 +293,20 @@ LOGIN_HTML = """\
 </head>
 <body>
   <div class="card">
-    <img src="/static/nviso-cruises-logo.svg" alt="NVISO Cruises"
-         style="display:block; margin:0 auto 14px; height:54px;">
+    <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:14px;">
+      <span style="display:inline-flex; flex-direction:column; align-items:flex-start; line-height:1;">
+        <img src="/static/nviso-logo.png" alt="NVISO" style="height:36px; display:block;">
+        <span style="font-size:10px; font-weight:700; letter-spacing:0.40em; color:#0099CC; margin-top:5px; padding-left:2px;">CRUISES</span>
+      </span>
+      <svg viewBox="0 0 90 60" style="width:60px; height:42px;" aria-hidden="true">
+        <polygon points="34,4 46,4 48,18 32,18" fill="#7DD9F2"/>
+        <polygon points="22,18 60,18 56,28 26,28" fill="#33B0DD"/>
+        <polygon points="14,28 70,28 66,40 18,40" fill="#0099CC"/>
+        <polygon points="6,40 80,40 84,52 2,52" fill="#0F6BAA"/>
+        <polygon points="2,52 84,52 76,64 10,64" fill="#0E5C8C"/>
+        <path d="M-4 70 Q 6 66 16 70 T 36 70 T 56 70 T 76 70 T 90 70" stroke="#33B0DD" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+      </svg>
+    </div>
     <p class="subtitle" style="text-align:center; margin-top:0;">
       Agentic SOC Demo — sign in to continue
     </p>
@@ -403,10 +415,37 @@ NAV_CSS = """\
     align-items: center !important;
     text-decoration: none !important;
     height: 44px !important;
+    gap: 12px !important;
   }
-  #aisoc-nav .brand img {
-    height: 44px !important;
+  /* NVISO wordmark (PNG) + "CRUISES" subtitle stacked. */
+  #aisoc-nav .brand-mark {
+    display: inline-flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    line-height: 1 !important;
+  }
+  #aisoc-nav .brand-mark img {
+    height: 32px !important;
     width: auto !important;
+    display: block !important;
+  }
+  #aisoc-nav .brand-mark .tag {
+    font-size: 9px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.40em !important;
+    color: var(--aisoc-nav-accent) !important;
+    margin-top: 4px !important;
+    padding-left: 2px !important;
+  }
+  /* Geometric cruise-ship icon to the right of the wordmark. */
+  #aisoc-nav .brand-ship {
+    display: inline-flex !important;
+    align-items: center !important;
+    height: 44px !important;
+  }
+  #aisoc-nav .brand-ship svg {
+    width: 56px !important;
+    height: 36px !important;
     display: block !important;
   }
   #aisoc-nav .tabs { display: flex !important; gap: 4px !important; }
@@ -448,8 +487,30 @@ NAV_CSS = """\
 """
 
 
+# Geometric cruise-ship icon, inlined so we don't need a second
+# round-trip for the brand mark. Origami / triangulated facets in the
+# NVISO blue palette — visually consistent with the NVISO bird mark
+# but unmistakably a ship.
+SHIP_SVG_INLINE = (
+    '<svg viewBox="0 0 90 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+    '<polygon points="34,4 46,4 48,18 32,18" fill="#7DD9F2"/>'
+    '<polygon points="22,18 60,18 56,28 26,28" fill="#33B0DD"/>'
+    '<polygon points="14,28 70,28 66,40 18,40" fill="#0099CC"/>'
+    '<polygon points="6,40 80,40 84,52 2,52" fill="#0F6BAA"/>'
+    '<polygon points="2,52 84,52 76,64 10,64" fill="#0E5C8C"/>'
+    '<path d="M-4 70 Q 6 66 16 70 T 36 70 T 56 70 T 76 70 T 90 70" '
+    'stroke="#33B0DD" stroke-width="2.4" fill="none" stroke-linecap="round"/>'
+    '</svg>'
+)
+
+
 def _render_nav(active: str, current_user: str) -> str:
-    """Render the top-nav. ``active`` selects which tab gets highlighted."""
+    """Render the top-nav. ``active`` selects which tab gets highlighted.
+
+    Brand mark is composed from the real NVISO wordmark PNG plus an
+    inline SVG ship. The PNG must live at /static/nviso-logo.png; if
+    it's missing the alt text "NVISO" shows in its place.
+    """
     tabs = (
         ("live",      "/",          "Live Agent View"),
         ("dashboard", "/dashboard", "Dashboard"),
@@ -462,7 +523,11 @@ def _render_nav(active: str, current_user: str) -> str:
     return (
         '<nav id="aisoc-nav">'
         '  <a href="/dashboard" class="brand">'
-        '    <img src="/static/nviso-cruises-logo.svg" alt="NVISO Cruises">'
+        '    <span class="brand-mark">'
+        '      <img src="/static/nviso-logo.png" alt="NVISO">'
+        '      <span class="tag">CRUISES</span>'
+        '    </span>'
+        f'    <span class="brand-ship">{SHIP_SVG_INLINE}</span>'
         '  </a>'
         '  <div class="tabs">' + "".join(items) + '</div>'
         '  <div class="userbar">'
