@@ -26,7 +26,14 @@ jobs:
     env:
       RG: ${{ inputs.resource_group || vars.AISOC_RESOURCE_GROUP }}
       FUNCTION_APP_NAME: ${{ inputs.function_app_name || vars.AISOC_SOC_GATEWAY_FUNCTION_NAME }}
-      RUNNER_NAME: ${{ vars.AISOC_RUNNER_NAME }}
+      # Note: don't define RUNNER_NAME at job level — GitHub Actions
+      # has a built-in env var of the same name (the runner machine's
+      # name) that the runner agent re-injects before each step's
+      # process starts, silently overriding our value. We pass the
+      # AISOC runner Container App name via AISOC_RUNNER_NAME instead
+      # and re-bind it to RUNNER_NAME inside the run block (where local
+      # assignments win over the runner's injection).
+      AISOC_RUNNER_NAME: ${{ vars.AISOC_RUNNER_NAME }}
 
     steps:
       - name: Checkout
@@ -91,9 +98,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$RUNNER_NAME" ]]; then
+          if [[ -z "$AISOC_RUNNER_NAME" ]]; then
             echo "::warning::AISOC_RUNNER_NAME repo variable not set; skipping runner re-wire"
             exit 0
           fi
+          # Local assignment — wins over the GHA built-in RUNNER_NAME
+          # for the rest of this shell + any subprocess we spawn.
+          RUNNER_NAME="$AISOC_RUNNER_NAME"
           export RG FUNC_APP="$FUNCTION_APP_NAME" RUNNER_NAME
           terraform/2-deploy-aisoc/scripts/configure_runner_socgateway_key.sh
