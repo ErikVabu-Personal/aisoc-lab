@@ -453,8 +453,36 @@ ok "Function App code deployed"
 say "Foundry bootstrap"
 ( cd terraform/2-deploy-aisoc && ./scripts/deploy_foundry_project.sh )
 ( cd terraform/2-deploy-aisoc && ./scripts/deploy_prompt_agents_with_runner_tools.sh )
-( cd terraform/2-deploy-aisoc && ./scripts/deploy_foundry_workflow.sh )
-ok "Foundry project + agents + workflow seeded"
+
+# Foundry workflow upsert is OPTIONAL.
+#
+# The script POSTs to the Foundry portal's internal nextgen API
+# (https://ai.azure.com/nextgen/api/query). That endpoint expects a
+# portal-session token, not the AAD token `az` mints — so it fails
+# with 401 "LoginRequired" when called from a CLI/CI context.
+#
+# Critically, NOTHING in the production pipeline consumes this
+# workflow definition: the orchestrator Function App calls Foundry
+# agents directly via the Responses API. The "workflow" is purely a
+# portal-visualization convenience for triggering the pipeline from
+# the Foundry Studio UI.
+#
+# So: try it, but don't fail the deploy if it doesn't take.
+WORKFLOW_DEPLOY_OK=1
+if ! ( cd terraform/2-deploy-aisoc && ./scripts/deploy_foundry_workflow.sh ); then
+  WORKFLOW_DEPLOY_OK=0
+  warn "Foundry workflow upsert failed (portal nextgen API rejected the CLI token)."
+  warn "This step is OPTIONAL — the orchestrator runs without a registered Foundry workflow."
+  warn "If you want the workflow visible in Foundry Studio, deploy"
+  warn "  terraform/2-deploy-aisoc/workflows/aisoc-incident-pipeline.yaml"
+  warn "manually via the portal (Workflows → Import YAML)."
+fi
+
+if [[ "$WORKFLOW_DEPLOY_OK" == "1" ]]; then
+  ok "Foundry project + agents + workflow seeded"
+else
+  ok "Foundry project + agents seeded (workflow registration skipped — see warning above)"
+fi
 
 # ── 5) Phase 3 — PixelAgents Web ─────────────────────────────────────
 say "Phase 3: PixelAgents Web"
