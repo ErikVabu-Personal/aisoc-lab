@@ -150,6 +150,61 @@
     #${ROOT_ID} .notice.error   { background: rgba(239,68,68,0.10); color: #991b1b;
                                    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                                    white-space: pre-wrap; }
+
+    #${ROOT_ID} .runs-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 10px; border: 1px solid #cbd5e1; border-radius: 999px;
+      background: #f9fafb; color: #374151;
+      font-size: 12px; font-weight: 600;
+      cursor: pointer; user-select: none;
+    }
+    #${ROOT_ID} .runs-badge:hover { background: #e5e7eb; }
+    #${ROOT_ID} .runs-badge.fail { border-color: #ef4444; color: #991b1b; background: rgba(239,68,68,0.08); }
+    #${ROOT_ID} .runs-badge.ok   { border-color: #22c55e; color: #166534; background: rgba(34,197,94,0.10); }
+    #${ROOT_ID} .runs-badge.run  { border-color: #0099cc; color: #1e40af; background: rgba(0,153,204,0.10); }
+
+    #${ROOT_ID} tr.runs-row > td {
+      padding: 0 14px 12px !important;
+      background: #f9fafb;
+      border-top: none !important;
+    }
+    #${ROOT_ID} .runs-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    #${ROOT_ID} .runs-table th {
+      text-align: left;
+      padding: 6px 8px;
+      color: #6b7280;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    #${ROOT_ID} .runs-table td {
+      padding: 6px 8px;
+      border-top: 1px solid #f3f4f6;
+      vertical-align: top;
+    }
+    #${ROOT_ID} .runs-table tr.run-summary { cursor: pointer; }
+    #${ROOT_ID} .runs-table tr.run-summary:hover { background: #ffffff; }
+    #${ROOT_ID} .runs-table tr.run-detail > td {
+      background: #ffffff;
+      padding: 8px 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #1f2937;
+    }
+    #${ROOT_ID} .runs-table tr.run-detail.failed > td { color: #991b1b; background: rgba(239,68,68,0.06); }
+    #${ROOT_ID} .runs-empty {
+      padding: 8px;
+      color: #6b7280;
+      font-style: italic;
+      font-size: 12px;
+    }
   `;
   const style = document.createElement('style');
   style.textContent = css;
@@ -161,6 +216,10 @@
 
   let incidents = [];
   let costs = {};                  // map keyed by incident number (string)
+  let runsSummary = {};            // map: incident_number -> {count, last_status, ...}
+  const runsDetail = {};           // map: incident_number -> [run record, ...] (lazy-fetched)
+  const expandedIncidents = new Set();  // incident numbers whose run list is open
+  const expandedRuns = new Set();        // run_ids whose error/summary is open
   let currentIncident = null;      // { incident_number, started_at } or null
   let notice = null;               // { kind: 'info'|'success'|'error', text: string }
 
@@ -197,6 +256,20 @@
     if (secs < 60) return `${Math.floor(secs)}s`;
     const m = Math.floor(secs / 60), s = Math.floor(secs % 60);
     return `${m}m${String(s).padStart(2, '0')}s`;
+  }
+
+  function fmtDuration(start, end) {
+    if (!start) return '';
+    const e = end || (Date.now() / 1000);
+    const sec = Math.max(0, e - start);
+    return fmtElapsed(sec);
+  }
+
+  function statusIcon(status) {
+    if (status === 'completed') return '<span style="color:#166534;font-weight:700;">✓</span>';
+    if (status === 'failed')    return '<span style="color:#991b1b;font-weight:700;">✗</span>';
+    if (status === 'running')   return '<span class="row-spinner" style="vertical-align:middle;"></span>';
+    return '<span style="color:#6b7280;">·</span>';
   }
 
   function activeWorkflowSummary() {
@@ -248,6 +321,7 @@
         + '<th style="width:110px;">Severity</th>'
         + '<th style="width:90px;">Status</th>'
         + '<th class="cost" style="width:120px;">Cost</th>'
+        + '<th style="width:90px;">Runs</th>'
         + '<th style="width:130px;"></th>'
         + '</tr></thead>';
       body += '<tbody>';
@@ -256,12 +330,29 @@
         const running = isRunning(num);
         const cost = costs[String(num)] || {};
         const eur = cost.total_eur || 0;
+        const summary = runsSummary[String(num)] || null;
+        const isExpanded = expandedIncidents.has(String(num));
+
         body += `<tr class="${running ? 'running' : ''}">`;
         body += `<td class="num">#${num}</td>`;
         body += `<td class="title">${escapeHtml(inc.title || '')}</td>`;
         body += `<td><span class="sev ${severityClass(inc.severity)}">${escapeHtml(inc.severity || '?')}</span></td>`;
         body += `<td><span class="status ${severityClass(inc.status)}">${escapeHtml(inc.status || '?')}</span></td>`;
         body += `<td class="cost">${eur > 0 ? fmtEur(eur) : '—'}</td>`;
+
+        // Runs badge — class flips to fail/ok/run based on most recent run.
+        body += '<td>';
+        if (summary && summary.count > 0) {
+          const cls = summary.last_status === 'failed' ? 'fail'
+                    : summary.last_status === 'completed' ? 'ok'
+                    : 'run';
+          const chev = isExpanded ? '▾' : '▸';
+          body += `<span class="runs-badge ${cls}" data-runs-toggle="${num}">${chev} ${summary.count} run${summary.count === 1 ? '' : 's'}</span>`;
+        } else {
+          body += '<span style="color:#9ca3af;font-size:12px;">—</span>';
+        }
+        body += '</td>';
+
         body += '<td>';
         if (running) {
           const phase = cost.last_phase || 'starting';
@@ -272,6 +363,44 @@
         }
         body += '</td>';
         body += '</tr>';
+
+        // Expanded sub-row: list of runs with click-to-show details.
+        if (isExpanded) {
+          const list = runsDetail[String(num)] || [];
+          body += '<tr class="runs-row"><td colspan="7">';
+          if (!list.length) {
+            body += '<div class="runs-empty">No runs yet.</div>';
+          } else {
+            body += '<table class="runs-table"><thead><tr>'
+                  + '<th style="width:24px;"></th>'
+                  + '<th>Started</th>'
+                  + '<th>Mode</th>'
+                  + '<th>Duration</th>'
+                  + '<th>Status</th>'
+                  + '<th>Detail</th>'
+                  + '</tr></thead><tbody>';
+            for (const run of list) {
+              const detailOpen = expandedRuns.has(run.run_id);
+              const startedStr = run.started_at ? new Date(run.started_at * 1000).toLocaleString() : '—';
+              const dur = fmtDuration(run.started_at, run.ended_at);
+              body += `<tr class="run-summary" data-run-toggle="${escapeHtml(run.run_id)}">`;
+              body += `<td>${statusIcon(run.status)}</td>`;
+              body += `<td>${escapeHtml(startedStr)}</td>`;
+              body += `<td>${escapeHtml(run.mode || '')}</td>`;
+              body += `<td>${escapeHtml(dur)}</td>`;
+              body += `<td>${escapeHtml(run.status)}</td>`;
+              body += `<td>${escapeHtml(run.error ? 'click to see error' : (run.summary || (run.status === 'running' ? 'in progress' : '—')))}</td>`;
+              body += '</tr>';
+              if (detailOpen) {
+                const cls = run.status === 'failed' ? 'failed' : '';
+                const detailText = run.error || run.summary || JSON.stringify(run, null, 2);
+                body += `<tr class="run-detail ${cls}"><td colspan="6">${escapeHtml(detailText)}</td></tr>`;
+              }
+            }
+            body += '</tbody></table>';
+          }
+          body += '</td></tr>';
+        }
       }
       body += '</tbody></table>';
     }
@@ -281,6 +410,40 @@
     root.querySelectorAll('button.run').forEach((btn) => {
       btn.addEventListener('click', () => onRunWorkflow(Number(btn.dataset.incident)));
     });
+    // "X runs" badge — toggle the per-incident sub-row + lazy-fetch the
+    // detailed run list the first time the badge is opened.
+    root.querySelectorAll('[data-runs-toggle]').forEach((el) => {
+      el.addEventListener('click', () => onToggleRuns(el.getAttribute('data-runs-toggle')));
+    });
+    // Each run row in the sub-table — toggle its detail panel.
+    root.querySelectorAll('[data-run-toggle]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = el.getAttribute('data-run-toggle');
+        if (expandedRuns.has(id)) expandedRuns.delete(id);
+        else expandedRuns.add(id);
+        render();
+      });
+    });
+  }
+
+  async function onToggleRuns(numStr) {
+    if (expandedIncidents.has(numStr)) {
+      expandedIncidents.delete(numStr);
+      render();
+      return;
+    }
+    expandedIncidents.add(numStr);
+    render();
+    // Fetch the full run list for this incident (the summary endpoint
+    // only returns counts + last status — details require this call).
+    try {
+      const r = await fetch(`/api/sentinel/incidents/${encodeURIComponent(numStr)}/runs`,
+                            { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const data = await r.json();
+      runsDetail[numStr] = data.runs || [];
+      render();
+    } catch (_) { /* swallow */ }
   }
 
   // ── Actions ────────────────────────────────────────────────────────
@@ -354,10 +517,36 @@
     } catch (_) { /* swallow */ }
   }
 
+  // Per-incident run-summary (count + last status). Cheap to poll;
+  // detail rows are fetched on-demand when an incident is expanded.
+  async function pollRuns() {
+    try {
+      const r = await fetch('/api/sentinel/incidents/runs', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const data = await r.json();
+      runsSummary = (data && data.runs) || {};
+      // Refresh the detail list for any currently-expanded incident so
+      // a running workflow's status / duration tick live.
+      for (const numStr of expandedIncidents) {
+        try {
+          const rr = await fetch(`/api/sentinel/incidents/${encodeURIComponent(numStr)}/runs`,
+                                  { credentials: 'same-origin' });
+          if (rr.ok) {
+            const d = await rr.json();
+            runsDetail[numStr] = d.runs || [];
+          }
+        } catch (_) { /* swallow per-incident error */ }
+      }
+      render();
+    } catch (_) { /* swallow */ }
+  }
+
   pollIncidents();
   pollCosts();
   pollCurrent();
+  pollRuns();
   setInterval(pollIncidents, POLL_INCIDENTS_MS);
   setInterval(pollCosts, POLL_COSTS_MS);
   setInterval(pollCurrent, POLL_CURRENT_MS);
+  setInterval(pollRuns, POLL_COSTS_MS);
 })();

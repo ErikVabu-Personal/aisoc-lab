@@ -649,6 +649,52 @@ def config_view(request: Request) -> Response:
 # on incident #N right now" without having to derive it from event logs.
 CURRENT_INCIDENT: dict[str, Any] = {"incident_number": None, "started_at": None}
 
+# Per-incident workflow run history. Keyed by incident_number (string),
+# value is a list of run records (oldest -> newest, capped). Each record:
+#   {run_id, started_at, ended_at, status, mode, error?, summary?}
+#
+# Lives in-process — single-replica deploy + acceptable for a demo. A
+# container restart wipes history.
+WORKFLOW_RUNS: dict[str, list[dict[str, Any]]] = {}
+WORKFLOW_RUNS_CAP = 20
+
+
+def _runs_bucket(incident_number: int) -> list[dict[str, Any]]:
+    key = str(incident_number)
+    bucket = WORKFLOW_RUNS.get(key)
+    if bucket is None:
+        bucket = []
+        WORKFLOW_RUNS[key] = bucket
+    return bucket
+
+
+def _start_run(incident_number: int, mode: str) -> dict[str, Any]:
+    """Append a 'running' record and return it (caller updates in place)."""
+    bucket = _runs_bucket(incident_number)
+    rec = {
+        "run_id": secrets.token_urlsafe(8),
+        "started_at": time.time(),
+        "ended_at": None,
+        "status": "running",
+        "mode": mode,
+        "error": None,
+        "summary": None,
+    }
+    bucket.append(rec)
+    if len(bucket) > WORKFLOW_RUNS_CAP:
+        del bucket[: len(bucket) - WORKFLOW_RUNS_CAP]
+    return rec
+
+
+def _end_run(rec: dict[str, Any], status: str, *, error: str | None = None,
+             summary: str | None = None) -> None:
+    rec["ended_at"] = time.time()
+    rec["status"] = status
+    if error is not None:
+        rec["error"] = error
+    if summary is not None:
+        rec["summary"] = summary
+
 
 @app.get("/api/current_incident")
 def api_current_incident(
@@ -657,6 +703,43 @@ def api_current_incident(
 ) -> dict[str, Any]:
     _require_auth(request, x_pixelagents_token)
     return dict(CURRENT_INCIDENT)
+
+
+@app.get("/api/sentinel/incidents/{incident_number}/runs")
+def api_incident_runs(
+    incident_number: int,
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Per-incident workflow run history, newest first."""
+    _require_auth(request, x_pixelagents_token)
+    bucket = WORKFLOW_RUNS.get(str(incident_number)) or []
+    return {
+        "incident_number": incident_number,
+        "runs": list(reversed(bucket)),
+    }
+
+
+@app.get("/api/sentinel/incidents/runs")
+def api_all_incident_runs(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Aggregate run summary so the dashboard can render badges on every
+    row in a single poll. Per-incident: total + most-recent status."""
+    _require_auth(request, x_pixelagents_token)
+    out: dict[str, Any] = {}
+    for key, bucket in WORKFLOW_RUNS.items():
+        if not bucket:
+            continue
+        last = bucket[-1]
+        out[key] = {
+            "count": len(bucket),
+            "last_status": last.get("status"),
+            "last_started_at": last.get("started_at"),
+            "last_ended_at": last.get("ended_at"),
+        }
+    return {"runs": out, "ts": time.time()}
 
 
 @app.get("/healthz")
@@ -1152,6 +1235,11 @@ async def orchestrate_incident(
     CURRENT_INCIDENT["incident_number"] = incident_number
     CURRENT_INCIDENT["started_at"] = time.time()
 
+    # Append a 'running' record to the incident's run history. We update
+    # this same record on success / failure so the dashboard can render
+    # an inline list of past runs.
+    run_rec = _start_run(incident_number, mode)
+
     url = f"{orch_base.rstrip('/')}/incident/pipeline?code={orch_key}"
     try:
         # The orchestrator pipeline runs 1-3 minutes for tool-heavy
@@ -1172,12 +1260,8 @@ async def orchestrate_incident(
     except Exception as e:
         CURRENT_INCIDENT["incident_number"] = None
         CURRENT_INCIDENT["started_at"] = None
+        _end_run(run_rec, "failed", error=f"Orchestrator call failed: {e!r}")
         raise HTTPException(status_code=502, detail=f"Orchestrator call failed: {e!r}") from e
-    finally:
-        # Clear the "live" marker once the upstream call has returned
-        # (success or HTTP error). Done in finally so a 4xx/5xx body
-        # below still leaves the banner cleared.
-        pass
 
     if r.status_code >= 400:
         CURRENT_INCIDENT["incident_number"] = None
@@ -1187,6 +1271,10 @@ async def orchestrate_incident(
             detail = r.json()
         except Exception:
             detail = r.text[:4000]
+        # Stash the orchestrator's error body verbatim — the dashboard
+        # surfaces this when the user clicks the run record.
+        err_text = json.dumps({"orchestrator_status": r.status_code, "body": detail})[:8000]
+        _end_run(run_rec, "failed", error=err_text)
         raise HTTPException(
             status_code=502,
             detail={"orchestrator_status": r.status_code, "body": detail},
@@ -1195,9 +1283,25 @@ async def orchestrate_incident(
     CURRENT_INCIDENT["incident_number"] = None
     CURRENT_INCIDENT["started_at"] = None
     try:
-        return r.json()
+        result = r.json()
     except Exception:
-        return {"raw": r.text[:4000]}
+        result = {"raw": r.text[:4000]}
+
+    # Pull a short summary out of the orchestrator's response so the
+    # dashboard's run-history list can show something useful at a glance
+    # before the user clicks for details.
+    summary = None
+    try:
+        if isinstance(result, dict):
+            phases = result.get("phases") or {}
+            if isinstance(phases, dict):
+                done = [k for k, v in phases.items() if isinstance(v, dict) and v.get("status") == "ok"]
+                if done:
+                    summary = f"Completed: {', '.join(done)}"
+    except Exception:
+        pass
+    _end_run(run_rec, "completed", summary=summary)
+    return result
 
 
 # ─── Cost tracking ────────────────────────────────────────────────────────
