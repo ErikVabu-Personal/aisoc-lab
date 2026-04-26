@@ -34,20 +34,35 @@ The same SP is reused by every workflow — no need to create separate ones.
 
 ### 2. Repository variables
 
-Set these once in **Settings → Secrets and variables → Actions →
-Variables** so the workflows know which Azure resources to deploy to:
+Repo variables tell each workflow which Azure resources to deploy to.
+**They're set automatically by `terraform apply`** — each phase has a
+`null_resource` that pushes its outputs into GitHub via `gh variable
+set`, so the names stay in sync with the (random-suffixed) Azure
+resources without any manual setup.
 
-| Variable | Used by | Example |
+The shell that runs `terraform apply` needs `gh` installed and
+authenticated (`gh auth login`). If it isn't, the sync step logs a
+warning and skips — Terraform doesn't fail.
+
+Variables that get synced:
+
+| Variable | Synced from | Used by |
 | --- | --- | --- |
-| `AISOC_RESOURCE_GROUP` | every workflow | `rg-sentinel-test` |
-| `AISOC_ORCHESTRATOR_FUNCTION_NAME` | orchestrator workflow | `func-aisoc-orch-vhbk75` |
-| `AISOC_SOC_GATEWAY_FUNCTION_NAME` | gateway workflow | `func-foundry-soc-vhbk75` |
-| `AISOC_RUNNER_NAME` | runner workflow + gateway post-deploy hook | `aisoc-runner` |
-| `AISOC_PIXELAGENTS_NAME` | pixelagents workflow | `aisoc-pixelagents` |
-| `AISOC_SHIP_CONTROL_PANEL_NAME` | ship-cp workflow | `aisoc-ship-control-panel` |
+| `AISOC_RESOURCE_GROUP` | Phase 1 | every workflow |
+| `AISOC_SHIP_CONTROL_PANEL_NAME` | Phase 1 | ship-cp workflow |
+| `AISOC_RUNNER_NAME` | Phase 2 | runner workflow + gateway post-deploy hook |
+| `AISOC_ORCHESTRATOR_FUNCTION_NAME` | Phase 2 | orchestrator workflow |
+| `AISOC_SOC_GATEWAY_FUNCTION_NAME` | Phase 2 | gateway workflow |
+| `AISOC_PIXELAGENTS_NAME` | Phase 3 | pixelagents workflow |
 
-If a workflow runs without its required variables set, it logs a warning
-and skips the force-roll step (the build/push to GHCR still happens).
+The default repo target is `ErikVabu-Personal/aisoc-lab`. To sync to a
+fork, set the `github_repo` Terraform variable (in each phase's
+`tfvars` file or via `-var`).
+
+If a workflow runs before the variables are set (e.g. the very first
+push, before any `terraform apply`), it logs a warning and skips the
+force-roll step — the build + push to GHCR still happens, you'd just
+need to roll the Container App manually that one time.
 
 ## Post-apply wiring
 

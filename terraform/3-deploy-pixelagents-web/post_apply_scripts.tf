@@ -57,3 +57,34 @@ resource "null_resource" "configure_orchestrator_pixelagents_env" {
 
   depends_on = [azurerm_container_app.pixelagents]
 }
+
+# ─────────────────────────────────────────────────────────────────────
+# GitHub repo variable sync.
+#
+# Push Phase 3 deploy targets into GitHub repo variables so the
+# pixelagents_web workflow knows which Container App to roll.
+# ─────────────────────────────────────────────────────────────────────
+
+variable "github_repo" {
+  type        = string
+  description = "GitHub repository in 'owner/name' form. Used to sync deploy-target names as repo variables."
+  default     = "ErikVabu-Personal/aisoc-lab"
+}
+
+resource "null_resource" "sync_github_repo_vars_phase3" {
+  triggers = {
+    repo                     = var.github_repo
+    aisoc_pixelagents_name   = azurerm_container_app.pixelagents.name
+    always_run               = timestamp()
+  }
+
+  provisioner "local-exec" {
+    command = "${path.module}/../../scripts/sync_github_repo_var.sh"
+    environment = {
+      REPO                     = var.github_repo
+      AISOC_PIXELAGENTS_NAME   = azurerm_container_app.pixelagents.name
+    }
+  }
+
+  depends_on = [azurerm_container_app.pixelagents]
+}

@@ -39,3 +39,44 @@ resource "null_resource" "configure_runner_socgateway_key" {
     azurerm_linux_function_app.soc_gateway,
   ]
 }
+
+# ─────────────────────────────────────────────────────────────────────
+# GitHub repo variable sync.
+#
+# Push Phase 2 deploy targets into GitHub repo variables so the per-app
+# workflows know which Function Apps / Container Apps to deploy to.
+# Names get random suffixes per deployment, so static repo vars would
+# drift; this sync keeps them current automatically.
+# ─────────────────────────────────────────────────────────────────────
+
+variable "github_repo" {
+  type        = string
+  description = "GitHub repository in 'owner/name' form. Used to sync deploy-target names as repo variables."
+  default     = "ErikVabu-Personal/aisoc-lab"
+}
+
+resource "null_resource" "sync_github_repo_vars_phase2" {
+  triggers = {
+    repo                              = var.github_repo
+    aisoc_runner_name                 = azurerm_container_app.runner.name
+    aisoc_orchestrator_function_name  = azurerm_linux_function_app.orchestrator.name
+    aisoc_soc_gateway_function_name   = azurerm_linux_function_app.soc_gateway.name
+    always_run                        = timestamp()
+  }
+
+  provisioner "local-exec" {
+    command = "${path.module}/../../scripts/sync_github_repo_var.sh"
+    environment = {
+      REPO                              = var.github_repo
+      AISOC_RUNNER_NAME                 = azurerm_container_app.runner.name
+      AISOC_ORCHESTRATOR_FUNCTION_NAME  = azurerm_linux_function_app.orchestrator.name
+      AISOC_SOC_GATEWAY_FUNCTION_NAME   = azurerm_linux_function_app.soc_gateway.name
+    }
+  }
+
+  depends_on = [
+    azurerm_container_app.runner,
+    azurerm_linux_function_app.orchestrator,
+    azurerm_linux_function_app.soc_gateway,
+  ]
+}
