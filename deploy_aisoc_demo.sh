@@ -108,6 +108,11 @@ Other:
   --skip-oidc-bootstrap       Skip the GitHub→Azure federated-credential setup
                               (use if you've already bootstrapped or are
                               re-running from a fresh shell)
+  --destroy                   Tear down all phases (Phase 3 → 2 → 1) via
+                              terraform destroy. Leaves the OIDC trust
+                              and the AISOC repo variables in place so
+                              re-deploys are still one command. A 5-second
+                              countdown gives you a chance to abort.
   -h, --help                  show this help
 
 Generic pass-through:
@@ -134,6 +139,7 @@ EOF
 declare -A USER_VARS=()
 SUBSCRIPTION_OVERRIDE=""
 SKIP_OIDC=0
+DESTROY=0
 
 # Convert --foo-bar to TF_VAR_foo_bar
 add_var() {
@@ -154,6 +160,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)              usage; exit 0 ;;
     --skip-oidc-bootstrap)  SKIP_OIDC=1; shift ;;
+    --destroy)              DESTROY=1; shift ;;
     --subscription=*)       SUBSCRIPTION_OVERRIDE="${1#*=}"; shift ;;
     --subscription)         [[ $# -ge 2 ]] || die "missing value for --subscription"
                             SUBSCRIPTION_OVERRIDE="$2"; shift 2 ;;
@@ -202,6 +209,38 @@ az account show >/dev/null 2>&1 || die "az not logged in. Run: az login"
 gh auth status -h github.com >/dev/null 2>&1 || die "gh not authenticated. Run: gh auth login"
 
 ok "prereqs satisfied"
+
+# ── DESTROY mode ─────────────────────────────────────────────────────
+# Tear down the lab in reverse order. We don't touch the OIDC trust
+# (federated cred + repo vars) — those are stateless config a re-deploy
+# would just re-write, and keeping them lets the next deploy be a
+# one-liner.
+if [[ "$DESTROY" == "1" ]]; then
+  warn "DESTROY mode: about to run \`terraform destroy\` in Phase 3, then 2, then 1."
+  warn "All Azure resources created by the demo will be removed."
+  warn "Press Ctrl-C now to abort. Continuing in 5 seconds..."
+  sleep 5
+
+  destroy_phase() {
+    local dir="$1"
+    say "Destroying: $dir"
+    if [[ ! -d "$dir/.terraform" ]]; then
+      warn "$dir is not initialized (.terraform/ missing) — skipping"
+      return 0
+    fi
+    ( cd "$dir" && terraform destroy -auto-approve -input=false )
+  }
+
+  destroy_phase terraform/3-deploy-pixelagents-web
+  destroy_phase terraform/2-deploy-aisoc
+  destroy_phase terraform/1-deploy-sentinel
+
+  printf '\n%s%s═════════════════════════ Demo torn down ═════════════════════════%s\n' "$BOLD" "$GREEN" "$NC"
+  printf '  All three Terraform phases are destroyed.\n'
+  printf '  OIDC trust + AZURE_* repo variables are preserved.\n'
+  printf '  Run ./deploy_aisoc_demo.sh to redeploy when ready.\n\n'
+  exit 0
+fi
 
 # ── 0a) OIDC bootstrap ───────────────────────────────────────────────
 # Set up GitHub-Actions-to-Azure auth via OIDC (federated credentials),

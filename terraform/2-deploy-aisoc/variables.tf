@@ -100,8 +100,9 @@ variable "foundry_model_sku_capacity" {
 # -----------------------------
 
 variable "runner_image" {
-  description = "Runner container image (GHCR)"
+  description = "Runner container image (GHCR). Defaults to the public :latest tag from this repo; the deploy-aisoc-runner workflow re-pushes :latest after every code change so the default tracks main."
   type        = string
+  default     = "ghcr.io/erikvabu-personal/aisoc-runner:latest"
 }
 
 variable "runner_cpu" {
