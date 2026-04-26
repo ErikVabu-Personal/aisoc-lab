@@ -1,7 +1,7 @@
 # Rename to terraform.tfvars and fill in values
 
 # Region
-location = "westus" # West US
+azure_location = "westus" # West US
 
 # Disable auto-pick (it can be slow because it probes multiple regions/SKUs)
 auto_select_location_and_sku = false
@@ -13,10 +13,6 @@ auto_select_location_and_sku = false
 # Windows VM credentials
 # admin_username = "azureadmin"
 
-# RDP allow-listing
-# auto_detect_rdp_cidr = true
-# allowed_rdp_cidr = "x.x.x.x/32"
-
 # OpenRouter (optional)
 # openrouter_api_key = "sk-or-v1-..."
 resource_group_name = "rg-sentinel-test"
@@ -24,8 +20,8 @@ workspace_name      = "law-sentinel-test"
 vm_name             = "win11-test"
 vm_size             = "Standard_D2s_v3"
 
-# Set to your public IP with /32
-allowed_rdp_cidr = "203.0.113.10/32"
+# Lab VM RDP is intentionally open on 3389 from any source — this is a
+# throwaway test environment, gated only by the admin password.
 
 # Choose a strong password
 admin_username = "azureadmin"

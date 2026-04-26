@@ -1,5 +1,5 @@
-variable "location" {
-  description = "Default Azure region (used if auto-selection is disabled)"
+variable "azure_location" {
+  description = "Default Azure region for Sentinel + lab VM (used when auto-selection is disabled)"
   type        = string
   default     = "westeurope"
 }
@@ -122,18 +122,6 @@ variable "admin_password" {
   description = "Local admin password for the VM"
   type        = string
   sensitive   = true
-}
-
-variable "allowed_rdp_cidr" {
-  description = "CIDR allowed to RDP (TCP/3389). Ignored when auto_detect_rdp_cidr=true."
-  type        = string
-  default     = "203.0.113.10/32"
-}
-
-variable "auto_detect_rdp_cidr" {
-  description = "If true, Terraform detects your current public IP and allow-lists it (/32) for RDP."
-  type        = bool
-  default     = true
 }
 
 variable "auto_shutdown_time" {

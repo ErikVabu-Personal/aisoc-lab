@@ -4,9 +4,9 @@ variable "resource_group" {
   default     = null
 }
 
-variable "location" {
+variable "azure_location" {
   type        = string
-  description = "Optional override: Azure region. If null, uses Phase 1 selected_location."
+  description = "Optional override: Azure region. If null, inherits Phase 1's selected_location."
   default     = null
 }
 

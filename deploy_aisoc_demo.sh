@@ -58,10 +58,12 @@ runs Foundry bootstrap, deploys PixelAgents Web. Idempotent.
 
 Common Terraform variables (Phase 1):
   --admin-password=...        Lab VM admin password (REQUIRED, sensitive)
-  --allowed-rdp-cidr=...      /32 CIDR allowed for RDP, e.g. 203.0.113.10/32
-  --location=...              Azure region for Sentinel + lab VM (default: westus)
+  --azure-location=...        Azure region for Sentinel + lab VM (default: westeurope)
   --vm-size=...               Lab VM size (default: Standard_D2s_v3)
   --resource-group-name=...   Override the auto-generated RG name
+
+  (Lab VM RDP is open from any source — this is a throwaway test box,
+   gated only by --admin-password. There's no allowed-rdp-cidr.)
 
 Common Terraform variables (Phase 2):
   --location-override=...     Region for Function Apps (default: westcentralus)
@@ -87,14 +89,14 @@ Sensitive values:
   listings. Pre-set env vars take precedence over --flag values.
 
 Examples:
-  # Minimal first-time deploy (auto-detect RDP CIDR, generate strong pw):
+  # Minimal first-time deploy:
   TF_VAR_admin_password='S0meStr0ng!pw' ./deploy_aisoc_demo.sh \
-      --allowed-rdp-cidr='203.0.113.10/32' --location=westus
+      --azure-location=westus
 
   # Override Foundry region:
   ./deploy_aisoc_demo.sh \
-      --admin-password='...' --allowed-rdp-cidr='...' \
-      --foundry-location=swedencentral
+      --admin-password='...' \
+      --azure-location=westus --foundry-location=swedencentral
 EOF
 }
 

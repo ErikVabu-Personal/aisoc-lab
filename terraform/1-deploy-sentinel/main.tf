@@ -25,7 +25,7 @@ data "external" "pick" {
 
   # external data source only supports string values; encode lists as JSON
   query = {
-    location            = var.location
+    location            = var.azure_location
     vm_size             = var.vm_size
     location_candidates = jsonencode(var.location_candidates)
     vm_size_candidates  = jsonencode(var.vm_size_candidates)
@@ -33,7 +33,7 @@ data "external" "pick" {
 }
 
 locals {
-  selected_location = var.auto_select_location_and_sku ? data.external.pick[0].result.location : var.location
+  selected_location = var.auto_select_location_and_sku ? data.external.pick[0].result.location : var.azure_location
   selected_vm_size  = var.auto_select_location_and_sku ? data.external.pick[0].result.vm_size : var.vm_size
 }
 
@@ -79,25 +79,15 @@ resource "azurerm_subnet" "subnet" {
   address_prefixes     = ["10.42.1.0/24"]
 }
 
-data "http" "myip" {
-  url = "https://api.ipify.org"
-
-  request_headers = {
-    Accept = "text/plain"
-  }
-}
-
-locals {
-  detected_public_ip = trimspace(data.http.myip.response_body)
-  effective_rdp_cidr = var.auto_detect_rdp_cidr ? "${local.detected_public_ip}/32" : var.allowed_rdp_cidr
-}
-
 resource "azurerm_network_security_group" "nsg" {
   name                = local.nsg_name
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 
   security_rule {
+    # Lab VM is intentionally open on RDP from any source — this is a
+    # throwaway test environment, the lab admin password is the only
+    # gate. Don't model this as a "real" hardening pattern.
     name                       = "Allow-RDP"
     priority                   = 100
     direction                  = "Inbound"
@@ -105,7 +95,7 @@ resource "azurerm_network_security_group" "nsg" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "3389"
-    source_address_prefix      = local.effective_rdp_cidr
+    source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
 

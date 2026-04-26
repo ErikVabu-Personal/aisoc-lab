@@ -5,7 +5,7 @@
 
 # Optional overrides — defaults pick these up from Phase 1 state.
 # resource_group              = "rg-sentinel-test"
-# location                    = "westus"
+# azure_location              = "westus"
 # container_app_environment_id = "/subscriptions/.../managedEnvironments/cae-..."
 
 # Container image tag. Deploy by SHA for reliable updates (see README Phase 4.3).
