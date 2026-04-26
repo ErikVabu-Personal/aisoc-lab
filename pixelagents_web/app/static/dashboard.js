@@ -217,7 +217,7 @@
         + '</tr></thead>';
       body += '<tbody>';
       for (const inc of incidents) {
-        const num = inc.incident_number;
+        const num = inc.number;
         const isRunning = running.has(num);
         const cost = costs[String(num)] || {};
         const eur = cost.total_eur || 0;
