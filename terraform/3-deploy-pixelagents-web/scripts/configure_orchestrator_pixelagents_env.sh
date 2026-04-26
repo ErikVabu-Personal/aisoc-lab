@@ -23,27 +23,40 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 cd "$root"
 
-RG="$(terraform output -raw resource_group 2>/dev/null || true)"
-PIXEL_URL="$(terraform output -raw pixelagents_url)"
-PIXEL_TOKEN="$(terraform output -raw pixelagents_token)"
+# Allow callers (CI workflows, Terraform null_resource) to pass values
+# via env vars. Fall back to `terraform output` so the script still works
+# as a standalone local-dev convenience.
+RG="${RG:-}"
+ORCH_NAME="${ORCH_NAME:-}"
+PIXEL_URL="${PIXEL_URL:-}"
+PIXEL_TOKEN="${PIXEL_TOKEN:-}"
 
 if [[ -z "$PIXEL_URL" || "$PIXEL_URL" == "null" ]]; then
-  echo "ERROR: missing terraform output pixelagents_url (run terraform apply in 3-deploy-pixelagents-web)" >&2
+  PIXEL_URL="$(terraform output -raw pixelagents_url 2>/dev/null || true)"
+fi
+if [[ -z "$PIXEL_TOKEN" || "$PIXEL_TOKEN" == "null" ]]; then
+  PIXEL_TOKEN="$(terraform output -raw pixelagents_token 2>/dev/null || true)"
+fi
+if [[ -z "$RG" || "$RG" == "null" ]]; then
+  RG="$(terraform output -raw resource_group 2>/dev/null || true)"
+fi
+if [[ -z "$ORCH_NAME" || "$ORCH_NAME" == "null" ]]; then
+  ORCH_NAME="$(terraform -chdir=../2-deploy-aisoc output -raw orchestrator_function_name 2>/dev/null || true)"
+fi
+if [[ -z "$RG" || "$RG" == "null" ]]; then
+  RG="$(terraform -chdir=../2-deploy-aisoc output -raw resource_group 2>/dev/null || true)"
+fi
+
+if [[ -z "$PIXEL_URL" || "$PIXEL_URL" == "null" ]]; then
+  echo "ERROR: pixelagents_url not set (pass PIXEL_URL env var or run terraform apply in 3-deploy-pixelagents-web)" >&2
   exit 2
 fi
-
-ORCH_NAME="$(terraform -chdir=../2-deploy-aisoc output -raw orchestrator_function_name)"
-if [[ -z "$RG" || "$RG" == "null" ]]; then
-  RG="$(terraform -chdir=../2-deploy-aisoc output -raw resource_group)"
-fi
-
 if [[ -z "$ORCH_NAME" || "$ORCH_NAME" == "null" ]]; then
-  echo "ERROR: missing orchestrator_function_name from 2-deploy-aisoc outputs" >&2
+  echo "ERROR: orchestrator_function_name not set (pass ORCH_NAME env var or apply Phase 2)" >&2
   exit 3
 fi
-
 if [[ -z "$RG" || "$RG" == "null" ]]; then
-  echo "ERROR: could not determine resource group" >&2
+  echo "ERROR: resource_group not set (pass RG env var or apply Phase 1/2)" >&2
   exit 4
 fi
 

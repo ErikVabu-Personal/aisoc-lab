@@ -1,12 +1,12 @@
-name: Build + Publish AISOC Runner (GHCR)
+name: Build + Publish PixelAgents Web (GHCR)
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
     paths:
-      - 'runner/**'
-      - '.github/workflows/deploy-aisoc-runner.yml'
+      - 'pixelagents_web/**'
+      - '.github/workflows/deploy-pixelagents-web.yml'
 
 jobs:
   build_and_deploy:
@@ -28,16 +28,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push runner
+      - name: Build and push PixelAgents Web
         uses: docker/build-push-action@v6
         with:
-          context: ./runner
+          context: ./pixelagents_web
           push: true
           tags: |
-            ghcr.io/erikvabu-personal/aisoc-runner:latest
-            ghcr.io/erikvabu-personal/aisoc-runner:${{ github.sha }}
-          build-args: |
-            GIT_SHA=${{ github.sha }}
+            ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:latest
+            ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:${{ github.sha }}
 
       - name: Azure login
         uses: azure/login@v2
@@ -45,22 +43,19 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Force Container App to pull new image
-        # Container Apps cache the digest behind :latest, so re-pushing
-        # alone won't roll a new revision. Setting --image with the
-        # SHA-tagged ref creates a new revision that pulls.
         shell: bash
         run: |
           set -euo pipefail
           RG="${{ vars.AISOC_RESOURCE_GROUP }}"
-          NAME="${{ vars.AISOC_RUNNER_NAME }}"
+          NAME="${{ vars.AISOC_PIXELAGENTS_NAME }}"
           if [[ -z "$RG" || -z "$NAME" ]]; then
-            echo "::warning::AISOC_RESOURCE_GROUP or AISOC_RUNNER_NAME repo variable not set; skipping force-roll"
+            echo "::warning::AISOC_RESOURCE_GROUP or AISOC_PIXELAGENTS_NAME repo variable not set; skipping force-roll"
             exit 0
           fi
-          IMAGE="ghcr.io/erikvabu-personal/aisoc-runner:${{ github.sha }}"
+          IMAGE="ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:${{ github.sha }}"
           echo "Updating $NAME (RG: $RG) to $IMAGE"
           az containerapp update \
             --resource-group "$RG" \
             --name "$NAME" \
             --image "$IMAGE" >/dev/null
-          echo "OK: runner Container App updated."
+          echo "OK: pixelagents_web Container App updated."

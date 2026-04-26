@@ -4,11 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       function_app_name:
-        description: "Azure Function App name (e.g. func-foundry-soc-xxxxx)"
-        required: true
+        description: "Override Azure Function App name (defaults to vars.AISOC_SOC_GATEWAY_FUNCTION_NAME)"
+        required: false
       resource_group:
-        description: "Resource group name (e.g. rg-sentinel-test)"
-        required: true
+        description: "Override resource group name (defaults to vars.AISOC_RESOURCE_GROUP)"
+        required: false
+  push:
+    branches: [ main ]
+    paths:
+      - 'terraform/2-deploy-aisoc/foundry/function_app/**'
+      - '.github/workflows/deploy-soc-gateway.yml'
+      - 'terraform/2-deploy-aisoc/scripts/configure_runner_socgateway_key.sh'
 
 jobs:
   deploy:
@@ -16,9 +22,23 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      RG: ${{ inputs.resource_group || vars.AISOC_RESOURCE_GROUP }}
+      FUNCTION_APP_NAME: ${{ inputs.function_app_name || vars.AISOC_SOC_GATEWAY_FUNCTION_NAME }}
+      RUNNER_NAME: ${{ vars.AISOC_RUNNER_NAME }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$RG" || -z "$FUNCTION_APP_NAME" ]]; then
+            echo "::error::AISOC_RESOURCE_GROUP and AISOC_SOC_GATEWAY_FUNCTION_NAME must be set as repo variables (or passed as workflow_dispatch inputs)."
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -39,10 +59,8 @@ jobs:
           python -m pip install --upgrade pip
           rm -rf .python_packages function_app.zip
 
-          # Install dependencies into the Azure Functions expected folder
           python -m pip install --no-cache-dir --target ".python_packages/lib/site-packages" -r requirements.txt
 
-          # Sanity check: fail fast if deps didn't land in the package
           python - <<'PY'
           import sys, pathlib
           sys.path.insert(0, str(pathlib.Path('.python_packages/lib/site-packages').resolve()))
@@ -51,7 +69,6 @@ jobs:
           print('deps_ok')
           PY
 
-          # Zip must have host.json at root
           zip -r function_app.zip host.json requirements.txt SOCGateway shared .python_packages
 
       - name: Deploy zip to Function App
@@ -60,6 +77,20 @@ jobs:
           set -euo pipefail
           cd terraform/2-deploy-aisoc/foundry/function_app
           az functionapp deployment source config-zip \
-            --resource-group "${{ inputs.resource_group }}" \
-            --name "${{ inputs.function_app_name }}" \
+            --resource-group "$RG" \
+            --name "$FUNCTION_APP_NAME" \
             --src function_app.zip
+
+      - name: Re-wire runner with fresh SOCGateway function key
+        # A function-code redeploy can rotate the function key, leaving the
+        # runner's SOCGATEWAY_FUNCTION_CODE stale. Re-fetch + re-set so the
+        # runner is immediately functional after every gateway deploy.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$RUNNER_NAME" ]]; then
+            echo "::warning::AISOC_RUNNER_NAME repo variable not set; skipping runner re-wire"
+            exit 0
+          fi
+          export RG FUNC_APP="$FUNCTION_APP_NAME" RUNNER_NAME
+          terraform/2-deploy-aisoc/scripts/configure_runner_socgateway_key.sh

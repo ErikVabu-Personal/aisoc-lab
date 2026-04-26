@@ -16,20 +16,33 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd)"
 root="$(cd "$here/.." && pwd)"
 cd "$root"
 
-RG="$(terraform output -raw resource_group)"
-FUNC_APP="$(terraform output -raw soc_gateway_function_name)"
-RUNNER_NAME="$(terraform output -raw runner_name)"
+# Allow callers (CI workflows, Terraform null_resource) to pass values
+# via env vars. Fall back to `terraform output` so the script still works
+# as a standalone local-dev convenience.
+RG="${RG:-}"
+FUNC_APP="${FUNC_APP:-}"
+RUNNER_NAME="${RUNNER_NAME:-}"
 
 if [[ -z "$RG" || "$RG" == "null" ]]; then
-  echo "ERROR: terraform output resource_group is empty" >&2
+  RG="$(terraform output -raw resource_group 2>/dev/null || true)"
+fi
+if [[ -z "$FUNC_APP" || "$FUNC_APP" == "null" ]]; then
+  FUNC_APP="$(terraform output -raw soc_gateway_function_name 2>/dev/null || true)"
+fi
+if [[ -z "$RUNNER_NAME" || "$RUNNER_NAME" == "null" ]]; then
+  RUNNER_NAME="$(terraform output -raw runner_name 2>/dev/null || true)"
+fi
+
+if [[ -z "$RG" || "$RG" == "null" ]]; then
+  echo "ERROR: resource_group not set (pass RG env var or run terraform output)" >&2
   exit 2
 fi
 if [[ -z "$FUNC_APP" || "$FUNC_APP" == "null" ]]; then
-  echo "ERROR: terraform output soc_gateway_function_name is empty" >&2
+  echo "ERROR: soc_gateway_function_name not set (pass FUNC_APP env var or run terraform output)" >&2
   exit 3
 fi
 if [[ -z "$RUNNER_NAME" || "$RUNNER_NAME" == "null" ]]; then
-  echo "ERROR: terraform output runner_name is empty" >&2
+  echo "ERROR: runner_name not set (pass RUNNER_NAME env var or run terraform output)" >&2
   exit 4
 fi
 
@@ -83,12 +96,27 @@ az containerapp update \
   >/dev/null
 
 # Wait until the new revision is serving and the env var is visible.
-RUNNER_URL="$(terraform output -raw runner_url)"
-RUNNER_BEARER_SECRET="$(terraform output -raw runner_bearer_token_secret_name)"
-KV_NAME="$(terraform output -raw key_vault_name)"
-RUNNER_BEARER="$(az keyvault secret show --vault-name "$KV_NAME" --name "$RUNNER_BEARER_SECRET" --query value -o tsv 2>/dev/null || true)"
+# Best-effort: if terraform state is unavailable (e.g. in CI), skip verify.
+RUNNER_URL="${RUNNER_URL:-}"
+RUNNER_BEARER_SECRET="${RUNNER_BEARER_SECRET:-}"
+KV_NAME="${KV_NAME:-}"
 
-if [[ -n "$RUNNER_BEARER" ]]; then
+if [[ -z "$RUNNER_URL" ]]; then
+  RUNNER_URL="$(terraform output -raw runner_url 2>/dev/null || true)"
+fi
+if [[ -z "$RUNNER_BEARER_SECRET" ]]; then
+  RUNNER_BEARER_SECRET="$(terraform output -raw runner_bearer_token_secret_name 2>/dev/null || true)"
+fi
+if [[ -z "$KV_NAME" ]]; then
+  KV_NAME="$(terraform output -raw key_vault_name 2>/dev/null || true)"
+fi
+
+RUNNER_BEARER=""
+if [[ -n "$KV_NAME" && -n "$RUNNER_BEARER_SECRET" ]]; then
+  RUNNER_BEARER="$(az keyvault secret show --vault-name "$KV_NAME" --name "$RUNNER_BEARER_SECRET" --query value -o tsv 2>/dev/null || true)"
+fi
+
+if [[ -n "$RUNNER_BEARER" && -n "$RUNNER_URL" ]]; then
   echo "Waiting for runner to pick up SOCGATEWAY_FUNCTION_CODE..." >&2
   deadline=$(( $(date +%s) + 120 ))
   while [[ $(date +%s) -lt $deadline ]]; do
