@@ -65,11 +65,11 @@
     }
     #${rootId} .card {
       pointer-events: auto;
-      background: var(--color-bg, #1e1e2e);
+      background: var(--color-bg, #ffffff);
       border: 2px solid #facc15; /* bright yellow — attention signal */
       border-radius: 6px;
-      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
-      color: var(--color-text, #ffffffe6);
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #cbd5e1);
+      color: var(--color-text, #1f2937);
       font-size: 18px;
       line-height: 1.4;
       overflow: hidden;
@@ -86,26 +86,26 @@
     }
     #${rootId} .card .compose-wrap {
       flex-shrink: 0;
-      border-top: 2px solid var(--color-border, #4a4a6a);
-      background: var(--color-bg-dark, #181828);
+      border-top: 2px solid var(--color-border, #cbd5e1);
+      background: var(--color-bg-dark, #f3f4f6);
       padding: 10px 12px;
       display: flex;
       flex-direction: column;
       gap: 8px;
     }
     @keyframes aisoc-hitl-pulse {
-      0%, 100% { box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14), 0 0 0 0 rgba(250, 204, 21, 0.0); }
-      50%      { box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14), 0 0 0 6px rgba(250, 204, 21, 0.28); }
+      0%, 100% { box-shadow: var(--shadow-pixel, 2px 2px 0 #cbd5e1), 0 0 0 0 rgba(250, 204, 21, 0.0); }
+      50%      { box-shadow: var(--shadow-pixel, 2px 2px 0 #cbd5e1), 0 0 0 6px rgba(250, 204, 21, 0.28); }
     }
     #${rootId} .card .head {
       padding: 10px 14px;
-      background: rgba(250, 204, 21, 0.12);
-      border-bottom: 2px solid rgba(250, 204, 21, 0.35);
+      background: rgba(250, 204, 21, 0.18);
+      border-bottom: 2px solid rgba(250, 204, 21, 0.55);
       display: flex;
       align-items: center;
       gap: 10px;
       font-weight: 700;
-      color: #fde68a;
+      color: #713f12; /* dark amber — readable on light yellow */
     }
     #${rootId} .card .head .who {
       text-transform: capitalize;
@@ -134,10 +134,10 @@
     #${rootId} .card textarea {
       flex: 1;
       resize: none;
-      background: var(--color-bg-dark, #181828);
-      border: 2px solid var(--color-border, #4a4a6a);
+      background: var(--color-bg-dark, #f3f4f6);
+      border: 2px solid var(--color-border, #cbd5e1);
       border-radius: 4px;
-      color: var(--color-text, #ffffffe6);
+      color: var(--color-text, #1f2937);
       padding: 8px 10px;
       font: inherit;
       min-height: 48px;
@@ -148,18 +148,18 @@
       border-color: #facc15;
     }
     #${rootId} .card button {
-      background: rgba(250, 204, 21, 0.25);
-      border: 2px solid rgba(250, 204, 21, 0.6);
-      color: #fde68a;
+      background: #facc15;
+      border: 2px solid #ca8a04;
+      color: #1f2937; /* dark text on yellow — high contrast */
       border-radius: 4px;
       padding: 0 18px;
       cursor: pointer;
       font: inherit;
       font-weight: 700;
-      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #cbd5e1);
     }
     #${rootId} .card button:hover:not(:disabled) {
-      background: rgba(250, 204, 21, 0.4);
+      background: #eab308;
     }
     #${rootId} .card button:disabled {
       opacity: 0.5;
@@ -168,9 +168,9 @@
     #${rootId} .card .err {
       margin-top: 8px;
       padding: 6px 10px;
-      background: rgba(239, 68, 68, 0.18);
-      border: 1px solid rgba(239, 68, 68, 0.4);
-      color: #fecaca;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.5);
+      color: #991b1b; /* dark red — readable on light red tint */
       border-radius: 4px;
       font-size: 13px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

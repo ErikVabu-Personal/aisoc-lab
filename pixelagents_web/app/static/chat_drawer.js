@@ -60,13 +60,13 @@
       bottom: 16px;
       width: 520px;
       max-height: 75vh;
-      background: var(--color-bg, #1e1e2e);
-      border: 2px solid var(--color-border, #4a4a6a);
+      background: var(--color-bg, #ffffff);
+      border: 2px solid var(--color-border, #cbd5e1);
       border-radius: 6px;
-      color: var(--color-text, #ffffffe6);
+      color: var(--color-text, #1f2937);
       font-size: 22px;
       line-height: 1.4;
-      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #cbd5e1);
       z-index: 9999;
       display: flex;
       flex-direction: column;
@@ -81,8 +81,8 @@
       align-items: center;
       gap: 8px;
       padding: 10px 12px;
-      background: var(--color-accent, #6030ff);
-      border-bottom: 2px solid var(--color-border, #4a4a6a);
+      background: var(--color-accent, #0099cc);
+      border-bottom: 2px solid var(--color-border, #cbd5e1);
       color: #fff;
       cursor: pointer;
       user-select: none;
@@ -93,17 +93,17 @@
       letter-spacing: 0.02em;
     }
     #${rootId} header .back {
-      background: var(--color-btn-bg, #353445);
-      border: 2px solid var(--color-border, #4a4a6a);
-      color: var(--color-text, #ffffffe6);
+      background: var(--color-btn-bg, #f3f4f6);
+      border: 2px solid var(--color-border, #cbd5e1);
+      color: var(--color-text, #1f2937);
       border-radius: 4px;
       padding: 4px 10px;
       cursor: pointer;
       font-size: 18px;
-      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #cbd5e1);
     }
     #${rootId} header .back:hover {
-      background: var(--color-btn-hover, #4e4b68);
+      background: var(--color-btn-hover, #e5e7eb);
     }
     #${rootId} header .toggle {
       font-size: 16px;
@@ -132,7 +132,7 @@
       gap: 8px;
     }
     #${rootId} .agent-row:hover {
-      background: rgba(255, 255, 255, 0.06);
+      background: rgba(0, 153, 204, 0.10);
     }
     #${rootId} .agent-row .dot {
       width: 8px;
@@ -170,19 +170,19 @@
     }
     #${rootId} .msg.user {
       align-self: flex-end;
-      background: rgba(96, 165, 250, 0.22);
-      border: 1px solid rgba(96, 165, 250, 0.35);
+      background: #e0f2fe;
+      border: 1px solid #0099cc;
     }
     #${rootId} .msg.assistant {
       align-self: flex-start;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: #f3f4f6;
+      border: 1px solid #cbd5e1;
     }
     #${rootId} .msg.error {
       align-self: flex-start;
-      background: rgba(239, 68, 68, 0.2);
-      border: 1px solid rgba(239, 68, 68, 0.4);
-      color: #fecaca;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.5);
+      color: #991b1b;
       /* Errors + tool-call chips keep a monospace font for alignment of
          status codes / tool names; reads fine beside the pixel text. */
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -222,19 +222,19 @@
       50% { opacity: 0; }
     }
     #${rootId} .compose {
-      border-top: 2px solid var(--color-border, #4a4a6a);
+      border-top: 2px solid var(--color-border, #cbd5e1);
       padding: 8px;
       display: flex;
       gap: 6px;
-      background: var(--color-bg-dark, #181828);
+      background: var(--color-bg-dark, #f3f4f6);
     }
     #${rootId} .compose textarea {
       flex: 1;
       resize: none;
-      background: var(--color-bg-dark, #181828);
-      border: 2px solid var(--color-border, #4a4a6a);
+      background: var(--color-bg-dark, #f3f4f6);
+      border: 2px solid var(--color-border, #cbd5e1);
       border-radius: 4px;
-      color: var(--color-text, #ffffffe6);
+      color: var(--color-text, #1f2937);
       padding: 8px 10px;
       font: inherit;
       min-height: 52px;
@@ -242,21 +242,21 @@
     }
     #${rootId} .compose textarea:focus {
       outline: none;
-      border-color: var(--color-accent, #6030ff);
+      border-color: var(--color-accent, #0099cc);
     }
     #${rootId} .compose button {
-      background: var(--color-accent, #6030ff);
-      border: 2px solid var(--color-border, #4a4a6a);
+      background: var(--color-accent, #0099cc);
+      border: 2px solid var(--color-border, #cbd5e1);
       color: #fff;
       border-radius: 4px;
       padding: 0 16px;
       cursor: pointer;
       font: inherit;
       font-weight: 700;
-      box-shadow: var(--shadow-pixel, 2px 2px 0 #0a0a14);
+      box-shadow: var(--shadow-pixel, 2px 2px 0 #cbd5e1);
     }
     #${rootId} .compose button:hover:not(:disabled) {
-      background: var(--color-accent-bright, #746fff);
+      background: var(--color-accent-bright, #33b0dd);
     }
     #${rootId} .compose button:disabled {
       opacity: 0.4;
@@ -264,7 +264,7 @@
     }
     #${rootId} .empty {
       padding: 16px 12px;
-      color: rgba(255, 255, 255, 0.5);
+      color: #6b7280;
       text-align: center;
       font-style: italic;
     }

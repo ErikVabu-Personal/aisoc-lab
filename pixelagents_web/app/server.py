@@ -1304,7 +1304,33 @@ def index() -> HTMLResponse:
     token_js = json.dumps(token)
     show_cost = os.getenv("SHOW_COST", "1").lower() in ("1", "true", "yes", "on")
     show_cost_js = json.dumps(show_cost)
+    # NVISO Cruiseways brand palette override. Re-defines the vendored
+    # Pixel Agents CSS variables at :root so the page chrome (buttons,
+    # panels, headers) takes a light + blue palette instead of the
+    # default dark + purple. The pixel-art office canvas itself is
+    # rendered from baked sprites and stays as-is — frames nicely as a
+    # focal point against the lighter chrome.
+    nviso_theme = (
+        '<style id="nviso-theme">'
+        ':root {'
+        '  --color-bg: #ffffff;'
+        '  --color-bg-dark: #f3f4f6;'
+        '  --color-bg-thumb: #e5e7eb;'
+        '  --color-border: #cbd5e1;'
+        '  --color-accent: #0099cc;'
+        '  --color-accent-bright: #33b0dd;'
+        '  --color-text: #1f2937;'
+        '  --color-text-muted: #6b7280;'
+        '  --color-btn-bg: #f3f4f6;'
+        '  --color-btn-hover: #e5e7eb;'
+        '  --color-active-bg: #e0f2fe;'
+        '  --shadow-pixel: 2px 2px 0 #cbd5e1;'
+        '}'
+        'html, body, #root { background: #ffffff !important; color: #1f2937; }'
+        '</style>'
+    )
     injection = (
+        f'{nviso_theme}'
         f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js}, show_cost: {show_cost_js} }};</script>'
         f'<script src="/static/chat_drawer.js" defer></script>'
         f'<script src="/static/incidents_panel.js" defer></script>'
