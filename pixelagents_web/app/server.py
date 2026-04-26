@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import time
 from collections import defaultdict, deque
 from typing import Any, Deque, Dict
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Form, Header, HTTPException, Request, Response
 
 # `requests` and `azure-identity` are imported lazily inside the chat handler so
 # the module stays import-safe in environments where the chat feature is unused.
@@ -21,7 +22,7 @@ def _slug_agent(name: str) -> str:
     s = re.sub(r"-+$", "", s)
     return s or "unknown"
 
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 APP_TITLE = "pixelagents-web"
@@ -147,6 +148,215 @@ def _require_token(x_pixelagents_token: str | None) -> None:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
+# ── Demo-grade login (single hardcoded user, in-memory sessions) ─────
+# This is a demo lab, not a hardened production stack. The user store
+# is a literal dict; sessions live only in this process. PixelAgents
+# Web is pinned to a single replica, so in-memory state survives
+# between requests as long as the container doesn't restart. A
+# container restart logs everyone out — acceptable for a demo.
+USERS: dict[str, str] = {
+    "erik.vanbuggenhout@nviso.eu": "admin123",
+}
+SESSIONS: dict[str, dict[str, Any]] = {}  # sid -> {"user": str, "created": float}
+SESSION_COOKIE = "aisoc_session"
+SESSION_TTL_SEC = 12 * 3600
+
+
+def _new_session(user: str) -> str:
+    sid = secrets.token_urlsafe(32)
+    SESSIONS[sid] = {"user": user, "created": time.time()}
+    return sid
+
+
+def _session_user(request: Request) -> str | None:
+    sid = request.cookies.get(SESSION_COOKIE)
+    if not sid:
+        return None
+    s = SESSIONS.get(sid)
+    if not s:
+        return None
+    if time.time() - s["created"] > SESSION_TTL_SEC:
+        SESSIONS.pop(sid, None)
+        return None
+    return s["user"]
+
+
+def _require_auth(request: Request, x_pixelagents_token: str | None) -> None:
+    """Browser session cookie OR x-pixelagents-token header — either works.
+
+    Used by endpoints called from both the logged-in UI (cookie) and from
+    server-to-server callers like the runner / orchestrator (token).
+    """
+    if _session_user(request) is not None:
+        return
+    expected = os.getenv(TOKEN_ENV, "")
+    if expected and x_pixelagents_token == expected:
+        return
+    raise HTTPException(status_code=401, detail="Authentication required")
+
+
+# Login page — pure HTML, no JS framework. NVISO Cruiseways palette
+# (cyan accent, white background) so it visually matches the gated UI
+# behind it.
+LOGIN_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NVISO Cruises — AISOC Demo · Sign in</title>
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #1f2937; --muted: #6b7280;
+      --accent: #0099cc; --accent-bright: #33b0dd;
+      --bg-dark: #f3f4f6; --border: #cbd5e1;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+    .card {
+      width: 380px;
+      max-width: calc(100vw - 32px);
+      padding: 32px 28px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 4px;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+    }
+    .subtitle {
+      margin: 0 0 24px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      margin: 14px 0 6px;
+    }
+    input[type="email"], input[type="password"] {
+      width: 100%;
+      padding: 9px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font: inherit;
+      color: var(--fg);
+      background: #ffffff;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+    }
+    button {
+      width: 100%;
+      margin-top: 20px;
+      padding: 10px;
+      background: var(--accent);
+      color: #ffffff;
+      border: none;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent-bright); }
+    .err {
+      margin-top: 14px;
+      padding: 8px 10px;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.4);
+      color: #991b1b;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    .footer {
+      margin-top: 18px;
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>NVISO Cruises</h1>
+    <p class="subtitle">AISOC Demo — sign in to continue</p>
+    <form method="post" action="/login">
+      <label for="username">Email</label>
+      <input id="username" name="username" type="email"
+             autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password"
+             autocomplete="current-password" required>
+      __ERROR__
+      <button type="submit">Sign in</button>
+    </form>
+    <div class="footer">Demo environment — sessions expire after 12 hours.</div>
+  </div>
+</body>
+</html>
+"""
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request) -> Response:
+    if _session_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse(LOGIN_HTML.replace("__ERROR__", ""))
+
+
+@app.post("/login")
+def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+) -> Response:
+    user_key = username.lower().strip()
+    expected_pw = USERS.get(user_key)
+    if not expected_pw or expected_pw != password:
+        err = '<div class="err">Invalid email or password</div>'
+        return HTMLResponse(
+            LOGIN_HTML.replace("__ERROR__", err),
+            status_code=401,
+        )
+    sid = _new_session(user_key)
+    response = RedirectResponse(url="/", status_code=303)
+    response.set_cookie(
+        SESSION_COOKIE,
+        sid,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        max_age=SESSION_TTL_SEC,
+    )
+    return response
+
+
+@app.post("/logout")
+@app.get("/logout")
+def logout(request: Request) -> Response:
+    sid = request.cookies.get(SESSION_COOKIE)
+    if sid:
+        SESSIONS.pop(sid, None)
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"ok": "true"}
@@ -166,7 +376,11 @@ def _default_agent_roster() -> list[str]:
 
 
 @app.get("/api/agents/state")
-def api_agents_state() -> dict[str, Any]:
+def api_agents_state(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
     # Minimal adapter for Pixel Agents UI
     # Ensure a stable roster exists even before events
     now = time.time()
@@ -367,10 +581,8 @@ async def send_message_to_agent(
 ) -> dict[str, Any]:
     """Send an ad-hoc user message to a Foundry agent and return its response.
 
-    Backend-only MVP for interactive PixelAgents: gated by the existing
-    ``x-pixelagents-token`` so it can be exercised by curl without a UI yet.
-    A proper user-auth story (e.g. ACA Easy Auth with Entra) should land
-    before this endpoint is surfaced to a browser.
+    Accepts either a logged-in browser session (cookie) or the
+    ``x-pixelagents-token`` header so it can also be exercised by curl.
 
     Note: this does not enforce read-only scoping. Whatever tools the named
     agent has attached in Foundry, it can call — including write tools if
@@ -378,7 +590,7 @@ async def send_message_to_agent(
     before exposing broadly.
     """
 
-    _require_token(x_pixelagents_token)
+    _require_auth(req, x_pixelagents_token)
 
     body: dict[str, Any]
     try:
@@ -486,6 +698,7 @@ def _arm_token() -> str:
 
 @app.get("/api/sentinel/incidents")
 def list_sentinel_incidents(
+    request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
     """Return a summary list of Sentinel incidents for the lab workspace.
@@ -499,7 +712,7 @@ def list_sentinel_incidents(
     without hammering ARM.
     """
 
-    _require_token(x_pixelagents_token)
+    _require_auth(request, x_pixelagents_token)
 
     now = time.time()
     cached = _INCIDENTS_CACHE.get("payload")
@@ -608,7 +821,7 @@ async def orchestrate_incident(
       }
     """
 
-    _require_token(x_pixelagents_token)
+    _require_auth(req, x_pixelagents_token)
 
     orch_base = os.getenv("ORCHESTRATOR_URL", "")
     orch_key = os.getenv("ORCHESTRATOR_FUNCTION_KEY", "")
@@ -728,11 +941,12 @@ async def record_cost(
 @app.get("/api/sentinel/incidents/{incident_number}/cost")
 def get_incident_cost(
     incident_number: int,
+    request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
     """Per-incident cost summary for the incidents panel."""
 
-    _require_token(x_pixelagents_token)
+    _require_auth(request, x_pixelagents_token)
     bucket = COSTS.get(str(incident_number)) or {
         "total_eur": 0.0,
         "total_input_tokens": 0,
@@ -750,12 +964,13 @@ def get_incident_cost(
 
 @app.get("/api/sentinel/incidents/costs")
 def get_all_incident_costs(
+    request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
     """Aggregate cost map so the incidents panel can render a Cost column
     in a single poll rather than N per-incident requests."""
 
-    _require_token(x_pixelagents_token)
+    _require_auth(request, x_pixelagents_token)
     out: dict[str, Any] = {}
     for key, bucket in COSTS.items():
         if not key.isdigit():
@@ -832,11 +1047,12 @@ async def hitl_create_question(
 
 @app.get("/api/hitl/pending")
 def hitl_list_pending(
+    request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
     """UI reads this to show currently-pending questions."""
 
-    _require_token(x_pixelagents_token)
+    _require_auth(request, x_pixelagents_token)
     pending = [
         _hitl_public(q) for q in HITL_QUESTIONS.values() if q.get("status") == "pending"
     ]
@@ -852,7 +1068,7 @@ async def hitl_submit_answer(
 ) -> dict[str, Any]:
     """UI submits a human answer for a given question id."""
 
-    _require_token(x_pixelagents_token)
+    _require_auth(req, x_pixelagents_token)
 
     q = HITL_QUESTIONS.get(qid)
     if not q:
@@ -933,7 +1149,7 @@ async def stream_message_to_agent(
     See send_message_to_agent above for the request-body contract and caveats.
     """
 
-    _require_token(x_pixelagents_token)
+    _require_auth(req, x_pixelagents_token)
 
     try:
         body = await req.json()
@@ -1241,7 +1457,11 @@ async def ingest_event(
 
 
 @app.get("/events/stream")
-async def sse_stream() -> StreamingResponse:
+async def sse_stream(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> StreamingResponse:
+    _require_auth(request, x_pixelagents_token)
     async def gen():
         # SSE: send a snapshot, then follow new events.
         last_idx = 0
@@ -1280,7 +1500,7 @@ async def _sleep(seconds: float) -> None:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> HTMLResponse:
+def index(request: Request) -> Response:
     """Serve the Pixel Agents UI, with the AISOC chat drawer injected.
 
     We don't touch the vendored ui_dist/index.html on disk — instead we read it
@@ -1288,6 +1508,11 @@ def index() -> HTMLResponse:
     ``</body>``, and return the modified HTML. Keeps ui_dist/ a pure vendor
     artifact that can be updated from upstream without merge conflicts.
     """
+
+    # Gate on session cookie — anonymous visitors get redirected to /login.
+    current_user = _session_user(request)
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
 
     dist_index = os.path.join(os.path.dirname(__file__), "ui_dist", "index.html")
     if not os.path.exists(dist_index):
@@ -1327,10 +1552,32 @@ def index() -> HTMLResponse:
         '  --shadow-pixel: 2px 2px 0 #cbd5e1;'
         '}'
         'html, body, #root { background: #ffffff !important; color: #1f2937; }'
+        '#aisoc-userbar {'
+        '  position: fixed; top: 8px; right: 12px; z-index: 9999;'
+        '  font: 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;'
+        '  background: rgba(255,255,255,0.85); backdrop-filter: blur(4px);'
+        '  padding: 4px 10px; border: 1px solid #cbd5e1; border-radius: 4px;'
+        '  color: #6b7280;'
+        '}'
+        '#aisoc-userbar a {'
+        '  margin-left: 12px; color: #0099cc; text-decoration: none;'
+        '  font-weight: 600;'
+        '}'
+        '#aisoc-userbar a:hover { color: #33b0dd; text-decoration: underline; }'
         '</style>'
+    )
+    # Tiny "signed in as / sign out" bar so the user knows the session is
+    # active and has an obvious way out. Uses a GET form action so a
+    # plain link works (no JS dependency).
+    user_html = (
+        f'<div id="aisoc-userbar">'
+        f'  <span>Signed in as <b>{current_user}</b></span>'
+        f'  <a href="/logout">Sign out</a>'
+        f'</div>'
     )
     injection = (
         f'{nviso_theme}'
+        f'{user_html}'
         f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js}, show_cost: {show_cost_js} }};</script>'
         f'<script src="/static/chat_drawer.js" defer></script>'
         f'<script src="/static/incidents_panel.js" defer></script>'
