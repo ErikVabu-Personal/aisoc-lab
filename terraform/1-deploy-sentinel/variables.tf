@@ -36,11 +36,6 @@ variable "openrouter_api_key" {
   sensitive   = true
 }
 
-variable "function_plan_sku" {
-  description = "App Service Plan SKU for the SOC gateway Function. Use B1 if Consumption (Y1) is blocked by Dynamic VMs quota."
-  type        = string
-  default     = "B1"
-}
 
 variable "resource_group_name" {
   description = "Resource group name"

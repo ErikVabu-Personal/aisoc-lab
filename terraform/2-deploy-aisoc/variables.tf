@@ -7,9 +7,9 @@ variable "openrouter_api_key" {
 
 
 variable "function_plan_sku" {
-  description = "App Service Plan SKU for the SOC gateway Function. Region quotas vary heavily; set this in tfvars when needed."
+  description = "App Service Plan SKU shared by the SOC Gateway + Orchestrator Function Apps. Default is EP1 (Elastic Premium) because new subscriptions usually have 0 quota for Standard-tier VMs (the S/B/D SKUs use that pool); EP-series has its own pool that's more readily available. Override only when EP-series isn't available in your target region."
   type        = string
-  default     = "S1"
+  default     = "EP1"
 }
 
 variable "location_override" {
