@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# deploy_aisoc_demo.sh — end-to-end deploy for the AISOC demo
+# aisoc_demo.sh — end-to-end deploy for the AISOC demo
 #
 # Walks the three Terraform phases in order, triggers the function-app
 # code-deploy workflows on GitHub, runs the Foundry bootstrap scripts,
@@ -23,9 +23,9 @@
 # repo is public.
 #
 # Usage:
-#   ./deploy_aisoc_demo.sh deploy   [--key=value]...
-#   ./deploy_aisoc_demo.sh destroy  [--key=value]...
-#   ./deploy_aisoc_demo.sh --help
+#   ./aisoc_demo.sh deploy   [--key=value]...
+#   ./aisoc_demo.sh destroy  [--key=value]...
+#   ./aisoc_demo.sh --help
 #
 # The first argument is a subcommand:
 #   deploy   — walk Phases 1 → 2 → 3 (build, configure, smoke-test)
@@ -80,7 +80,7 @@ print_banner
 # ── Argument parsing ─────────────────────────────────────────────────
 usage() {
   cat <<'EOF'
-Usage: ./deploy_aisoc_demo.sh <command> [options]
+Usage: ./aisoc_demo.sh <command> [options]
 
 Commands:
   deploy    Walk Phases 1 → 2 → 3 — Terraform applies, function-app
@@ -133,16 +133,16 @@ Sensitive values:
 
 Examples:
   # Minimal first-time deploy (admin password auto-generated):
-  ./deploy_aisoc_demo.sh deploy \
+  ./aisoc_demo.sh deploy \
       --resource-group=rg-aisoc-demo --azure-location=westus
 
   # Override Foundry region:
-  ./deploy_aisoc_demo.sh deploy \
+  ./aisoc_demo.sh deploy \
       --resource-group=rg-aisoc-demo \
       --azure-location=westus --foundry-location=swedencentral
 
   # Tear it all down:
-  ./deploy_aisoc_demo.sh destroy
+  ./aisoc_demo.sh destroy
 EOF
 }
 
@@ -258,7 +258,7 @@ if [[ "$ACTION" == "destroy" ]]; then
   printf '\n%s%s═════════════════════════ Demo torn down ═════════════════════════%s\n' "$BOLD" "$GREEN" "$NC"
   printf '  All three Terraform phases are destroyed.\n'
   printf '  OIDC trust + AZURE_* repo variables are preserved.\n'
-  printf '  Run ./deploy_aisoc_demo.sh to redeploy when ready.\n\n'
+  printf '  Run ./aisoc_demo.sh to redeploy when ready.\n\n'
   exit 0
 fi
 

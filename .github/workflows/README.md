@@ -17,7 +17,7 @@ All five also support manual `workflow_dispatch`.
 
 ## One-time setup
 
-### 1. OIDC federated credential (handled by `deploy_aisoc_demo.sh`)
+### 1. OIDC federated credential (handled by `aisoc_demo.sh`)
 
 The deploy script's "OIDC bootstrap" step creates everything needed:
 
