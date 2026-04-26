@@ -23,7 +23,13 @@
 # repo is public.
 #
 # Usage:
-#   ./deploy_aisoc_demo.sh
+#   ./deploy_aisoc_demo.sh [--key=value]...
+#   ./deploy_aisoc_demo.sh --help
+#
+# Any --key=value is forwarded as TF_VAR_<key> across all phases.
+# Terraform silently ignores TF_VAR_<x> if x isn't declared in that
+# phase's module, so you can pass a Phase-1-only var like
+# --admin-password=... without it bleeding into Phase 2/3.
 #
 # To re-deploy a single phase, run terraform apply directly inside that
 # phase's directory — null_resources will re-run the configure scripts.
@@ -41,6 +47,105 @@ say()  { printf '\n%s%s==> %s%s\n' "$BOLD" "$CYAN" "$*" "$NC"; }
 ok()   { printf '%sOK: %s%s\n' "$GREEN" "$*" "$NC"; }
 warn() { printf '%sWARN: %s%s\n' "$YELLOW" "$*" "$NC" >&2; }
 die()  { printf '%sERROR: %s%s\n' "$RED" "$*" "$NC" >&2; exit 1; }
+
+# ── Argument parsing ─────────────────────────────────────────────────
+usage() {
+  cat <<'EOF'
+Usage: ./deploy_aisoc_demo.sh [options]
+
+Walks the three Terraform phases, triggers function-app code workflows,
+runs Foundry bootstrap, deploys PixelAgents Web. Idempotent.
+
+Common Terraform variables (Phase 1):
+  --admin-password=...        Lab VM admin password (REQUIRED, sensitive)
+  --allowed-rdp-cidr=...      /32 CIDR allowed for RDP, e.g. 203.0.113.10/32
+  --location=...              Azure region for Sentinel + lab VM (default: westus)
+  --vm-size=...               Lab VM size (default: Standard_D2s_v3)
+  --resource-group-name=...   Override the auto-generated RG name
+
+Common Terraform variables (Phase 2):
+  --location-override=...     Region for Function Apps (default: westcentralus)
+  --foundry-location=...      Region for Foundry hub/project (default: eastus2)
+  --foundry-model-choice=...  Model name (default: gpt-4.1-mini)
+  --runner-image=...          Override runner image tag (default: :latest)
+
+Other:
+  --subscription=...          Azure subscription to deploy into
+                              (defaults to current `az account show` selection)
+  --skip-oidc-bootstrap       Skip the GitHub→Azure federated-credential setup
+                              (use if you've already bootstrapped or are
+                              re-running from a fresh shell)
+  -h, --help                  show this help
+
+Generic pass-through:
+  Any unrecognized --key=value is forwarded as TF_VAR_<key>=<value>.
+  Dashes in <key> are converted to underscores (--foo-bar -> TF_VAR_foo_bar).
+
+Sensitive values:
+  For passwords / API keys, prefer pre-setting TF_VAR_<name> in the
+  environment so the value never lands in shell history or process
+  listings. Pre-set env vars take precedence over --flag values.
+
+Examples:
+  # Minimal first-time deploy (auto-detect RDP CIDR, generate strong pw):
+  TF_VAR_admin_password='S0meStr0ng!pw' ./deploy_aisoc_demo.sh \
+      --allowed-rdp-cidr='203.0.113.10/32' --location=westus
+
+  # Override Foundry region:
+  ./deploy_aisoc_demo.sh \
+      --admin-password='...' --allowed-rdp-cidr='...' \
+      --foundry-location=swedencentral
+EOF
+}
+
+declare -A USER_VARS=()
+SUBSCRIPTION_OVERRIDE=""
+SKIP_OIDC=0
+
+# Convert --foo-bar to TF_VAR_foo_bar
+add_var() {
+  local key="$1" value="$2"
+  local tf_name
+  tf_name="$(echo "$key" | tr '-' '_')"
+  USER_VARS["$tf_name"]="$value"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)              usage; exit 0 ;;
+    --skip-oidc-bootstrap)  SKIP_OIDC=1; shift ;;
+    --subscription=*)       SUBSCRIPTION_OVERRIDE="${1#*=}"; shift ;;
+    --subscription)         [[ $# -ge 2 ]] || die "missing value for --subscription"
+                            SUBSCRIPTION_OVERRIDE="$2"; shift 2 ;;
+    --*=*)
+      pair="${1#--}"; key="${pair%%=*}"; value="${pair#*=}"
+      add_var "$key" "$value"
+      shift
+      ;;
+    --*)
+      key="${1#--}"
+      [[ $# -ge 2 ]] || die "missing value for --$key (try --help)"
+      add_var "$key" "$2"
+      shift 2
+      ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+
+# Export each as TF_VAR_<name>, but never clobber a value already set in
+# the env (so users can pre-set sensitive values without putting them on
+# the command line).
+for k in "${!USER_VARS[@]}"; do
+  envvar="TF_VAR_$k"
+  if [[ -z "${!envvar:-}" ]]; then
+    export "$envvar=${USER_VARS[$k]}"
+  fi
+done
+
+# Optional subscription switch (must happen before any az/terraform calls).
+if [[ -n "$SUBSCRIPTION_OVERRIDE" ]]; then
+  az account set -s "$SUBSCRIPTION_OVERRIDE"
+fi
 
 # ── 0) Prereq checks ─────────────────────────────────────────────────
 say "Checking prerequisites"
@@ -60,6 +165,10 @@ ok "prereqs satisfied"
 # so the workflows never hold a long-lived secret. Idempotent: if the
 # SP, federated credential, role assignment, and repo variables already
 # exist this is a no-op.
+if [[ "$SKIP_OIDC" == "1" ]]; then
+  say "Skipping OIDC bootstrap (--skip-oidc-bootstrap)"
+  SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+else
 say "Bootstrapping OIDC trust between GitHub and Azure"
 
 OIDC_APP_NAME="${OIDC_APP_NAME:-aisoc-lab-gha}"
@@ -119,24 +228,21 @@ gh variable set AZURE_TENANT_ID       --repo "$REPO" --body "$TENANT_ID"       >
 gh variable set AZURE_SUBSCRIPTION_ID --repo "$REPO" --body "$SUBSCRIPTION_ID" >/dev/null
 
 ok "OIDC trust ready (workflows will authenticate to subscription $SUBSCRIPTION_ID)"
+fi  # SKIP_OIDC
 
-# ── Helper: bring up a tfvars file from the example, if one is missing ──
-ensure_tfvars() {
-  local dir="$1"
-  if [[ -f "$dir/terraform.tfvars" ]]; then
-    return 0
-  fi
-  if [[ ! -f "$dir/terraform.tfvars.example" ]]; then
-    # No example to copy; assume defaults are fine.
-    return 0
-  fi
-  cp "$dir/terraform.tfvars.example" "$dir/terraform.tfvars"
-  die "$dir/terraform.tfvars created from template — edit it (set passwords, region, etc.) then re-run."
-}
+# ── Pre-flight: required Phase 1 vars ────────────────────────────────
+# admin_password has no default in Phase 1's variables.tf, so without
+# tfvars or env/CLI it would prompt — and we run with -input=false.
+if [[ -z "${TF_VAR_admin_password:-}" && ! -f "terraform/1-deploy-sentinel/terraform.tfvars" ]]; then
+  die "admin_password is required for Phase 1.\n  Pass it via --admin-password='...', or set TF_VAR_admin_password in the env, or create terraform/1-deploy-sentinel/terraform.tfvars."
+fi
 
 apply_phase() {
   local dir="$1"
-  ensure_tfvars "$dir"
+  # Vars come from (in priority order):
+  #   1. Pre-set TF_VAR_* env vars and --flag args (already exported above)
+  #   2. terraform.tfvars in $dir (if present — optional)
+  #   3. variable defaults in the module
   ( cd "$dir" && terraform init -upgrade -input=false && terraform apply -auto-approve -input=false )
 }
 
