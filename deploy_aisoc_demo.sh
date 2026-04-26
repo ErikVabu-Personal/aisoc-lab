@@ -13,15 +13,14 @@
 #
 # Prereqs (one-time per machine):
 #   - az login
-#   - az account set -s <SUBSCRIPTION_ID>
+#   - az account set -s <SUBSCRIPTION_ID>      (the sub you want everything in)
 #   - terraform >= 1.6
 #   - gh CLI authenticated to github.com (`gh auth login`)
 #
-# Prereqs (one-time per GitHub repo):
-#   - AZURE_CREDENTIALS secret holding service-principal JSON
-#     az ad sp create-for-rbac --name "aisoc-lab-gha" --role Contributor \
-#       --scopes /subscriptions/<SUBSCRIPTION_ID> --sdk-auth | \
-#       gh secret set AZURE_CREDENTIALS --repo ErikVabu-Personal/aisoc-lab
+# GitHub Actions auth: this script uses **OIDC federated credentials**,
+# not a long-lived secret — see the "OIDC bootstrap" step below. No
+# `AZURE_CREDENTIALS` secret needed; the deploy works fine when the
+# repo is public.
 #
 # Usage:
 #   ./deploy_aisoc_demo.sh
@@ -54,15 +53,72 @@ command -v jq        >/dev/null 2>&1 || die "jq not found (used by Phase 1 Senti
 az account show >/dev/null 2>&1 || die "az not logged in. Run: az login"
 gh auth status -h github.com >/dev/null 2>&1 || die "gh not authenticated. Run: gh auth login"
 
-if ! gh secret list --repo "$REPO" 2>/dev/null | grep -q '^AZURE_CREDENTIALS'; then
-  warn "AZURE_CREDENTIALS secret not detected on $REPO."
-  warn "If you haven't set it up yet, run:"
-  warn "  az ad sp create-for-rbac --name aisoc-lab-gha --role Contributor \\"
-  warn "    --scopes /subscriptions/<SUBSCRIPTION_ID> --sdk-auth | \\"
-  warn "    gh secret set AZURE_CREDENTIALS --repo $REPO"
-  warn "Continuing — Function App workflows will fail later if it's actually missing."
-fi
 ok "prereqs satisfied"
+
+# ── 0a) OIDC bootstrap ───────────────────────────────────────────────
+# Set up GitHub-Actions-to-Azure auth via OIDC (federated credentials),
+# so the workflows never hold a long-lived secret. Idempotent: if the
+# SP, federated credential, role assignment, and repo variables already
+# exist this is a no-op.
+say "Bootstrapping OIDC trust between GitHub and Azure"
+
+OIDC_APP_NAME="${OIDC_APP_NAME:-aisoc-lab-gha}"
+OIDC_BRANCH="${OIDC_BRANCH:-main}"
+OIDC_FEDCRED_NAME="aisoc-lab-${OIDC_BRANCH}"
+OIDC_SUBJECT="repo:${REPO}:ref:refs/heads/${OIDC_BRANCH}"
+
+SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+TENANT_ID="$(az account show --query tenantId -o tsv)"
+
+# 1. Service principal (no password — we'll attach a federated credential).
+APP_ID="$(az ad app list --display-name "$OIDC_APP_NAME" --query '[0].appId' -o tsv 2>/dev/null || true)"
+if [[ -z "$APP_ID" ]]; then
+  echo "  creating Azure AD app '$OIDC_APP_NAME'"
+  APP_ID="$(az ad app create --display-name "$OIDC_APP_NAME" --query appId -o tsv)"
+  az ad sp create --id "$APP_ID" >/dev/null
+else
+  echo "  Azure AD app '$OIDC_APP_NAME' already exists ($APP_ID)"
+  # Make sure the SP shadow exists too — it can be missing if the app was created elsewhere.
+  az ad sp show --id "$APP_ID" >/dev/null 2>&1 || az ad sp create --id "$APP_ID" >/dev/null
+fi
+SP_OBJECT_ID="$(az ad sp show --id "$APP_ID" --query id -o tsv)"
+
+# 2. Federated credential pinning the trust to this repo + branch.
+existing_fc="$(az ad app federated-credential list --id "$APP_ID" \
+                 --query "[?name=='$OIDC_FEDCRED_NAME'].name" -o tsv 2>/dev/null || true)"
+if [[ -z "$existing_fc" ]]; then
+  echo "  creating federated credential subject=$OIDC_SUBJECT"
+  az ad app federated-credential create --id "$APP_ID" --parameters "$(cat <<EOF
+{
+  "name": "$OIDC_FEDCRED_NAME",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "$OIDC_SUBJECT",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+EOF
+)" >/dev/null
+else
+  echo "  federated credential '$OIDC_FEDCRED_NAME' already exists"
+fi
+
+# 3. Subscription-scoped Contributor (idempotent — `az role assignment create`
+#    is a no-op if the assignment already exists, returns non-zero on conflict).
+SCOPE="/subscriptions/$SUBSCRIPTION_ID"
+echo "  ensuring Contributor role on $SCOPE"
+az role assignment create \
+  --assignee-object-id "$SP_OBJECT_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role Contributor \
+  --scope "$SCOPE" \
+  >/dev/null 2>&1 || true
+
+# 4. Push the three IDs as repo variables (publicly visible — they're identifiers, not secrets).
+echo "  syncing AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID to $REPO"
+gh variable set AZURE_CLIENT_ID       --repo "$REPO" --body "$APP_ID"          >/dev/null
+gh variable set AZURE_TENANT_ID       --repo "$REPO" --body "$TENANT_ID"       >/dev/null
+gh variable set AZURE_SUBSCRIPTION_ID --repo "$REPO" --body "$SUBSCRIPTION_ID" >/dev/null
+
+ok "OIDC trust ready (workflows will authenticate to subscription $SUBSCRIPTION_ID)"
 
 # ── Helper: bring up a tfvars file from the example, if one is missing ──
 ensure_tfvars() {

@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write   # OIDC: GitHub mints a JWT for azure/login
 
     env:
       RG: ${{ inputs.resource_group || vars.AISOC_RESOURCE_GROUP }}
@@ -43,10 +44,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Azure login
+      - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build function package (with dependencies)
         shell: bash

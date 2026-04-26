@@ -1,8 +1,9 @@
 # GitHub Actions
 
-Each deployable artifact has its own workflow. They all share a single
-service principal (stored as `AZURE_CREDENTIALS`) and read deploy targets
-from repository variables so push-on-`main` is enough to deploy.
+Each deployable artifact has its own workflow. They all authenticate to
+Azure via **OIDC federated credentials** (no long-lived secrets — safe
+for a public repo) and read deploy targets from repository variables so
+push-on-`main` is enough to deploy.
 
 | Workflow | Builds | Triggers on changes to |
 | --- | --- | --- |
@@ -16,21 +17,47 @@ All five also support manual `workflow_dispatch`.
 
 ## One-time setup
 
-### 1. Service principal
+### 1. OIDC federated credential (handled by `deploy_aisoc_demo.sh`)
 
-Create a service principal with Contributor on the demo resource group
-(or a tighter scope) and store the JSON in a repo secret named
-`AZURE_CREDENTIALS`:
+The deploy script's "OIDC bootstrap" step creates everything needed:
+
+1. an Azure AD app + service principal `aisoc-lab-gha`
+2. a federated credential pinning the trust to
+   `repo:ErikVabu-Personal/aisoc-lab:ref:refs/heads/main`
+3. a subscription-scoped Contributor role assignment
+4. three repo variables: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+   `AZURE_SUBSCRIPTION_ID` (publicly visible — they're identifiers,
+   not secrets)
+
+This means the workflows hold no `clientSecret` — they get a 5-minute
+JWT from GitHub on each run, exchange it for a short-lived Azure token,
+and that's it. Forks and other branches can't authenticate because the
+federated credential's `subject` won't match.
+
+To bootstrap manually instead of via the deploy script:
 
 ```bash
-az ad sp create-for-rbac \
-  --name "aisoc-lab-gha" \
-  --role Contributor \
-  --scopes /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RG_NAME> \
-  --sdk-auth
+APP_ID=$(az ad app create --display-name aisoc-lab-gha --query appId -o tsv)
+az ad sp create --id "$APP_ID"
+az ad app federated-credential create --id "$APP_ID" --parameters '{
+  "name": "aisoc-lab-main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:ErikVabu-Personal/aisoc-lab:ref:refs/heads/main",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+SP_OBJ=$(az ad sp show --id "$APP_ID" --query id -o tsv)
+az role assignment create --assignee-object-id "$SP_OBJ" \
+  --assignee-principal-type ServicePrincipal --role Contributor \
+  --scope "/subscriptions/$(az account show --query id -o tsv)"
+
+gh variable set AZURE_CLIENT_ID       --body "$APP_ID"
+gh variable set AZURE_TENANT_ID       --body "$(az account show --query tenantId -o tsv)"
+gh variable set AZURE_SUBSCRIPTION_ID --body "$(az account show --query id -o tsv)"
 ```
 
-The same SP is reused by every workflow — no need to create separate ones.
+To allow workflow_dispatch from another branch, add a second federated
+credential with that branch's subject (`...refs/heads/<branch>`) or a
+wildcard ref pattern.
 
 ### 2. Repository variables
 
