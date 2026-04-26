@@ -1299,10 +1299,18 @@ def get_all_incident_costs(
     for key, bucket in COSTS.items():
         if not key.isdigit():
             continue  # skip "chat" / "unattributed" buckets — UI is per-incident
+        records = bucket.get("records") or []
+        last = records[-1] if records else None
         out[key] = {
             "total_eur": round(bucket["total_eur"], 6),
             "total_input_tokens": bucket["total_input_tokens"],
             "total_output_tokens": bucket["total_output_tokens"],
+            # The most-recent cost record carries the phase + agent the
+            # orchestrator was on when it last reported. Useful for the
+            # dashboard's "currently running phase X" indicator.
+            "last_phase":     (last or {}).get("phase"),
+            "last_agent":     (last or {}).get("agent"),
+            "last_update_ts": (last or {}).get("ts"),
         }
     return {"costs": out, "ts": time.time()}
 

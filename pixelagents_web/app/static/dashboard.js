@@ -10,7 +10,9 @@
 
   const ROOT_ID = 'aisoc-dashboard-root';
   const POLL_INCIDENTS_MS = 8000;
-  const POLL_COSTS_MS = 4000;
+  const POLL_COSTS_MS = 3000;
+  const POLL_CURRENT_MS = 1500;
+  const RUNNING_STALE_MS = 60_000;   // a phase >60s old without progression = probably stuck
 
   // ── Styles ──────────────────────────────────────────────────────────
   const css = `
@@ -158,9 +160,9 @@
   if (!root) return;
 
   let incidents = [];
-  let costs = {};
-  const running = new Set();      // incident_number -> currently running locally
-  let notice = null;              // { kind: 'info'|'success'|'error', text: string }
+  let costs = {};                  // map keyed by incident number (string)
+  let currentIncident = null;      // { incident_number, started_at } or null
+  let notice = null;               // { kind: 'info'|'success'|'error', text: string }
 
   // ── Helpers ────────────────────────────────────────────────────────
   function escapeHtml(s) {
@@ -187,15 +189,48 @@
     return String(sev || '').toLowerCase();
   }
 
+  function isRunning(incidentNumber) {
+    return currentIncident && Number(currentIncident.incident_number) === Number(incidentNumber);
+  }
+
+  function fmtElapsed(secs) {
+    if (secs < 60) return `${Math.floor(secs)}s`;
+    const m = Math.floor(secs / 60), s = Math.floor(secs % 60);
+    return `${m}m${String(s).padStart(2, '0')}s`;
+  }
+
+  function activeWorkflowSummary() {
+    if (!currentIncident || currentIncident.incident_number == null) return null;
+    const num = currentIncident.incident_number;
+    const started = currentIncident.started_at;
+    const elapsed = started ? (Date.now() / 1000) - started : null;
+    const cost = costs[String(num)] || {};
+    const phase = cost.last_phase || null;
+    return { num, elapsed, phase };
+  }
+
   // ── Render ─────────────────────────────────────────────────────────
   function render() {
     const incidentCount = incidents.length;
     const total = totalEur();
+    const active = activeWorkflowSummary();
 
     let body = '';
     body += '<div class="summary">';
     body += `<div class="stat"><div class="label">Open incidents</div><div class="value">${incidentCount}</div></div>`;
     body += `<div class="stat accent"><div class="label">Total agent cost</div><div class="value">${fmtEur(total)}</div></div>`;
+    if (active) {
+      const phaseLabel = active.phase ? `phase ${escapeHtml(active.phase)}` : 'starting…';
+      const elapsed = active.elapsed != null ? fmtElapsed(active.elapsed) : '—';
+      body += `<div class="stat accent"><div class="label">Active workflow</div>`
+            + `<div class="value">#${active.num}</div>`
+            + `<div style="font-size:12px;color:#6b7280;margin-top:4px;">`
+            + `<span class="row-spinner" style="vertical-align:middle;margin-right:4px;"></span>`
+            + `${phaseLabel} · ${elapsed}</div></div>`;
+    } else {
+      body += `<div class="stat"><div class="label">Active workflow</div>`
+            + `<div class="value" style="color:#6b7280;">Idle</div></div>`;
+    }
     body += '</div>';
 
     if (notice) {
@@ -218,18 +253,20 @@
       body += '<tbody>';
       for (const inc of incidents) {
         const num = inc.number;
-        const isRunning = running.has(num);
+        const running = isRunning(num);
         const cost = costs[String(num)] || {};
         const eur = cost.total_eur || 0;
-        body += `<tr class="${isRunning ? 'running' : ''}">`;
+        body += `<tr class="${running ? 'running' : ''}">`;
         body += `<td class="num">#${num}</td>`;
         body += `<td class="title">${escapeHtml(inc.title || '')}</td>`;
         body += `<td><span class="sev ${severityClass(inc.severity)}">${escapeHtml(inc.severity || '?')}</span></td>`;
         body += `<td><span class="status ${severityClass(inc.status)}">${escapeHtml(inc.status || '?')}</span></td>`;
         body += `<td class="cost">${eur > 0 ? fmtEur(eur) : '—'}</td>`;
         body += '<td>';
-        if (isRunning) {
-          body += '<span class="row-spinner"></span><span style="font-size:12px;color:#6b7280;">running…</span>';
+        if (running) {
+          const phase = cost.last_phase || 'starting';
+          body += `<span class="row-spinner"></span>`
+                + `<span style="font-size:12px;color:#6b7280;">${escapeHtml(phase)}…</span>`;
         } else {
           body += `<button class="run" data-incident="${num}">Run workflow</button>`;
         }
@@ -248,9 +285,11 @@
 
   // ── Actions ────────────────────────────────────────────────────────
   async function onRunWorkflow(incidentNumber) {
-    if (running.has(incidentNumber)) return;
-    running.add(incidentNumber);
+    if (isRunning(incidentNumber)) return;
     notice = { kind: 'info', text: `Starting workflow for incident #${incidentNumber}…` };
+    // Optimistic UI: stamp it as the active incident so the row
+    // flips to "starting…" before /api/current_incident reflects it.
+    currentIncident = { incident_number: incidentNumber, started_at: Date.now() / 1000 };
     render();
 
     try {
@@ -268,8 +307,9 @@
     } catch (e) {
       notice = { kind: 'error', text: `Workflow failed for #${incidentNumber}\n${e.message || e}` };
     } finally {
-      running.delete(incidentNumber);
-      pollCosts();   // immediate refresh so the new cost appears
+      // Refresh the server-driven state so the row reverts to idle.
+      pollCurrent();
+      pollCosts();
       render();
     }
   }
@@ -295,13 +335,29 @@
       const r = await fetch('/api/sentinel/incidents/costs', { credentials: 'same-origin' });
       if (!r.ok) return;
       const data = await r.json();
-      costs = data || {};
+      // Endpoint returns { costs: { "1": {...}, "2": {...} }, ts: ... }
+      costs = (data && data.costs) || {};
+      render();
+    } catch (_) { /* swallow */ }
+  }
+
+  // Poll the server-side "currently orchestrating" marker so the
+  // running state survives navigation. Set by /api/sentinel/incidents/
+  // {n}/orchestrate at the start of a run, cleared when it returns.
+  async function pollCurrent() {
+    try {
+      const r = await fetch('/api/current_incident', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const data = await r.json();
+      currentIncident = (data && data.incident_number != null) ? data : null;
       render();
     } catch (_) { /* swallow */ }
   }
 
   pollIncidents();
   pollCosts();
+  pollCurrent();
   setInterval(pollIncidents, POLL_INCIDENTS_MS);
   setInterval(pollCosts, POLL_COSTS_MS);
+  setInterval(pollCurrent, POLL_CURRENT_MS);
 })();
