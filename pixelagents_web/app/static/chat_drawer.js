@@ -54,10 +54,19 @@
        CSS custom properties so the panel restyles automatically if the
        upstream theme changes; fallbacks kick in if the webfont CSS hasn't
        parsed yet. */
+    /*
+      Both states are bottom-anchored relative to the viewport
+      horizontal centre. When collapsed, the drawer sits to the right
+      of the bundle's centered Agent/Layout/Settings cluster (managed
+      by bottom_bar_layout.js). When expanded, it lifts above the
+      cluster and centres on the same axis so the panel opens "above"
+      the button you clicked.
+    */
     #${rootId} {
       position: fixed;
-      right: 16px;
-      bottom: 16px;
+      left: 50%;
+      bottom: 70px;                  /* lift above the bottom button row */
+      transform: translateX(-50%);   /* horizontally centred */
       width: 520px;
       max-height: 75vh;
       background: var(--color-bg, #ffffff);
@@ -72,22 +81,15 @@
       flex-direction: column;
       overflow: hidden;
     }
-    /*
-      When collapsed we want the Chat affordance to sit *next to* the
-      bundle's Agent / Layout / Settings buttons in the bottom-left
-      corner, not as a separate widget on the right. Override the
-      base positioning + width so the collapsed state looks like a
-      sibling button. ~330px from the left clears the typical width
-      of the existing three-button cluster — tune if it overlaps.
-    */
     #${rootId}[data-collapsed="true"] {
       max-height: none;
       height: auto;
       width: auto;
       min-width: 130px;
-      right: auto;
-      left: 330px;
-      bottom: 16px;
+      bottom: 16px;                  /* same row as the bundle buttons */
+      /* Offset to the right of the centered cluster. The cluster is
+         ~280px wide; +160px from centre clears it. Tune if it overlaps. */
+      transform: translateX(160px);
     }
     /* Tighten the header padding while collapsed so it reads as a button. */
     #${rootId}[data-collapsed="true"] header {

@@ -1887,6 +1887,7 @@ def index(request: Request) -> Response:
         f'<script src="/static/agent_activity.js" defer></script>'
         f'<script src="/static/live_incident_banner.js" defer></script>'
         f'<script src="/static/default_zoom.js" defer></script>'
+        f'<script src="/static/bottom_bar_layout.js" defer></script>'
     )
 
     if "</body>" in html:
