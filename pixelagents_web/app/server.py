@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import time
 from collections import defaultdict, deque
 from typing import Any, Deque, Dict
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Form, Header, HTTPException, Request, Response
 
 # `requests` and `azure-identity` are imported lazily inside the chat handler so
 # the module stays import-safe in environments where the chat feature is unused.
@@ -21,7 +22,7 @@ def _slug_agent(name: str) -> str:
     s = re.sub(r"-+$", "", s)
     return s or "unknown"
 
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 APP_TITLE = "pixelagents-web"
@@ -147,6 +148,506 @@ def _require_token(x_pixelagents_token: str | None) -> None:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
+# ── Demo-grade login (single hardcoded user, in-memory sessions) ─────
+# This is a demo lab, not a hardened production stack. The user store
+# is a literal dict; sessions live only in this process. PixelAgents
+# Web is pinned to a single replica, so in-memory state survives
+# between requests as long as the container doesn't restart. A
+# container restart logs everyone out — acceptable for a demo.
+USERS: dict[str, str] = {
+    "erik.vanbuggenhout@nviso.eu": "admin123",
+}
+SESSIONS: dict[str, dict[str, Any]] = {}  # sid -> {"user": str, "created": float}
+SESSION_COOKIE = "aisoc_session"
+SESSION_TTL_SEC = 12 * 3600
+
+
+def _new_session(user: str) -> str:
+    sid = secrets.token_urlsafe(32)
+    SESSIONS[sid] = {"user": user, "created": time.time()}
+    return sid
+
+
+def _session_user(request: Request) -> str | None:
+    sid = request.cookies.get(SESSION_COOKIE)
+    if not sid:
+        return None
+    s = SESSIONS.get(sid)
+    if not s:
+        return None
+    if time.time() - s["created"] > SESSION_TTL_SEC:
+        SESSIONS.pop(sid, None)
+        return None
+    return s["user"]
+
+
+def _require_auth(request: Request, x_pixelagents_token: str | None) -> None:
+    """Browser session cookie OR x-pixelagents-token header — either works.
+
+    Used by endpoints called from both the logged-in UI (cookie) and from
+    server-to-server callers like the runner / orchestrator (token).
+    """
+    if _session_user(request) is not None:
+        return
+    expected = os.getenv(TOKEN_ENV, "")
+    if expected and x_pixelagents_token == expected:
+        return
+    raise HTTPException(status_code=401, detail="Authentication required")
+
+
+# Login page — pure HTML, no JS framework. NVISO Cruiseways palette
+# (cyan accent, white background) so it visually matches the gated UI
+# behind it.
+LOGIN_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NVISO Cruises — AISOC Demo · Sign in</title>
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #1f2937; --muted: #6b7280;
+      --accent: #0099cc; --accent-bright: #33b0dd;
+      --bg-dark: #f3f4f6; --border: #cbd5e1;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+    }
+    .card {
+      width: 380px;
+      max-width: calc(100vw - 32px);
+      padding: 32px 28px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 4px;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+    }
+    .subtitle {
+      margin: 0 0 24px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      margin: 14px 0 6px;
+    }
+    input[type="email"], input[type="password"] {
+      width: 100%;
+      padding: 9px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font: inherit;
+      color: var(--fg);
+      background: #ffffff;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+    }
+    button {
+      width: 100%;
+      margin-top: 20px;
+      padding: 10px;
+      background: var(--accent);
+      color: #ffffff;
+      border: none;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent-bright); }
+    .err {
+      margin-top: 14px;
+      padding: 8px 10px;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.4);
+      color: #991b1b;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    .footer {
+      margin-top: 18px;
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:14px;">
+      <span style="display:inline-flex; flex-direction:column; align-items:flex-start; line-height:1;">
+        <img src="/static/nviso-logo.png" alt="NVISO" style="height:36px; display:block;">
+        <span style="font-size:10px; font-weight:700; letter-spacing:0.40em; color:#0099CC; margin-top:5px; padding-left:2px;">CRUISES</span>
+      </span>
+      <svg viewBox="0 0 90 60" style="width:60px; height:42px;" aria-hidden="true">
+        <polygon points="34,4 46,4 48,18 32,18" fill="#7DD9F2"/>
+        <polygon points="22,18 60,18 56,28 26,28" fill="#33B0DD"/>
+        <polygon points="14,28 70,28 66,40 18,40" fill="#0099CC"/>
+        <polygon points="6,40 80,40 84,52 2,52" fill="#0F6BAA"/>
+        <polygon points="2,52 84,52 76,64 10,64" fill="#0E5C8C"/>
+        <path d="M-4 70 Q 6 66 16 70 T 36 70 T 56 70 T 76 70 T 90 70" stroke="#33B0DD" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <p class="subtitle" style="text-align:center; margin-top:0;">
+      Agentic SOC Demo — sign in to continue
+    </p>
+    <form method="post" action="/login">
+      <label for="username">Email</label>
+      <input id="username" name="username" type="email"
+             autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password"
+             autocomplete="current-password" required>
+      __ERROR__
+      <button type="submit">Sign in</button>
+    </form>
+    <div class="footer">Demo environment — sessions expire after 12 hours.</div>
+  </div>
+</body>
+</html>
+"""
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request) -> Response:
+    if _session_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse(LOGIN_HTML.replace("__ERROR__", ""))
+
+
+@app.post("/login")
+def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+) -> Response:
+    user_key = username.lower().strip()
+    expected_pw = USERS.get(user_key)
+    if not expected_pw or expected_pw != password:
+        err = '<div class="err">Invalid email or password</div>'
+        return HTMLResponse(
+            LOGIN_HTML.replace("__ERROR__", err),
+            status_code=401,
+        )
+    sid = _new_session(user_key)
+    response = RedirectResponse(url="/", status_code=303)
+    response.set_cookie(
+        SESSION_COOKIE,
+        sid,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        max_age=SESSION_TTL_SEC,
+    )
+    return response
+
+
+@app.post("/logout")
+@app.get("/logout")
+def logout(request: Request) -> Response:
+    sid = request.cookies.get(SESSION_COOKIE)
+    if sid:
+        SESSIONS.pop(sid, None)
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
+
+
+# ── Top-nav shell (used by /, /dashboard, /config) ───────────────────
+# Server-side renders a sticky header with logo + 3 tabs +
+# "signed in as / sign out". Every authenticated page wraps in this so
+# the navigation experience is consistent.
+NAV_CSS = """\
+<style id="aisoc-nav-css">
+  :root {
+    --aisoc-nav-bg: #ffffff;
+    --aisoc-nav-border: #e5e7eb;
+    --aisoc-nav-text: #1f2937;
+    --aisoc-nav-muted: #6b7280;
+    --aisoc-nav-accent: #0099cc;
+    --aisoc-nav-accent-bright: #33b0dd;
+    --aisoc-nav-active-bg: #e0f2fe;
+  }
+  /*
+    The vendored Pixel Agents bundle covers the entire viewport with a
+    `position: fixed` canvas. To float above it we need (a) `position:
+    fixed` on the nav so we share the same stacking context, (b) a
+    z-index higher than anything the bundle uses, and (c) !important
+    on the layout-critical properties so the bundle's reset styles
+    can't shrink us back to invisibility.
+  */
+  #aisoc-nav {
+    position: fixed !important;
+    top: 0 !important; left: 0 !important; right: 0 !important;
+    z-index: 2147483000 !important;
+    background: var(--aisoc-nav-bg) !important;
+    border-bottom: 1px solid var(--aisoc-nav-border) !important;
+    padding: 8px 24px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 32px !important;
+    height: 60px !important;
+    box-sizing: border-box !important;
+    font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+    color: var(--aisoc-nav-text) !important;
+  }
+  #aisoc-nav .brand {
+    display: flex !important;
+    align-items: center !important;
+    text-decoration: none !important;
+    height: 44px !important;
+    gap: 12px !important;
+  }
+  /* NVISO wordmark (PNG) + "CRUISES" subtitle stacked. */
+  #aisoc-nav .brand-mark {
+    display: inline-flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    line-height: 1 !important;
+  }
+  #aisoc-nav .brand-mark img {
+    height: 32px !important;
+    width: auto !important;
+    display: block !important;
+  }
+  #aisoc-nav .brand-mark .tag {
+    font-size: 9px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.40em !important;
+    color: var(--aisoc-nav-accent) !important;
+    margin-top: 4px !important;
+    padding-left: 2px !important;
+  }
+  /* Geometric cruise-ship icon to the right of the wordmark. */
+  #aisoc-nav .brand-ship {
+    display: inline-flex !important;
+    align-items: center !important;
+    height: 44px !important;
+  }
+  #aisoc-nav .brand-ship svg {
+    width: 56px !important;
+    height: 36px !important;
+    display: block !important;
+  }
+  #aisoc-nav .tabs { display: flex !important; gap: 4px !important; }
+  #aisoc-nav .tab {
+    padding: 7px 14px !important;
+    color: var(--aisoc-nav-muted) !important;
+    text-decoration: none !important;
+    border-radius: 4px !important;
+    font-weight: 500 !important;
+    font-size: 14px !important;
+  }
+  #aisoc-nav .tab:hover {
+    background: #f3f4f6 !important;
+    color: var(--aisoc-nav-text) !important;
+  }
+  #aisoc-nav .tab.active {
+    color: var(--aisoc-nav-accent) !important;
+    background: var(--aisoc-nav-active-bg) !important;
+    font-weight: 700 !important;
+  }
+  #aisoc-nav .userbar {
+    margin-left: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 14px !important;
+    color: var(--aisoc-nav-muted) !important;
+    font-size: 12px !important;
+  }
+  #aisoc-nav .userbar .signout {
+    color: var(--aisoc-nav-accent) !important;
+    text-decoration: none !important;
+    font-weight: 600 !important;
+  }
+  #aisoc-nav .userbar .signout:hover {
+    color: var(--aisoc-nav-accent-bright) !important;
+    text-decoration: underline !important;
+  }
+</style>
+"""
+
+
+# Geometric cruise-ship icon, inlined so we don't need a second
+# round-trip for the brand mark. Origami / triangulated facets in the
+# NVISO blue palette — visually consistent with the NVISO bird mark
+# but unmistakably a ship.
+SHIP_SVG_INLINE = (
+    '<svg viewBox="0 0 90 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+    '<polygon points="34,4 46,4 48,18 32,18" fill="#7DD9F2"/>'
+    '<polygon points="22,18 60,18 56,28 26,28" fill="#33B0DD"/>'
+    '<polygon points="14,28 70,28 66,40 18,40" fill="#0099CC"/>'
+    '<polygon points="6,40 80,40 84,52 2,52" fill="#0F6BAA"/>'
+    '<polygon points="2,52 84,52 76,64 10,64" fill="#0E5C8C"/>'
+    '<path d="M-4 70 Q 6 66 16 70 T 36 70 T 56 70 T 76 70 T 90 70" '
+    'stroke="#33B0DD" stroke-width="2.4" fill="none" stroke-linecap="round"/>'
+    '</svg>'
+)
+
+
+def _render_nav(active: str, current_user: str) -> str:
+    """Render the top-nav. ``active`` selects which tab gets highlighted.
+
+    Brand mark is composed from the real NVISO wordmark PNG plus an
+    inline SVG ship. The PNG must live at /static/nviso-logo.png; if
+    it's missing the alt text "NVISO" shows in its place.
+    """
+    tabs = (
+        ("live",      "/",          "Live Agent View"),
+        ("dashboard", "/dashboard", "Dashboard"),
+        ("config",    "/config",    "Configuration"),
+    )
+    items = []
+    for key, href, label in tabs:
+        cls = "tab active" if key == active else "tab"
+        items.append(f'<a class="{cls}" href="{href}">{label}</a>')
+    return (
+        '<nav id="aisoc-nav">'
+        '  <a href="/dashboard" class="brand">'
+        '    <span class="brand-mark">'
+        '      <img src="/static/nviso-logo.png" alt="NVISO">'
+        '      <span class="tag">CRUISES</span>'
+        '    </span>'
+        f'    <span class="brand-ship">{SHIP_SVG_INLINE}</span>'
+        '  </a>'
+        '  <div class="tabs">' + "".join(items) + '</div>'
+        '  <div class="userbar">'
+        f'    <span>Signed in as <b>{current_user}</b></span>'
+        '    <a href="/logout" class="signout">Sign out</a>'
+        '  </div>'
+        '</nav>'
+    )
+
+
+# Page chrome shared by /dashboard and /config (server-rendered, no
+# React). The Live Agent View at / has its own chrome because it
+# wraps the vendored Pixel Agents bundle.
+SHELL_BASE_CSS = """\
+<style id="aisoc-shell-base">
+  body {
+    margin: 0;
+    /* Push body content below the fixed nav (60px tall). */
+    padding-top: 60px;
+    font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #ffffff;
+    color: #1f2937;
+  }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 28px 64px; }
+  h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: #1f2937; }
+  h2 { font-size: 15px; font-weight: 700; margin: 28px 0 10px; color: #374151;
+       letter-spacing: 0.02em; text-transform: uppercase; }
+  .subtitle { color: #6b7280; margin: 0 0 28px; font-size: 14px; }
+</style>
+"""
+
+
+def _render_shell(
+    *,
+    active: str,
+    current_user: str,
+    title: str,
+    body_html: str,
+    extra_head: str = "",
+    scripts: list[str] | None = None,
+) -> str:
+    """Wrap a server-rendered page in our standard chrome (logo + nav + body)."""
+    scripts = scripts or []
+    script_tags = "".join(f'<script src="{s}" defer></script>' for s in scripts)
+    return (
+        f'<!DOCTYPE html><html lang="en"><head>'
+        f'<meta charset="utf-8">'
+        f'<title>{title}</title>'
+        f'<link rel="icon" href="/static/nviso-cruises-logo.svg">'
+        f'{SHELL_BASE_CSS}'
+        f'{NAV_CSS}'
+        f'{extra_head}'
+        f'</head><body>'
+        f'{_render_nav(active, current_user)}'
+        f'<main>{body_html}</main>'
+        f'{script_tags}'
+        f'</body></html>'
+    )
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_view(request: Request) -> Response:
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    body = (
+        '<h1>Agentic SOC Dashboard</h1>'
+        '<p class="subtitle">'
+        '  Microsoft Sentinel incidents seen in the lab + per-incident cost spent by the AI agents.'
+        '  Right-click an incident to act, or use the inline button.'
+        '</p>'
+        '<div id="aisoc-dashboard-root"></div>'
+    )
+    return HTMLResponse(_render_shell(
+        active="dashboard",
+        current_user=user,
+        title="NVISO Cruises · Dashboard",
+        body_html=body,
+        scripts=["/static/dashboard.js"],
+    ))
+
+
+@app.get("/config", response_class=HTMLResponse)
+def config_view(request: Request) -> Response:
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    body = (
+        '<h1>Agentic SOC Configuration</h1>'
+        '<p class="subtitle">'
+        '  Live agent telemetry. Toggle the JSON switch on each card to see the raw'
+        '  state PixelAgents Web has on file.'
+        '</p>'
+        '<div id="aisoc-config-root"></div>'
+    )
+    return HTMLResponse(_render_shell(
+        active="config",
+        current_user=user,
+        title="NVISO Cruises · Configuration",
+        body_html=body,
+        scripts=["/static/config.js"],
+    ))
+
+
+# ── Current incident tracking ────────────────────────────────────────
+# Set by the orchestrate proxy when a workflow run starts; cleared when
+# it finishes (or errors). Lets the Live Agent View show "we're working
+# on incident #N right now" without having to derive it from event logs.
+CURRENT_INCIDENT: dict[str, Any] = {"incident_number": None, "started_at": None}
+
+
+@app.get("/api/current_incident")
+def api_current_incident(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
+    return dict(CURRENT_INCIDENT)
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"ok": "true"}
@@ -166,7 +667,11 @@ def _default_agent_roster() -> list[str]:
 
 
 @app.get("/api/agents/state")
-def api_agents_state() -> dict[str, Any]:
+def api_agents_state(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
     # Minimal adapter for Pixel Agents UI
     # Ensure a stable roster exists even before events
     now = time.time()
@@ -367,10 +872,8 @@ async def send_message_to_agent(
 ) -> dict[str, Any]:
     """Send an ad-hoc user message to a Foundry agent and return its response.
 
-    Backend-only MVP for interactive PixelAgents: gated by the existing
-    ``x-pixelagents-token`` so it can be exercised by curl without a UI yet.
-    A proper user-auth story (e.g. ACA Easy Auth with Entra) should land
-    before this endpoint is surfaced to a browser.
+    Accepts either a logged-in browser session (cookie) or the
+    ``x-pixelagents-token`` header so it can also be exercised by curl.
 
     Note: this does not enforce read-only scoping. Whatever tools the named
     agent has attached in Foundry, it can call — including write tools if
@@ -378,7 +881,7 @@ async def send_message_to_agent(
     before exposing broadly.
     """
 
-    _require_token(x_pixelagents_token)
+    _require_auth(req, x_pixelagents_token)
 
     body: dict[str, Any]
     try:
@@ -486,6 +989,7 @@ def _arm_token() -> str:
 
 @app.get("/api/sentinel/incidents")
 def list_sentinel_incidents(
+    request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
     """Return a summary list of Sentinel incidents for the lab workspace.
@@ -499,7 +1003,7 @@ def list_sentinel_incidents(
     without hammering ARM.
     """
 
-    _require_token(x_pixelagents_token)
+    _require_auth(request, x_pixelagents_token)
 
     now = time.time()
     cached = _INCIDENTS_CACHE.get("payload")
@@ -608,7 +1112,7 @@ async def orchestrate_incident(
       }
     """
 
-    _require_token(x_pixelagents_token)
+    _require_auth(req, x_pixelagents_token)
 
     orch_base = os.getenv("ORCHESTRATOR_URL", "")
     orch_key = os.getenv("ORCHESTRATOR_FUNCTION_KEY", "")
@@ -630,6 +1134,12 @@ async def orchestrate_incident(
 
     import requests as _requests
 
+    # Mark this incident as the live one for the duration of the
+    # orchestrator call. The Live Agent View polls /api/current_incident
+    # to render a "working on incident #N" banner.
+    CURRENT_INCIDENT["incident_number"] = incident_number
+    CURRENT_INCIDENT["started_at"] = time.time()
+
     url = f"{orch_base.rstrip('/')}/incident/pipeline?code={orch_key}"
     try:
         r = _requests.post(
@@ -644,9 +1154,18 @@ async def orchestrate_incident(
             timeout=600,
         )
     except Exception as e:
+        CURRENT_INCIDENT["incident_number"] = None
+        CURRENT_INCIDENT["started_at"] = None
         raise HTTPException(status_code=502, detail=f"Orchestrator call failed: {e!r}") from e
+    finally:
+        # Clear the "live" marker once the upstream call has returned
+        # (success or HTTP error). Done in finally so a 4xx/5xx body
+        # below still leaves the banner cleared.
+        pass
 
     if r.status_code >= 400:
+        CURRENT_INCIDENT["incident_number"] = None
+        CURRENT_INCIDENT["started_at"] = None
         detail: Any
         try:
             detail = r.json()
@@ -657,6 +1176,8 @@ async def orchestrate_incident(
             detail={"orchestrator_status": r.status_code, "body": detail},
         )
 
+    CURRENT_INCIDENT["incident_number"] = None
+    CURRENT_INCIDENT["started_at"] = None
     try:
         return r.json()
     except Exception:
@@ -728,11 +1249,12 @@ async def record_cost(
 @app.get("/api/sentinel/incidents/{incident_number}/cost")
 def get_incident_cost(
     incident_number: int,
+    request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
     """Per-incident cost summary for the incidents panel."""
 
-    _require_token(x_pixelagents_token)
+    _require_auth(request, x_pixelagents_token)
     bucket = COSTS.get(str(incident_number)) or {
         "total_eur": 0.0,
         "total_input_tokens": 0,
@@ -750,12 +1272,13 @@ def get_incident_cost(
 
 @app.get("/api/sentinel/incidents/costs")
 def get_all_incident_costs(
+    request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
     """Aggregate cost map so the incidents panel can render a Cost column
     in a single poll rather than N per-incident requests."""
 
-    _require_token(x_pixelagents_token)
+    _require_auth(request, x_pixelagents_token)
     out: dict[str, Any] = {}
     for key, bucket in COSTS.items():
         if not key.isdigit():
@@ -832,11 +1355,12 @@ async def hitl_create_question(
 
 @app.get("/api/hitl/pending")
 def hitl_list_pending(
+    request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
     """UI reads this to show currently-pending questions."""
 
-    _require_token(x_pixelagents_token)
+    _require_auth(request, x_pixelagents_token)
     pending = [
         _hitl_public(q) for q in HITL_QUESTIONS.values() if q.get("status") == "pending"
     ]
@@ -852,7 +1376,7 @@ async def hitl_submit_answer(
 ) -> dict[str, Any]:
     """UI submits a human answer for a given question id."""
 
-    _require_token(x_pixelagents_token)
+    _require_auth(req, x_pixelagents_token)
 
     q = HITL_QUESTIONS.get(qid)
     if not q:
@@ -933,7 +1457,7 @@ async def stream_message_to_agent(
     See send_message_to_agent above for the request-body contract and caveats.
     """
 
-    _require_token(x_pixelagents_token)
+    _require_auth(req, x_pixelagents_token)
 
     try:
         body = await req.json()
@@ -1241,7 +1765,11 @@ async def ingest_event(
 
 
 @app.get("/events/stream")
-async def sse_stream() -> StreamingResponse:
+async def sse_stream(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> StreamingResponse:
+    _require_auth(request, x_pixelagents_token)
     async def gen():
         # SSE: send a snapshot, then follow new events.
         last_idx = 0
@@ -1280,7 +1808,7 @@ async def _sleep(seconds: float) -> None:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> HTMLResponse:
+def index(request: Request) -> Response:
     """Serve the Pixel Agents UI, with the AISOC chat drawer injected.
 
     We don't touch the vendored ui_dist/index.html on disk — instead we read it
@@ -1288,6 +1816,11 @@ def index() -> HTMLResponse:
     ``</body>``, and return the modified HTML. Keeps ui_dist/ a pure vendor
     artifact that can be updated from upstream without merge conflicts.
     """
+
+    # Gate on session cookie — anonymous visitors get redirected to /login.
+    current_user = _session_user(request)
+    if current_user is None:
+        return RedirectResponse(url="/login", status_code=303)
 
     dist_index = os.path.join(os.path.dirname(__file__), "ui_dist", "index.html")
     if not os.path.exists(dist_index):
@@ -1327,15 +1860,21 @@ def index() -> HTMLResponse:
         '  --shadow-pixel: 2px 2px 0 #cbd5e1;'
         '}'
         'html, body, #root { background: #ffffff !important; color: #1f2937; }'
+        # Reserve room at the top of the vendored canvas for the
+        # sticky nav we inject above it.
+        'body { padding-top: 60px !important; }'
         '</style>'
     )
+    nav_html = _render_nav("live", current_user)
     injection = (
+        f'{NAV_CSS}'
         f'{nviso_theme}'
+        f'{nav_html}'
         f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js}, show_cost: {show_cost_js} }};</script>'
         f'<script src="/static/chat_drawer.js" defer></script>'
-        f'<script src="/static/incidents_panel.js" defer></script>'
         f'<script src="/static/hitl_panel.js" defer></script>'
         f'<script src="/static/agent_activity.js" defer></script>'
+        f'<script src="/static/live_incident_banner.js" defer></script>'
     )
 
     if "</body>" in html:
