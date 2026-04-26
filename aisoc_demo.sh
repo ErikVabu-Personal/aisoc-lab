@@ -461,7 +461,7 @@ say "Phase 3: PixelAgents Web"
 apply_phase terraform/3-deploy-pixelagents-web
 ok "Phase 3 applied (runner + orchestrator wired with PIXELAGENTS_URL/TOKEN)"
 
-# ── 6) Smoke-test info ───────────────────────────────────────────────
+# ── 6) Completion summary ────────────────────────────────────────────
 PIXEL_URL="$(cd terraform/3-deploy-pixelagents-web && terraform output -raw pixelagents_url)"
 SHIPCP_URL="$(cd terraform/1-deploy-sentinel && terraform output -raw ship_control_panel_url)"
 VM_IP="$(cd terraform/1-deploy-sentinel && terraform output -raw vm_public_ip 2>/dev/null || true)"
@@ -469,18 +469,39 @@ VM_USER="$(cd terraform/1-deploy-sentinel && terraform output -raw vm_username 2
 # vm_password is sensitive — `terraform output -raw` returns the literal value.
 VM_PASSWORD="$(cd terraform/1-deploy-sentinel && terraform output -raw vm_password 2>/dev/null || true)"
 
-printf '\n%s%s═════════════════════════ Demo is live ═════════════════════════%s\n' "$BOLD" "$GREEN" "$NC"
-printf '  PixelAgents UI:      %s\n' "$PIXEL_URL"
-printf '  Ship Control Panel:  %s\n' "$SHIPCP_URL"
-[[ -n "$VM_IP" ]] && printf '  Lab VM (RDP):        %s\n' "$VM_IP"
-[[ -n "$VM_USER" ]] && printf '  Lab VM user:         %s\n' "$VM_USER"
+SEP='═════════════════════════════════════════════════════════════════════'
+HR='─────────────────────────────────────────────────────────────────────'
+
+printf '\n%s%s%s%s\n'   "$BOLD" "$GREEN" "$SEP" "$NC"
+printf '%s%s        AISOC demo deployment complete — everything is live%s\n' \
+                       "$BOLD" "$GREEN" "$NC"
+printf '%s%s%s%s\n'   "$BOLD" "$GREEN" "$SEP" "$NC"
+
+# ── The two URLs that matter most. Bold cyan so they pop. ──────────────
+printf '\n  %sShip Control Panel%s\n' "$BOLD" "$NC"
+printf '    %s%s%s%s\n'              "$BOLD" "$CYAN" "$SHIPCP_URL" "$NC"
+printf '\n  %sPixelAgents UI%s\n'      "$BOLD" "$NC"
+printf '    %s%s%s%s\n'              "$BOLD" "$CYAN" "$PIXEL_URL"  "$NC"
+
+# ── Lab VM details — supporting info, used to seed incidents. ──────────
+printf '\n%s%s%s\n'   "$YELLOW" "$HR" "$NC"
+printf '  %sLab VM (for seeding incidents)%s\n'  "$BOLD" "$NC"
+printf '%s%s%s\n\n'   "$YELLOW" "$HR" "$NC"
+
+[[ -n "$VM_IP"   ]] && printf '  RDP IP:      %s\n' "$VM_IP"
+[[ -n "$VM_USER" ]] && printf '  Username:    %s\n' "$VM_USER"
 if [[ -n "$VM_PASSWORD" ]]; then
-  printf '  Lab VM password:     %s%s%s\n' "$BOLD" "$VM_PASSWORD" "$NC"
-  printf '                       %s(stored in Terraform state — same on re-apply)%s\n' "$YELLOW" "$NC"
+  printf '  Password:    %s%s%s   %s(stable across re-applies)%s\n' \
+         "$BOLD" "$VM_PASSWORD" "$NC" "$YELLOW" "$NC"
 fi
-printf '\n'
-printf 'To seed an incident:\n'
-printf '  - Generate a few failed RDP attempts on the lab VM, OR\n'
-printf '  - POST auth.login.failure events to the Ship Control Panel.\n'
-printf '\nThe Sentinel rule fires every 15 minutes; once it raises an incident,\n'
-printf 'open the PixelAgents UI and right-click the incident to orchestrate.\n\n'
+
+# ── How to drive the demo. ─────────────────────────────────────────────
+printf '\n%sNext steps%s\n' "$BOLD" "$NC"
+printf '  1. Open the Ship Control Panel and try a few failed logins, OR\n'
+printf '     RDP into the lab VM and try a few bad credentials.\n'
+printf '  2. The Sentinel rule fires every 15 min. Once an incident is\n'
+printf '     raised, open the PixelAgents UI and click "Run workflow"\n'
+printf '     on the incident row to orchestrate triage → investigation\n'
+printf '     → reporting.\n'
+
+printf '\n%s%s%s%s\n\n' "$BOLD" "$GREEN" "$SEP" "$NC"
