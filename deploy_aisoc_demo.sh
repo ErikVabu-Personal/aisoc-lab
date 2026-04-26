@@ -42,11 +42,35 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 # ── Output helpers ───────────────────────────────────────────────────
-NC=$'\033[0m'; CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; BOLD=$'\033[1m'
+NC=$'\033[0m'; CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; BOLD=$'\033[1m'; BLUE=$'\033[34m'
 say()  { printf '\n%s%s==> %s%s\n' "$BOLD" "$CYAN" "$*" "$NC"; }
 ok()   { printf '%sOK: %s%s\n' "$GREEN" "$*" "$NC"; }
 warn() { printf '%sWARN: %s%s\n' "$YELLOW" "$*" "$NC" >&2; }
 die()  { printf '%sERROR: %s%s\n' "$RED" "$*" "$NC" >&2; exit 1; }
+
+# ── Banner ──────────────────────────────────────────────────────────
+# Pixel-art cruise ship + title, in NVISO blue.
+print_banner() {
+  printf '\n'
+  printf '%s' "$CYAN"
+  cat <<'BANNER'
+                       ____         ____
+                      |____|       |____|
+                 _____|_|_|_________|_|_|_____
+                |____________________________|
+            ____|____________________________|____
+           |_______________________________________|
+            \_____________________________________/
+BANNER
+  printf '%s' "$BLUE"
+  cat <<'BANNER'
+             ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+BANNER
+  printf '%s\n' "$NC"
+  printf '%s%s          N V I S O   C r u i s e s%s\n' "$BOLD" "$CYAN" "$NC"
+  printf '%s          Agentic SOC Demo%s\n\n' "$CYAN" "$NC"
+}
+print_banner
 
 # ── Argument parsing ─────────────────────────────────────────────────
 usage() {
