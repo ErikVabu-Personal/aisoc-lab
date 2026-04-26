@@ -381,50 +381,6 @@ Use the GitHub Action (Linux build).
 
 ---
 
-## Phase 4 — AISOC agents (Microsoft Agent Framework)
-
-This repo is moving toward **Microsoft Agent Framework (MAF)** for the agent runtime/orchestration.
-The SOC Gateway remains the tool surface (KQL + Sentinel incidents).
-
-See: `maf/README.md`.
-
-### Quick start (deterministic plumbing test)
-
-Configure environment variables:
-
-- `AISOC_GATEWAY_BASE_URL` e.g. `https://<functionapp>.azurewebsites.net/api`
-- `AISOC_FUNCTION_CODE` (Function key)
-- `AISOC_READ_KEY`
-- `AISOC_WRITE_KEY`
-
-Recommended: auto-load these from Terraform outputs + Azure CLI:
-
-```bash
-eval "$(./scripts/aisoc_env.sh)"
-```
-
-Run:
-
-```bash
-cd maf
-
-# Debian/Ubuntu note: avoid installing into system Python (PEP 668).
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-pip install -e .
-
-python -m aisoc_maf.cli triage <INCIDENT_ID>
-```
-
-This currently returns a deterministic triage result while we wire in the LLM + MAF workflows.
-
----
-
-## Phase 4 — AISOC agents (Microsoft Agent Framework)
-
-This repo includes a local MAF-based agent harness under `maf/` (useful for development/testing).
-
 ## Phase 4 — Deploy AISOC Runner (Azure Container Apps) + Foundry Tool (manual)
 
 This phase deploys the **AISOC Runner** (a small FastAPI service) to Azure Container Apps.
