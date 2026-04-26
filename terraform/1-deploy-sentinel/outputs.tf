@@ -75,8 +75,8 @@ output "vm_username" {
 }
 
 output "vm_password" {
-  value       = var.admin_password
-  description = "Local admin password for the Windows VM"
+  value       = local.effective_admin_password
+  description = "Local admin password for the Windows VM. Auto-generated when admin_password is null; stable across re-applies via Terraform state."
   sensitive   = true
 }
 

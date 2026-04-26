@@ -35,6 +35,30 @@ data "external" "pick" {
 locals {
   selected_location = var.auto_select_location_and_sku ? data.external.pick[0].result.location : var.azure_location
   selected_vm_size  = var.auto_select_location_and_sku ? data.external.pick[0].result.vm_size : var.vm_size
+
+  # Lab VM admin password: if the user passed one via var, use that;
+  # otherwise fall back to the random_password we generate below. The
+  # random_password is held in Terraform state, so it stays stable
+  # across re-applies (we don't churn the VM with a new password
+  # every run).
+  effective_admin_password = coalesce(var.admin_password, random_password.vm_admin.result)
+}
+
+# Auto-generated when admin_password isn't set explicitly. 28 chars
+# from the alphanumeric set + at least one of each special class
+# satisfies Azure's complexity rules (>=12 chars, three of four
+# upper/lower/digit/special) with comfortable headroom.
+resource "random_password" "vm_admin" {
+  length           = 28
+  upper            = true
+  lower            = true
+  numeric          = true
+  special          = true
+  override_special = "!@#%^*-_+=:?"
+  min_upper        = 2
+  min_lower        = 2
+  min_numeric      = 2
+  min_special      = 2
 }
 
 resource "azurerm_resource_group" "rg" {
@@ -156,7 +180,7 @@ resource "azurerm_windows_virtual_machine" "vm" {
   }
 
   admin_username = var.admin_username
-  admin_password = var.admin_password
+  admin_password = local.effective_admin_password
 
   network_interface_ids = [azurerm_network_interface.nic.id]
 

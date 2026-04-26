@@ -119,9 +119,10 @@ variable "admin_username" {
 }
 
 variable "admin_password" {
-  description = "Local admin password for the VM"
+  description = "Local admin password for the VM. If null (default), Terraform generates a random one and surfaces it via the vm_password output."
   type        = string
   sensitive   = true
+  default     = null
 }
 
 variable "auto_shutdown_time" {

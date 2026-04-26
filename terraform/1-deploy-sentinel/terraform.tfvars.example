@@ -23,9 +23,13 @@ vm_size             = "Standard_D2s_v3"
 # Lab VM RDP is intentionally open on 3389 from any source — this is a
 # throwaway test environment, gated only by the admin password.
 
-# Choose a strong password
 admin_username = "azureadmin"
-admin_password = "CHANGEME-StrongPassword-123!"
+
+# admin_password is optional. If left unset, Terraform generates a
+# random one (held in state, stable across re-applies) and surfaces
+# it via `terraform output -raw vm_password`. The deploy script
+# prints it at the end of the run.
+# admin_password = "CHANGEME-StrongPassword-123!"
 
 # Enable log collection via Azure Monitor Agent
 enable_ama               = true
