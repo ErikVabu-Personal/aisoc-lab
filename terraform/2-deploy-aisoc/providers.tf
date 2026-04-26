@@ -35,6 +35,14 @@ provider "azurerm" {
       # If a secret was soft-deleted, allow Terraform to recover it on the next apply.
       recover_soft_deleted_secrets = true
     }
+
+    resource_group {
+      # Application Insights auto-creates a smart-detection Action
+      # Group inside the same RG that Terraform doesn't manage. The
+      # default guard would refuse to destroy the RG; flip it off so
+      # `terraform destroy` clears everything in one shot.
+      prevent_deletion_if_contains_resources = false
+    }
   }
 }
 

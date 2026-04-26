@@ -33,5 +33,15 @@ provider "azurerm" {
 
       recover_soft_deleted_key_vaults = true
     }
+
+    resource_group {
+      # When you provision Application Insights, Azure auto-creates a
+      # smart-detection Action Group inside the same RG ("Application
+      # Insights Smart Detection") that Terraform doesn't know about.
+      # By default the AzureRM provider refuses to delete an RG that
+      # holds resources it doesn't manage — turn that guard off so
+      # `terraform destroy` can clear everything in one shot.
+      prevent_deletion_if_contains_resources = false
+    }
   }
 }
