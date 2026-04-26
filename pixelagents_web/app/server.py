@@ -293,8 +293,11 @@ LOGIN_HTML = """\
 </head>
 <body>
   <div class="card">
-    <h1>NVISO Cruises</h1>
-    <p class="subtitle">AISOC Demo — sign in to continue</p>
+    <img src="/static/nviso-cruises-logo.svg" alt="NVISO Cruises"
+         style="display:block; margin:0 auto 14px; height:54px;">
+    <p class="subtitle" style="text-align:center; margin-top:0;">
+      Agentic SOC Demo — sign in to continue
+    </p>
     <form method="post" action="/login">
       <label for="username">Email</label>
       <input id="username" name="username" type="email"
@@ -355,6 +358,205 @@ def logout(request: Request) -> Response:
     response = RedirectResponse(url="/login", status_code=303)
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response
+
+
+# ── Top-nav shell (used by /, /dashboard, /config) ───────────────────
+# Server-side renders a sticky header with logo + 3 tabs +
+# "signed in as / sign out". Every authenticated page wraps in this so
+# the navigation experience is consistent.
+NAV_CSS = """\
+<style id="aisoc-nav-css">
+  :root {
+    --aisoc-nav-bg: #ffffff;
+    --aisoc-nav-border: #e5e7eb;
+    --aisoc-nav-text: #1f2937;
+    --aisoc-nav-muted: #6b7280;
+    --aisoc-nav-accent: #0099cc;
+    --aisoc-nav-accent-bright: #33b0dd;
+    --aisoc-nav-active-bg: #e0f2fe;
+  }
+  #aisoc-nav {
+    position: sticky; top: 0; z-index: 1000;
+    background: var(--aisoc-nav-bg);
+    border-bottom: 1px solid var(--aisoc-nav-border);
+    padding: 8px 24px;
+    display: flex; align-items: center; gap: 32px;
+    font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    color: var(--aisoc-nav-text);
+  }
+  #aisoc-nav .brand {
+    display: flex; align-items: center;
+    text-decoration: none;
+    height: 44px;
+  }
+  #aisoc-nav .brand img { height: 44px; display: block; }
+  #aisoc-nav .tabs { display: flex; gap: 4px; }
+  #aisoc-nav .tab {
+    padding: 7px 14px;
+    color: var(--aisoc-nav-muted);
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+  #aisoc-nav .tab:hover {
+    background: #f3f4f6;
+    color: var(--aisoc-nav-text);
+  }
+  #aisoc-nav .tab.active {
+    color: var(--aisoc-nav-accent);
+    background: var(--aisoc-nav-active-bg);
+    font-weight: 700;
+  }
+  #aisoc-nav .userbar {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 14px;
+    color: var(--aisoc-nav-muted);
+    font-size: 12px;
+  }
+  #aisoc-nav .userbar .signout {
+    color: var(--aisoc-nav-accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  #aisoc-nav .userbar .signout:hover {
+    color: var(--aisoc-nav-accent-bright);
+    text-decoration: underline;
+  }
+</style>
+"""
+
+
+def _render_nav(active: str, current_user: str) -> str:
+    """Render the top-nav. ``active`` selects which tab gets highlighted."""
+    tabs = (
+        ("live",      "/",          "Live Agent View"),
+        ("dashboard", "/dashboard", "Dashboard"),
+        ("config",    "/config",    "Configuration"),
+    )
+    items = []
+    for key, href, label in tabs:
+        cls = "tab active" if key == active else "tab"
+        items.append(f'<a class="{cls}" href="{href}">{label}</a>')
+    return (
+        '<nav id="aisoc-nav">'
+        '  <a href="/dashboard" class="brand">'
+        '    <img src="/static/nviso-cruises-logo.svg" alt="NVISO Cruises">'
+        '  </a>'
+        '  <div class="tabs">' + "".join(items) + '</div>'
+        '  <div class="userbar">'
+        f'    <span>Signed in as <b>{current_user}</b></span>'
+        '    <a href="/logout" class="signout">Sign out</a>'
+        '  </div>'
+        '</nav>'
+    )
+
+
+# Page chrome shared by /dashboard and /config (server-rendered, no
+# React). The Live Agent View at / has its own chrome because it
+# wraps the vendored Pixel Agents bundle.
+SHELL_BASE_CSS = """\
+<style id="aisoc-shell-base">
+  body {
+    margin: 0;
+    font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #ffffff;
+    color: #1f2937;
+  }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 28px 64px; }
+  h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: #1f2937; }
+  h2 { font-size: 15px; font-weight: 700; margin: 28px 0 10px; color: #374151;
+       letter-spacing: 0.02em; text-transform: uppercase; }
+  .subtitle { color: #6b7280; margin: 0 0 28px; font-size: 14px; }
+</style>
+"""
+
+
+def _render_shell(
+    *,
+    active: str,
+    current_user: str,
+    title: str,
+    body_html: str,
+    extra_head: str = "",
+    scripts: list[str] | None = None,
+) -> str:
+    """Wrap a server-rendered page in our standard chrome (logo + nav + body)."""
+    scripts = scripts or []
+    script_tags = "".join(f'<script src="{s}" defer></script>' for s in scripts)
+    return (
+        f'<!DOCTYPE html><html lang="en"><head>'
+        f'<meta charset="utf-8">'
+        f'<title>{title}</title>'
+        f'<link rel="icon" href="/static/nviso-cruises-logo.svg">'
+        f'{SHELL_BASE_CSS}'
+        f'{NAV_CSS}'
+        f'{extra_head}'
+        f'</head><body>'
+        f'{_render_nav(active, current_user)}'
+        f'<main>{body_html}</main>'
+        f'{script_tags}'
+        f'</body></html>'
+    )
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_view(request: Request) -> Response:
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    body = (
+        '<h1>Agentic SOC Dashboard</h1>'
+        '<p class="subtitle">'
+        '  Microsoft Sentinel incidents seen in the lab + per-incident cost spent by the AI agents.'
+        '  Right-click an incident to act, or use the inline button.'
+        '</p>'
+        '<div id="aisoc-dashboard-root"></div>'
+    )
+    return HTMLResponse(_render_shell(
+        active="dashboard",
+        current_user=user,
+        title="NVISO Cruises · Dashboard",
+        body_html=body,
+        scripts=["/static/dashboard.js"],
+    ))
+
+
+@app.get("/config", response_class=HTMLResponse)
+def config_view(request: Request) -> Response:
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    body = (
+        '<h1>Agentic SOC Configuration</h1>'
+        '<p class="subtitle">'
+        '  Live agent telemetry. Toggle the JSON switch on each card to see the raw'
+        '  state PixelAgents Web has on file.'
+        '</p>'
+        '<div id="aisoc-config-root"></div>'
+    )
+    return HTMLResponse(_render_shell(
+        active="config",
+        current_user=user,
+        title="NVISO Cruises · Configuration",
+        body_html=body,
+        scripts=["/static/config.js"],
+    ))
+
+
+# ── Current incident tracking ────────────────────────────────────────
+# Set by the orchestrate proxy when a workflow run starts; cleared when
+# it finishes (or errors). Lets the Live Agent View show "we're working
+# on incident #N right now" without having to derive it from event logs.
+CURRENT_INCIDENT: dict[str, Any] = {"incident_number": None, "started_at": None}
+
+
+@app.get("/api/current_incident")
+def api_current_incident(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
+    return dict(CURRENT_INCIDENT)
 
 
 @app.get("/healthz")
@@ -843,6 +1045,12 @@ async def orchestrate_incident(
 
     import requests as _requests
 
+    # Mark this incident as the live one for the duration of the
+    # orchestrator call. The Live Agent View polls /api/current_incident
+    # to render a "working on incident #N" banner.
+    CURRENT_INCIDENT["incident_number"] = incident_number
+    CURRENT_INCIDENT["started_at"] = time.time()
+
     url = f"{orch_base.rstrip('/')}/incident/pipeline?code={orch_key}"
     try:
         r = _requests.post(
@@ -857,9 +1065,18 @@ async def orchestrate_incident(
             timeout=600,
         )
     except Exception as e:
+        CURRENT_INCIDENT["incident_number"] = None
+        CURRENT_INCIDENT["started_at"] = None
         raise HTTPException(status_code=502, detail=f"Orchestrator call failed: {e!r}") from e
+    finally:
+        # Clear the "live" marker once the upstream call has returned
+        # (success or HTTP error). Done in finally so a 4xx/5xx body
+        # below still leaves the banner cleared.
+        pass
 
     if r.status_code >= 400:
+        CURRENT_INCIDENT["incident_number"] = None
+        CURRENT_INCIDENT["started_at"] = None
         detail: Any
         try:
             detail = r.json()
@@ -870,6 +1087,8 @@ async def orchestrate_incident(
             detail={"orchestrator_status": r.status_code, "body": detail},
         )
 
+    CURRENT_INCIDENT["incident_number"] = None
+    CURRENT_INCIDENT["started_at"] = None
     try:
         return r.json()
     except Exception:
@@ -1552,37 +1771,21 @@ def index(request: Request) -> Response:
         '  --shadow-pixel: 2px 2px 0 #cbd5e1;'
         '}'
         'html, body, #root { background: #ffffff !important; color: #1f2937; }'
-        '#aisoc-userbar {'
-        '  position: fixed; top: 8px; right: 12px; z-index: 9999;'
-        '  font: 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;'
-        '  background: rgba(255,255,255,0.85); backdrop-filter: blur(4px);'
-        '  padding: 4px 10px; border: 1px solid #cbd5e1; border-radius: 4px;'
-        '  color: #6b7280;'
-        '}'
-        '#aisoc-userbar a {'
-        '  margin-left: 12px; color: #0099cc; text-decoration: none;'
-        '  font-weight: 600;'
-        '}'
-        '#aisoc-userbar a:hover { color: #33b0dd; text-decoration: underline; }'
+        # Reserve room at the top of the vendored canvas for the
+        # sticky nav we inject above it.
+        'body { padding-top: 60px !important; }'
         '</style>'
     )
-    # Tiny "signed in as / sign out" bar so the user knows the session is
-    # active and has an obvious way out. Uses a GET form action so a
-    # plain link works (no JS dependency).
-    user_html = (
-        f'<div id="aisoc-userbar">'
-        f'  <span>Signed in as <b>{current_user}</b></span>'
-        f'  <a href="/logout">Sign out</a>'
-        f'</div>'
-    )
+    nav_html = _render_nav("live", current_user)
     injection = (
+        f'{NAV_CSS}'
         f'{nviso_theme}'
-        f'{user_html}'
+        f'{nav_html}'
         f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js}, show_cost: {show_cost_js} }};</script>'
         f'<script src="/static/chat_drawer.js" defer></script>'
-        f'<script src="/static/incidents_panel.js" defer></script>'
         f'<script src="/static/hitl_panel.js" defer></script>'
         f'<script src="/static/agent_activity.js" defer></script>'
+        f'<script src="/static/live_incident_banner.js" defer></script>'
     )
 
     if "</body>" in html:

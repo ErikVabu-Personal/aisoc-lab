@@ -1,0 +1,25 @@
+<svg viewBox="0 0 360 84" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="NVISO Cruises">
+  <!-- "nviso" wordmark — lowercase, dark grey, matches the official NVISO mark. -->
+  <text x="4" y="56"
+        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
+        font-weight="800" font-size="58" fill="#3a3a3a" letter-spacing="-0.04em">nviso</text>
+
+  <!-- "CRUISES" subtitle — tracked-out cyan, our demo brand subtitle. -->
+  <text x="6" y="78"
+        font-family="-apple-system, BlinkMacSystemFont, system-ui, sans-serif"
+        font-weight="700" font-size="12" fill="#0099CC" letter-spacing="0.45em">CRUISES</text>
+
+  <!--
+    Geometric bird (origami style) — layered triangulated polygons in
+    cyan/blue tones, evoking the official NVISO bird mark. Five facets
+    suggest the volumetric folded-paper effect without recreating
+    every panel of the original.
+  -->
+  <g transform="translate(228, 8)">
+    <polygon points="2,42 64,30 52,60" fill="#0E5C8C"/>
+    <polygon points="22,8 64,30 34,32" fill="#33B0DD"/>
+    <polygon points="44,24 64,30 54,52" fill="#0099CC"/>
+    <polygon points="64,30 92,12 84,42" fill="#7DD9F2"/>
+    <polygon points="52,60 84,42 64,68" fill="#0F6BAA"/>
+  </g>
+</svg>
