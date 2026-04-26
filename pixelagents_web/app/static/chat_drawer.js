@@ -72,9 +72,27 @@
       flex-direction: column;
       overflow: hidden;
     }
+    /*
+      When collapsed we want the Chat affordance to sit *next to* the
+      bundle's Agent / Layout / Settings buttons in the bottom-left
+      corner, not as a separate widget on the right. Override the
+      base positioning + width so the collapsed state looks like a
+      sibling button. ~330px from the left clears the typical width
+      of the existing three-button cluster — tune if it overlaps.
+    */
     #${rootId}[data-collapsed="true"] {
       max-height: none;
       height: auto;
+      width: auto;
+      min-width: 130px;
+      right: auto;
+      left: 330px;
+      bottom: 16px;
+    }
+    /* Tighten the header padding while collapsed so it reads as a button. */
+    #${rootId}[data-collapsed="true"] header {
+      padding: 8px 14px;
+      font-size: 18px;
     }
     #${rootId} header {
       display: flex;

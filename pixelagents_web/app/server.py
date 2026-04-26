@@ -410,6 +410,17 @@ NAV_CSS = """\
     font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
     color: var(--aisoc-nav-text) !important;
   }
+  /*
+    The vendored Pixel Agents bundle has a global `* { font-family: 'FS
+    Pixel Sans' }` rule. Our nav-level font: declaration above only sets
+    the font on the nav itself, so the rule cascades down and re-pixels
+    every child label. Force the system font on ALL nav descendants so
+    the navigation reads as standard chrome, not as part of the game.
+  */
+  #aisoc-nav,
+  #aisoc-nav * {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+  }
   #aisoc-nav .brand {
     display: flex !important;
     align-items: center !important;
@@ -1875,6 +1886,7 @@ def index(request: Request) -> Response:
         f'<script src="/static/hitl_panel.js" defer></script>'
         f'<script src="/static/agent_activity.js" defer></script>'
         f'<script src="/static/live_incident_banner.js" defer></script>'
+        f'<script src="/static/default_zoom.js" defer></script>'
     )
 
     if "</body>" in html:
