@@ -185,6 +185,60 @@ def _clip(s: str, max_chars: int) -> str:
     return s if len(s) <= max_chars else (s[: max_chars - 3] + "...")
 
 
+# ─── Phase heartbeats ────────────────────────────────────────────────────
+#
+# Always-on structured logs around each agent invocation, regardless of
+# success or failure. Two purposes:
+#   1) When troubleshooting, we can see "phase=investigator started" at
+#      timestamp X even when there's no 429/error noise in the logs.
+#   2) Future SOC Manager UI can query App Insights for these lines (or
+#      ingest the equivalent COSTS records) to build a per-incident
+#      agent-call timeline. Format is key=value pairs so kusto's parse
+#      operator can split them cleanly.
+
+
+def _phase_start(
+    *,
+    phase: str,
+    incident_number: Any,
+    incident_id: Any,
+    workflow_run_id: str,
+    iteration: int = 0,
+) -> float:
+    """Log a phase-start heartbeat and return the start timestamp."""
+    started = time.time()
+    print(
+        f"[orchestrator] phase={phase} event=start "
+        f"incident_number={incident_number} incident_id={incident_id} "
+        f"workflow_run_id={workflow_run_id} iteration={iteration}",
+        flush=True,
+    )
+    return started
+
+
+def _phase_end(
+    *,
+    phase: str,
+    started: float,
+    workflow_run_id: str,
+    usage: Any,
+) -> None:
+    """Log a phase-end heartbeat with duration + token counts."""
+    duration_ms = int((time.time() - started) * 1000)
+    if isinstance(usage, dict):
+        tokens_in = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        tokens_out = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+    else:
+        tokens_in = 0
+        tokens_out = 0
+    print(
+        f"[orchestrator] phase={phase} event=end "
+        f"workflow_run_id={workflow_run_id} duration_ms={duration_ms} "
+        f"tokens_in={tokens_in} tokens_out={tokens_out}",
+        flush=True,
+    )
+
+
 # ─── Cost tracking ────────────────────────────────────────────────────────
 #
 # We pull response.usage off every Foundry call and ship a per-call cost
@@ -382,6 +436,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     import uuid as _uuid
     workflow_run_id = str(_uuid.uuid4())
 
+    # Workflow-level heartbeat so App Insights always shows the run was
+    # received, even if a phase prints nothing on the happy path.
+    print(
+        f"[orchestrator] workflow event=start "
+        f"workflow_run_id={workflow_run_id} "
+        f"incident_number={incident_number} incident_id={incident_id} mode={mode}",
+        flush=True,
+    )
+
     if incident_number is None and incident_id is None:
         return func.HttpResponse("Missing incidentNumber or incidentId", status_code=400)
 
@@ -420,9 +483,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # Call agents via Foundry Agent Service runtime (agents + responses).
         # Each phase: (1) assign the incident to the agent so the UI +
-        # Sentinel reflect "who's handling this right now", (2) invoke
-        # the agent, (3) emit a cost record from response.usage.
+        # Sentinel reflect "who's handling this right now", (2) log a
+        # heartbeat, (3) invoke the agent, (4) emit a cost record from
+        # response.usage, (5) log the phase-end heartbeat.
         _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Triage Agent")
+        _t = _phase_start(
+            phase="triage",
+            incident_number=incident_number,
+            incident_id=incident_id,
+            workflow_run_id=workflow_run_id,
+        )
         triage_out, triage_raw = _invoke_agent(
             project_endpoint,
             "triage",
@@ -431,6 +501,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "Return a concise triage summary and immediate next steps.\n\n"
                 + f"INCIDENT_REF:\n{incident_json}"
             ),
+        )
+        _phase_end(
+            phase="triage",
+            started=_t,
+            workflow_run_id=workflow_run_id,
+            usage=triage_raw.get("usage"),
         )
         _emit_cost_record(
             incident_number=incident_number,
@@ -451,6 +527,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
         _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Investigator Agent")
+        _t = _phase_start(
+            phase="investigator",
+            incident_number=incident_number,
+            incident_id=incident_id,
+            workflow_run_id=workflow_run_id,
+        )
         inv_out, inv_raw = _invoke_agent(
             project_endpoint,
             "investigator",
@@ -459,6 +541,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "Ground findings in evidence and produce a short timeline + verdict.\n\n"
                 + f"INCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}"
             ),
+        )
+        _phase_end(
+            phase="investigator",
+            started=_t,
+            workflow_run_id=workflow_run_id,
+            usage=inv_raw.get("usage"),
         )
         _emit_cost_record(
             incident_number=incident_number,
@@ -490,7 +578,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Reporter Agent")
+        _t = _phase_start(
+            phase="reporter",
+            incident_number=incident_number,
+            incident_id=incident_id,
+            workflow_run_id=workflow_run_id,
+        )
         rep_out, rep_raw = _invoke_reporter(inv_out)
+        _phase_end(
+            phase="reporter",
+            started=_t,
+            workflow_run_id=workflow_run_id,
+            usage=rep_raw.get("usage"),
+        )
         _emit_cost_record(
             incident_number=incident_number,
             incident_id=incident_id,
@@ -516,6 +616,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             prior_rep_out = rep_out
 
             _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Investigator Agent (re-review)")
+            _t = _phase_start(
+                phase=f"investigator-rerun-{reinvestigation_count}",
+                incident_number=incident_number,
+                incident_id=incident_id,
+                workflow_run_id=workflow_run_id,
+                iteration=reinvestigation_count,
+            )
             inv_out, inv_raw = _invoke_agent(
                 project_endpoint,
                 "investigator",
@@ -530,6 +637,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     + f"HUMAN_FEEDBACK_VIA_REPORTER:\n{note}"
                 ),
             )
+            _phase_end(
+                phase=f"investigator-rerun-{reinvestigation_count}",
+                started=_t,
+                workflow_run_id=workflow_run_id,
+                usage=inv_raw.get("usage"),
+            )
             _emit_cost_record(
                 incident_number=incident_number,
                 incident_id=incident_id,
@@ -540,7 +653,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             )
 
             _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Reporter Agent (re-review)")
+            _t = _phase_start(
+                phase=f"reporter-rerun-{reinvestigation_count}",
+                incident_number=incident_number,
+                incident_id=incident_id,
+                workflow_run_id=workflow_run_id,
+                iteration=reinvestigation_count,
+            )
             rep_out, rep_raw = _invoke_reporter(inv_out)
+            _phase_end(
+                phase=f"reporter-rerun-{reinvestigation_count}",
+                started=_t,
+                workflow_run_id=workflow_run_id,
+                usage=rep_raw.get("usage"),
+            )
             _emit_cost_record(
                 incident_number=incident_number,
                 incident_id=incident_id,
