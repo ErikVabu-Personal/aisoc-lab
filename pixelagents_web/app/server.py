@@ -1143,6 +1143,7 @@ async def orchestrate_incident(
     mode = body.get("mode") or "full"
     writeback = body["writeback"] if "writeback" in body else True
 
+    import asyncio
     import requests as _requests
 
     # Mark this incident as the live one for the duration of the
@@ -1153,15 +1154,19 @@ async def orchestrate_incident(
 
     url = f"{orch_base.rstrip('/')}/incident/pipeline?code={orch_key}"
     try:
-        r = _requests.post(
+        # The orchestrator pipeline runs 1-3 minutes for tool-heavy
+        # incidents. Use asyncio.to_thread so the blocking `requests.post`
+        # runs on a worker thread and the FastAPI event loop stays
+        # responsive — without this, every other request to PixelAgents
+        # Web (poll, navigate, chat) queues behind this one call.
+        r = await asyncio.to_thread(
+            _requests.post,
             url,
             json={
                 "incidentNumber": incident_number,
                 "mode": mode,
                 "writeback": bool(writeback),
             },
-            # Orchestrator pipeline runs three agents in sequence and can take
-            # 1-3 minutes for tool-heavy incidents. Generous client timeout.
             timeout=600,
         )
     except Exception as e:
