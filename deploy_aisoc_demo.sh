@@ -23,8 +23,13 @@
 # repo is public.
 #
 # Usage:
-#   ./deploy_aisoc_demo.sh [--key=value]...
+#   ./deploy_aisoc_demo.sh deploy   [--key=value]...
+#   ./deploy_aisoc_demo.sh destroy  [--key=value]...
 #   ./deploy_aisoc_demo.sh --help
+#
+# The first argument is a subcommand:
+#   deploy   — walk Phases 1 → 2 → 3 (build, configure, smoke-test)
+#   destroy  — terraform destroy in reverse order (3 → 2 → 1)
 #
 # Any --key=value is forwarded as TF_VAR_<key> across all phases.
 # Terraform silently ignores TF_VAR_<x> if x isn't declared in that
@@ -75,10 +80,16 @@ print_banner
 # ── Argument parsing ─────────────────────────────────────────────────
 usage() {
   cat <<'EOF'
-Usage: ./deploy_aisoc_demo.sh [options]
+Usage: ./deploy_aisoc_demo.sh <command> [options]
 
-Walks the three Terraform phases, triggers function-app code workflows,
-runs Foundry bootstrap, deploys PixelAgents Web. Idempotent.
+Commands:
+  deploy    Walk Phases 1 → 2 → 3 — Terraform applies, function-app
+            code workflows, Foundry bootstrap, smoke-test print.
+            Idempotent; safe to re-run.
+  destroy   Tear down all phases (Phase 3 → 2 → 1) via terraform
+            destroy. Leaves the OIDC trust and AZURE_* repo
+            variables in place so the next `deploy` is one command.
+            5-second countdown before applying.
 
 Common Terraform variables:
   --resource-group=...    Resource group to create / use in Azure
@@ -107,12 +118,8 @@ Other:
                               (defaults to current `az account show` selection)
   --skip-oidc-bootstrap       Skip the GitHub→Azure federated-credential setup
                               (use if you've already bootstrapped or are
-                              re-running from a fresh shell)
-  --destroy                   Tear down all phases (Phase 3 → 2 → 1) via
-                              terraform destroy. Leaves the OIDC trust
-                              and the AISOC repo variables in place so
-                              re-deploys are still one command. A 5-second
-                              countdown gives you a chance to abort.
+                              re-running from a fresh shell). Only meaningful
+                              for the `deploy` command.
   -h, --help                  show this help
 
 Generic pass-through:
@@ -126,20 +133,34 @@ Sensitive values:
 
 Examples:
   # Minimal first-time deploy (admin password auto-generated):
-  ./deploy_aisoc_demo.sh \
+  ./deploy_aisoc_demo.sh deploy \
       --resource-group=rg-aisoc-demo --azure-location=westus
 
   # Override Foundry region:
-  ./deploy_aisoc_demo.sh \
+  ./deploy_aisoc_demo.sh deploy \
       --resource-group=rg-aisoc-demo \
       --azure-location=westus --foundry-location=swedencentral
+
+  # Tear it all down:
+  ./deploy_aisoc_demo.sh destroy
 EOF
 }
 
 declare -A USER_VARS=()
 SUBSCRIPTION_OVERRIDE=""
 SKIP_OIDC=0
-DESTROY=0
+ACTION=""
+
+# First positional arg is the subcommand: deploy or destroy.
+# Allow --help / -h before the subcommand for convenience.
+if [[ $# -ge 1 ]]; then
+  case "$1" in
+    deploy|destroy)  ACTION="$1"; shift ;;
+    -h|--help)       usage; exit 0 ;;
+    *)               die "first argument must be 'deploy' or 'destroy' (got: '$1'). Try --help." ;;
+  esac
+fi
+[[ -z "$ACTION" ]] && { usage >&2; exit 2; }
 
 # Convert --foo-bar to TF_VAR_foo_bar
 add_var() {
@@ -160,7 +181,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)              usage; exit 0 ;;
     --skip-oidc-bootstrap)  SKIP_OIDC=1; shift ;;
-    --destroy)              DESTROY=1; shift ;;
     --subscription=*)       SUBSCRIPTION_OVERRIDE="${1#*=}"; shift ;;
     --subscription)         [[ $# -ge 2 ]] || die "missing value for --subscription"
                             SUBSCRIPTION_OVERRIDE="$2"; shift 2 ;;
@@ -215,7 +235,7 @@ ok "prereqs satisfied"
 # (federated cred + repo vars) — those are stateless config a re-deploy
 # would just re-write, and keeping them lets the next deploy be a
 # one-liner.
-if [[ "$DESTROY" == "1" ]]; then
+if [[ "$ACTION" == "destroy" ]]; then
   warn "DESTROY mode: about to run \`terraform destroy\` in Phase 3, then 2, then 1."
   warn "All Azure resources created by the demo will be removed."
   warn "Press Ctrl-C now to abort. Continuing in 5 seconds..."
