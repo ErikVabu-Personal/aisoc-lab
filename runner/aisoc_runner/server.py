@@ -458,10 +458,11 @@ def tools_execute(
                     detail="HITL submit did not return an id",
                 )
 
-            # Long-poll for the answer. We keep each individual HTTP call
-            # short (30s) so we don't blow past Foundry's own tool timeout,
-            # and retry up to MAX_WAIT_TOTAL_SEC in aggregate.
-            MAX_WAIT_TOTAL_SEC = 150
+            # Long-poll for the answer. Each HTTP call stays short (30s)
+            # so we don't blow past Foundry's tool timeout per call, but
+            # the loop is allowed to retry for the full 15-minute window
+            # an analyst may need to consider an agent's question.
+            MAX_WAIT_TOTAL_SEC = 900   # 15 minutes
             POLL_WINDOW_SEC = 30
             waited = 0
             answer_text: str | None = None

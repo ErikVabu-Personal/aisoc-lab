@@ -20,10 +20,13 @@
 
   // Inject CSS once. The override wins thanks to !important; using a
   // class instead of a generated selector keeps things stable across
-  // bundle versions.
+  // bundle versions. The bundle's `#root` is now constrained to the
+  // viewport width minus the right-side Agent Communication sidebar
+  // (var(--aisoc-sidebar-width)), so we centre the button row at the
+  // *midpoint of the constrained area*, not the full viewport.
   const css = `
     .aisoc-bottom-bar {
-      left: 50% !important;
+      left: calc((100vw - var(--aisoc-sidebar-width, 0px)) / 2) !important;
       right: auto !important;
       transform: translateX(-50%) !important;
       display: flex !important;

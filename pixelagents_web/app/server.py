@@ -1869,11 +1869,15 @@ def index(request: Request) -> Response:
         '  --color-btn-hover: #e5e7eb;'
         '  --color-active-bg: #e0f2fe;'
         '  --shadow-pixel: 2px 2px 0 #cbd5e1;'
+        '  --aisoc-sidebar-width: 380px;'
         '}'
         'html, body, #root { background: #ffffff !important; color: #1f2937; }'
         # Reserve room at the top of the vendored canvas for the
         # sticky nav we inject above it.
         'body { padding-top: 60px !important; }'
+        # Constrain the bundle's full-viewport canvas so a right
+        # sidebar (the Agent Communication panel) fits cleanly.
+        '#root { right: var(--aisoc-sidebar-width) !important; }'
         '</style>'
     )
     nav_html = _render_nav("live", current_user)
@@ -1882,8 +1886,9 @@ def index(request: Request) -> Response:
         f'{nviso_theme}'
         f'{nav_html}'
         f'<script>window.__PIXELAGENTS_CHAT = {{ token: {token_js}, show_cost: {show_cost_js} }};</script>'
-        f'<script src="/static/chat_drawer.js" defer></script>'
-        f'<script src="/static/hitl_panel.js" defer></script>'
+        # Unified Agent Communication sidebar — replaces the floating
+        # chat drawer + HITL pop-up with one panel.
+        f'<script src="/static/agent_comm.js" defer></script>'
         f'<script src="/static/agent_activity.js" defer></script>'
         f'<script src="/static/live_incident_banner.js" defer></script>'
         f'<script src="/static/default_zoom.js" defer></script>'
