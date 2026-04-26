@@ -264,7 +264,35 @@ if [[ "$ACTION" == "destroy" ]]; then
     ( cd "$dir" && terraform init -upgrade -input=false && terraform destroy -auto-approve -input=false )
   }
 
+  # Foundry hub (Microsoft.CognitiveServices/accounts) can't be deleted
+  # while it has child projects. The project is created out-of-band by
+  # deploy_foundry_project.sh, so Terraform doesn't manage it. Delete
+  # it via ARM before terraform destroy reaches the hub.
+  pre_destroy_phase2_cleanup() {
+    local sub rg hub proj
+    sub="$( cd terraform/2-deploy-aisoc && terraform output -raw subscription_id 2>/dev/null || true )"
+    rg="$(  cd terraform/2-deploy-aisoc && terraform output -raw resource_group   2>/dev/null || true )"
+    hub="$( cd terraform/2-deploy-aisoc && terraform output -raw foundry_hub_name 2>/dev/null || true )"
+    proj="$(cd terraform/2-deploy-aisoc && terraform output -raw foundry_project_name 2>/dev/null || true )"
+
+    if [[ -z "$sub" || -z "$rg" || -z "$hub" || -z "$proj" ]]; then
+      warn "Couldn't resolve Foundry hub/project from terraform output — skipping pre-destroy project cleanup."
+      warn "If the destroy fails with 'Cannot delete resource while nested resources exist',"
+      warn "delete the project manually: az rest --method delete --url '...projects/<name>?api-version=2025-06-01'"
+      return 0
+    fi
+
+    local url="https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.CognitiveServices/accounts/$hub/projects/$proj?api-version=2025-06-01"
+    say "Pre-destroy: removing Foundry project '$proj' (nested under hub '$hub')"
+    if az rest --method delete --url "$url" --only-show-errors >/dev/null 2>&1; then
+      ok "Foundry project deleted"
+    else
+      warn "Foundry project delete returned non-zero (may already be gone) — continuing"
+    fi
+  }
+
   destroy_phase terraform/3-deploy-pixelagents-web
+  pre_destroy_phase2_cleanup
   destroy_phase terraform/2-deploy-aisoc
   destroy_phase terraform/1-deploy-sentinel
 
