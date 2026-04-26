@@ -375,52 +375,74 @@ NAV_CSS = """\
     --aisoc-nav-accent-bright: #33b0dd;
     --aisoc-nav-active-bg: #e0f2fe;
   }
+  /*
+    The vendored Pixel Agents bundle covers the entire viewport with a
+    `position: fixed` canvas. To float above it we need (a) `position:
+    fixed` on the nav so we share the same stacking context, (b) a
+    z-index higher than anything the bundle uses, and (c) !important
+    on the layout-critical properties so the bundle's reset styles
+    can't shrink us back to invisibility.
+  */
   #aisoc-nav {
-    position: sticky; top: 0; z-index: 1000;
-    background: var(--aisoc-nav-bg);
-    border-bottom: 1px solid var(--aisoc-nav-border);
-    padding: 8px 24px;
-    display: flex; align-items: center; gap: 32px;
-    font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    color: var(--aisoc-nav-text);
+    position: fixed !important;
+    top: 0 !important; left: 0 !important; right: 0 !important;
+    z-index: 2147483000 !important;
+    background: var(--aisoc-nav-bg) !important;
+    border-bottom: 1px solid var(--aisoc-nav-border) !important;
+    padding: 8px 24px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 32px !important;
+    height: 60px !important;
+    box-sizing: border-box !important;
+    font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+    color: var(--aisoc-nav-text) !important;
   }
   #aisoc-nav .brand {
-    display: flex; align-items: center;
-    text-decoration: none;
-    height: 44px;
+    display: flex !important;
+    align-items: center !important;
+    text-decoration: none !important;
+    height: 44px !important;
   }
-  #aisoc-nav .brand img { height: 44px; display: block; }
-  #aisoc-nav .tabs { display: flex; gap: 4px; }
+  #aisoc-nav .brand img {
+    height: 44px !important;
+    width: auto !important;
+    display: block !important;
+  }
+  #aisoc-nav .tabs { display: flex !important; gap: 4px !important; }
   #aisoc-nav .tab {
-    padding: 7px 14px;
-    color: var(--aisoc-nav-muted);
-    text-decoration: none;
-    border-radius: 4px;
-    font-weight: 500;
+    padding: 7px 14px !important;
+    color: var(--aisoc-nav-muted) !important;
+    text-decoration: none !important;
+    border-radius: 4px !important;
+    font-weight: 500 !important;
+    font-size: 14px !important;
   }
   #aisoc-nav .tab:hover {
-    background: #f3f4f6;
-    color: var(--aisoc-nav-text);
+    background: #f3f4f6 !important;
+    color: var(--aisoc-nav-text) !important;
   }
   #aisoc-nav .tab.active {
-    color: var(--aisoc-nav-accent);
-    background: var(--aisoc-nav-active-bg);
-    font-weight: 700;
+    color: var(--aisoc-nav-accent) !important;
+    background: var(--aisoc-nav-active-bg) !important;
+    font-weight: 700 !important;
   }
   #aisoc-nav .userbar {
-    margin-left: auto;
-    display: flex; align-items: center; gap: 14px;
-    color: var(--aisoc-nav-muted);
-    font-size: 12px;
+    margin-left: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 14px !important;
+    color: var(--aisoc-nav-muted) !important;
+    font-size: 12px !important;
   }
   #aisoc-nav .userbar .signout {
-    color: var(--aisoc-nav-accent);
-    text-decoration: none;
-    font-weight: 600;
+    color: var(--aisoc-nav-accent) !important;
+    text-decoration: none !important;
+    font-weight: 600 !important;
   }
   #aisoc-nav .userbar .signout:hover {
-    color: var(--aisoc-nav-accent-bright);
-    text-decoration: underline;
+    color: var(--aisoc-nav-accent-bright) !important;
+    text-decoration: underline !important;
   }
 </style>
 """
@@ -458,6 +480,8 @@ SHELL_BASE_CSS = """\
 <style id="aisoc-shell-base">
   body {
     margin: 0;
+    /* Push body content below the fixed nav (60px tall). */
+    padding-top: 60px;
     font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     background: #ffffff;
     color: #1f2937;
