@@ -13,9 +13,9 @@ variable "function_plan_sku" {
 }
 
 variable "location_override" {
-  description = "Optional region override for Phase 2 resources (e.g. 'westus'). If null, uses Phase 1 selected_location from remote state."
+  description = "Region for Phase 2 resources (App Service / Function Apps). Defaults to West Central US — many freshly-provisioned subscriptions have zero EP-series quota in West Europe / North Europe / West US, but reliably have it pre-allocated in West Central US. Set to null to inherit Phase 1's region instead."
   type        = string
-  default     = null
+  default     = "westcentralus"
 }
 
 # -----------------------------
@@ -59,39 +59,39 @@ variable "foundry_project_name" {
 }
 
 variable "foundry_location" {
-  description = "Optional location for Foundry resources. If null, uses the effective Phase 2 location."
+  description = "Region for the Azure AI Foundry hub/project. Defaults to East US 2 — Model Router + GPT-4.1-mini are region-gated, and East US 2 + Sweden Central are the known-supported regions. Override only if you've confirmed the model + SKU you want is available somewhere else."
   type        = string
-  default     = null
+  default     = "eastus2"
 }
 
 variable "foundry_model_choice" {
   description = "Human-friendly model choice string (e.g. 'gpt-4.1-mini'). Source of truth for what we want, even if deployment is scripted."
   type        = string
-  default     = null
+  default     = "gpt-4.1-mini"
 }
 
 variable "foundry_model_deployment_name" {
   description = "Model deployment name in Foundry that agents should use (often distinct from model family)."
   type        = string
-  default     = null
+  default     = "gpt-4.1-mini"
 }
 
 variable "foundry_model_version" {
-  description = "Model version string for the Foundry deployment (e.g. 2026-03-17)."
+  description = "Model version string for the Foundry deployment."
   type        = string
-  default     = null
+  default     = "2025-04-14"
 }
 
 variable "foundry_model_sku_name" {
-  description = "SKU name for the deployment (e.g. Standard, GlobalStandard)."
+  description = "SKU name for the deployment. GlobalStandard is required when the chosen region/model combo doesn't offer plain 'Standard' (which is most of the time for gpt-4.1-mini)."
   type        = string
-  default     = "Standard"
+  default     = "GlobalStandard"
 }
 
 variable "foundry_model_sku_capacity" {
-  description = "SKU capacity for the deployment."
+  description = "SKU capacity for the deployment (TPM units in thousands)."
   type        = number
-  default     = 1
+  default     = 10
 }
 
 

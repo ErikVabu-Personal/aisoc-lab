@@ -1,7 +1,7 @@
 variable "azure_location" {
-  description = "Default Azure region for Sentinel + lab VM (used when auto-selection is disabled)"
+  description = "Default Azure region for Sentinel + lab VM. Defaults to West US — the combination of West US (Phase 1) + West Central US (Phase 2) is the empirically-validated happy path for new subs whose other regions have zero App Service quota."
   type        = string
-  default     = "westeurope"
+  default     = "westus"
 }
 
 variable "auto_select_location_and_sku" {
