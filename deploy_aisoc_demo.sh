@@ -56,11 +56,15 @@ Usage: ./deploy_aisoc_demo.sh [options]
 Walks the three Terraform phases, triggers function-app code workflows,
 runs Foundry bootstrap, deploys PixelAgents Web. Idempotent.
 
-Common Terraform variables (Phase 1):
-  --admin-password=...        Lab VM admin password (REQUIRED, sensitive)
-  --azure-location=...        Azure region for Sentinel + lab VM (default: westeurope)
-  --vm-size=...               Lab VM size (default: Standard_D2s_v3)
-  --resource-group-name=...   Override the auto-generated RG name
+Common Terraform variables:
+  --admin-password=...    Lab VM admin password (REQUIRED, sensitive)
+  --resource-group=...    Resource group to create / use in Azure
+                          (default: rg-sentinel-test). Phase 1 creates
+                          the RG with this name; Phases 2 & 3 deploy
+                          into it.
+  --azure-location=...    Azure region for Sentinel + lab VM
+                          (default: westeurope)
+  --vm-size=...           Lab VM size (default: Standard_D2s_v3)
 
   (Lab VM RDP is open from any source — this is a throwaway test box,
    gated only by --admin-password. There's no allowed-rdp-cidr.)
@@ -91,11 +95,12 @@ Sensitive values:
 Examples:
   # Minimal first-time deploy:
   TF_VAR_admin_password='S0meStr0ng!pw' ./deploy_aisoc_demo.sh \
-      --azure-location=westus
+      --resource-group=rg-aisoc-demo --azure-location=westus
 
   # Override Foundry region:
   ./deploy_aisoc_demo.sh \
       --admin-password='...' \
+      --resource-group=rg-aisoc-demo \
       --azure-location=westus --foundry-location=swedencentral
 EOF
 }
@@ -112,6 +117,17 @@ add_var() {
   USER_VARS["$tf_name"]="$value"
 }
 
+# Friendly alias: --resource-group=<name> sets BOTH the Phase-1
+# variable (`resource_group_name` — Phase 1 creates the RG with that
+# name) and the Phase-3 override (`resource_group` — explicitly tell
+# Phase 3 to use it instead of inheriting from Phase 1 remote state).
+# Saves the user from having to know the per-phase variable names.
+set_resource_group() {
+  local rg="$1"
+  USER_VARS["resource_group_name"]="$rg"
+  USER_VARS["resource_group"]="$rg"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)              usage; exit 0 ;;
@@ -119,6 +135,9 @@ while [[ $# -gt 0 ]]; do
     --subscription=*)       SUBSCRIPTION_OVERRIDE="${1#*=}"; shift ;;
     --subscription)         [[ $# -ge 2 ]] || die "missing value for --subscription"
                             SUBSCRIPTION_OVERRIDE="$2"; shift 2 ;;
+    --resource-group=*)     set_resource_group "${1#*=}"; shift ;;
+    --resource-group)       [[ $# -ge 2 ]] || die "missing value for --resource-group"
+                            set_resource_group "$2"; shift 2 ;;
     --*=*)
       pair="${1#--}"; key="${pair%%=*}"; value="${pair#*=}"
       add_var "$key" "$value"
