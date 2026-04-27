@@ -1653,11 +1653,41 @@ def _foundry_post_new_version(
     debug: list[str] = []
 
     import requests as _requests
+    import time as _time
+
+    def _get_with_retry(url: str, *, attempts: int = 3) -> Any:
+        """GET helper that retries on transient 5xx (Foundry's metadata
+        endpoint flakes occasionally — observed as 500 'Internal server
+        error' with an activityId). Short exponential backoff so a
+        retry storm doesn't pile up; non-5xx and 4xx return immediately."""
+        last_resp = None
+        for i in range(attempts):
+            try:
+                resp = _requests.get(
+                    url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=15,
+                )
+            except Exception as e:
+                debug.append(f"GET {url} attempt {i+1}: {type(e).__name__}: {e!r}")
+                if i + 1 == attempts:
+                    raise
+                _time.sleep(0.5 * (i + 1))
+                continue
+            last_resp = resp
+            if 500 <= resp.status_code < 600 and i + 1 < attempts:
+                debug.append(
+                    f"GET {url} attempt {i+1}: {resp.status_code} (retrying)"
+                )
+                _time.sleep(0.5 * (i + 1))
+                continue
+            return resp
+        return last_resp  # all attempts were 5xx; let caller handle
 
     # 1. Fetch metadata + inline latest version body.
     meta_url = f"{base}/agents/{slug}?api-version={api_ver}"
     try:
-        r = _requests.get(meta_url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+        r = _get_with_retry(meta_url)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"agent metadata GET raised: {e!r}")
     debug.append(f"GET {meta_url}: {r.status_code}")
@@ -1700,7 +1730,7 @@ def _foundry_post_new_version(
         v_url = f"{base}/agents/{slug}/versions/{v_num}?api-version={api_ver}"
         debug.append(f"versions.latest summary-only; fetching {v_url}")
         try:
-            r2 = _requests.get(v_url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+            r2 = _get_with_retry(v_url)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"version GET raised: {e!r}")
         debug.append(f"GET {v_url}: {r2.status_code}")
