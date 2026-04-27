@@ -1336,54 +1336,68 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
         "version",
     )
 
-    def _find_version(body: dict) -> tuple[str | None, str]:
-        """Returns (version_str, debug_note). The version-id format
-        Foundry uses for agents in this project is a list under
-        `versions` — pick the highest entry. Falls back to a wide list
-        of single-value field names for other Foundry surfaces."""
-        # Newest-first list of version objects/ints under `versions`.
+    def _find_version(body: dict) -> tuple[str | None, str, dict | None]:
+        """Returns (version_str, debug_note, embedded_object).
+
+        Foundry returns `versions: {"latest": {...full version obj...}}`
+        in this project — so we both pull a version *number* AND
+        return the embedded version dict itself, in case the caller
+        can extract instructions from it without another HTTP call.
+        """
+
         versions = body.get("versions")
+
+        # Dict shape: {"latest": {...}}
+        if isinstance(versions, dict):
+            latest = versions.get("latest")
+            if isinstance(latest, dict):
+                for f in ("version", "version_number", "versionNumber"):
+                    v = latest.get(f)
+                    if isinstance(v, (int, str)) and str(v):
+                        return (str(v), f"versions.latest.{f}", latest)
+                # Fall back: look at id like "triage:1" and split.
+                vid = latest.get("id")
+                if isinstance(vid, str) and ":" in vid:
+                    return (vid.split(":")[-1], "versions.latest.id (split)", latest)
+
+        # List shape: [{...}, {...}] — newest one usually last.
         if isinstance(versions, list) and versions:
-            # Each item could be: an int, a str, or a dict with an id /
-            # version field. Try to pull a numeric (or numeric-like)
-            # token from each.
-            candidates: list[str] = []
+            candidates: list[tuple[str, dict | None]] = []
             for v in versions:
                 if isinstance(v, (int, str)) and str(v):
-                    candidates.append(str(v))
+                    candidates.append((str(v), None))
                 elif isinstance(v, dict):
                     for f in ("version", "id", "name", "version_number", "versionNumber"):
                         sub = v.get(f)
                         if isinstance(sub, (int, str)) and str(sub):
-                            candidates.append(str(sub))
+                            sub_s = str(sub)
+                            if ":" in sub_s:
+                                sub_s = sub_s.split(":")[-1]
+                            candidates.append((sub_s, v))
                             break
             if candidates:
-                # Try numeric sort first; fall back to lexicographic.
                 try:
-                    sorted_nums = sorted(
-                        candidates, key=lambda s: int(str(s)), reverse=True
-                    )
-                    chosen = sorted_nums[0]
+                    sorted_c = sorted(candidates, key=lambda t: int(t[0]), reverse=True)
+                    return (sorted_c[0][0], f"versions[] (numeric, {len(candidates)})", sorted_c[0][1])
                 except Exception:
-                    chosen = sorted(candidates, reverse=True)[0]
-                return (chosen, f"from versions[] ({len(candidates)} candidate(s))")
+                    sorted_c = sorted(candidates, key=lambda t: t[0], reverse=True)
+                    return (sorted_c[0][0], f"versions[] (lex, {len(candidates)})", sorted_c[0][1])
 
         for f in VERSION_FIELDS:
             v = body.get(f)
             if isinstance(v, (int, str)) and str(v):
-                return (str(v), f"from field {f!r}")
+                return (str(v), f"field {f!r}", None)
 
-        # Some shapes nest under .properties or .latest
         for nest_key in ("properties", "latest"):
             sub = body.get(nest_key)
             if isinstance(sub, dict):
-                v, note = _find_version(sub)
+                v, note, embedded = _find_version(sub)
                 if v:
-                    return (v, f"{nest_key}.{note}")
+                    return (v, f"{nest_key}.{note}", embedded)
             elif isinstance(sub, (int, str)) and str(sub) and nest_key == "latest":
-                return (str(sub), f"from field {nest_key!r}")
+                return (str(sub), f"field {nest_key!r}", None)
 
-        return (None, "no version field found")
+        return (None, "no version field found", None)
 
     out: dict[str, dict[str, Any]] = {}
     for slug in _default_agent_roster():
@@ -1426,17 +1440,34 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
                 instructions = extracted
                 break
 
-            # Metadata-only response. Look for a version number to
-            # follow up with /versions/{N}.
-            version, version_note = _find_version(body)
+            # Metadata-only response. Look for a version number, plus
+            # any embedded version object (Foundry sometimes inlines
+            # the full version under versions.latest).
+            version, version_note, embedded = _find_version(body)
             if not version:
-                # Surface a snippet of `versions` so we can see the shape.
-                versions_repr = repr(body.get("versions"))[:140]
+                versions_repr = repr(body.get("versions"))[:200]
                 debug.append(
                     f"GET {tmpl}: 200, no instructions ({version_note}); "
                     f"keys={keys}; versions={versions_repr}"
                 )
                 continue
+
+            # Try the embedded object first — saves a round-trip if
+            # Foundry already inlined the full instructions.
+            if embedded is not None:
+                em_extracted = _extract_instructions_from_result(embedded)
+                if em_extracted and em_extracted != "blueprint_reference":
+                    debug.append(
+                        f"GET {tmpl}: 200, {len(em_extracted)} chars "
+                        f"(inline {version_note})"
+                    )
+                    instructions = em_extracted
+                    break
+                em_keys = list(embedded.keys())[:14]
+                debug.append(
+                    f"GET {tmpl}: inline {version_note} no instructions; "
+                    f"em_keys={em_keys}"
+                )
 
             # Build the version-specific URL by inserting /versions/{N}
             # before the query string. e.g. /agents/triage?api-version
