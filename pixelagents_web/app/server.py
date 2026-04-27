@@ -1197,39 +1197,45 @@ _FOUNDRY_INSTRUCTIONS_TTL_SEC = 30.0
 
 def _extract_instructions_from_result(result: Any) -> str:
     """Probe a Foundry agents-API result shape for an instructions
-    string. Different SDK calls return different objects (a
-    PromptAgentDefinition, a Version wrapping one, an iterable of
-    versions, a plain dict). Walk through the plausible shapes
-    defensively rather than hard-coding one."""
+    string. Walks specific named fields rather than iterating a dict's
+    keys — earlier version had a bug where iterating a metadata dict
+    returned a key name (e.g. "blueprint_reference") as if it were the
+    instructions content."""
 
     if result is None:
         return ""
     if isinstance(result, str):
         return result
 
-    # Direct attribute on the top-level object.
-    instr = getattr(result, "instructions", None)
-    if isinstance(instr, str) and instr:
-        return instr
+    # Dict path — only look at named fields, never iterate keys.
     if isinstance(result, dict):
         instr = result.get("instructions")
         if isinstance(instr, str) and instr:
             return instr
+        for accessor in ("definition", "_definition", "properties"):
+            obj = result.get(accessor)
+            if obj is not None:
+                nested = _extract_instructions_from_result(obj)
+                if nested:
+                    return nested
+        return ""
 
-    # Nested under .definition (PromptAgentDefinition wrapped by a
-    # Version object — what create_version returns).
+    # Object path — attribute lookup.
+    instr = getattr(result, "instructions", None)
+    if isinstance(instr, str) and instr:
+        return instr
     for accessor in ("definition", "_definition", "properties"):
         obj = getattr(result, accessor, None)
-        if obj is None and isinstance(result, dict):
-            obj = result.get(accessor)
-        if obj is None:
-            continue
-        nested = _extract_instructions_from_result(obj)
-        if nested:
-            return nested
+        if obj is not None:
+            nested = _extract_instructions_from_result(obj)
+            if nested:
+                return nested
 
-    # Iterable result (list_versions / pageable). Walk newest-first.
-    if hasattr(result, "__iter__") and not isinstance(result, (bytes, bytearray)):
+    # Iterables (lists, ItemPaged) — but NOT dicts/strings/bytes.
+    if (
+        hasattr(result, "__iter__")
+        and not isinstance(result, (str, bytes, bytearray, dict))
+    ):
         try:
             items = list(result)
         except Exception:
@@ -1302,6 +1308,50 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
 
     import requests as _requests
 
+    def _do_get(url: str) -> tuple[int, Any, str | None]:
+        """GET helper. Returns (status, body, error_str). body is dict or text."""
+        try:
+            r = _requests.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+        except Exception as e:
+            return (0, None, f"{type(e).__name__}: {str(e)[:120]}")
+        try:
+            body = r.json()
+        except Exception:
+            body = r.text[:300] if r.text else ""
+        return (r.status_code, body, None)
+
+    # Field names to probe on a metadata response for the latest
+    # version number — covers the camelCase / snake_case / dotted
+    # variants we've seen across Azure AI Foundry API revisions.
+    VERSION_FIELDS = (
+        "latest_version_number", "latestVersionNumber",
+        "latest_version", "latestVersion",
+        "current_version_number", "currentVersionNumber",
+        "current_version", "currentVersion",
+        "version_number", "versionNumber",
+        "version",
+    )
+
+    def _find_version(body: dict) -> str | None:
+        for f in VERSION_FIELDS:
+            v = body.get(f)
+            if isinstance(v, (int, str)) and str(v):
+                return str(v)
+        # Some shapes nest under .properties or .latest
+        for nest_key in ("properties", "latest"):
+            sub = body.get(nest_key)
+            if isinstance(sub, dict):
+                v = _find_version(sub)
+                if v:
+                    return v
+            elif isinstance(sub, (int, str)) and str(sub) and nest_key == "latest":
+                return str(sub)
+        return None
+
     out: dict[str, dict[str, Any]] = {}
     for slug in _default_agent_roster():
         instructions = ""
@@ -1309,49 +1359,91 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
 
         for tmpl in url_templates:
             url = tmpl.format(slug=slug)
-            try:
-                r = _requests.get(
-                    url,
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=15,
-                )
-            except Exception as e:
-                debug.append(
-                    f"GET {tmpl}: {type(e).__name__}: {str(e)[:120]}"
-                )
+            status, body, err = _do_get(url)
+            if err is not None:
+                debug.append(f"GET {tmpl}: {err}")
                 continue
 
-            status = r.status_code
-            try:
-                body = r.json()
-            except Exception:
-                body = r.text[:300] if r.text else ""
-
-            if 200 <= status < 300 and isinstance(body, dict):
-                extracted = _extract_instructions_from_result(body)
-                if extracted:
-                    debug.append(
-                        f"GET {tmpl}: 200, {len(extracted)} chars"
-                    )
-                    instructions = extracted
-                    break
-                # 200 but no instructions — surface the top-level keys so
-                # we can see what to walk into.
-                keys = list(body.keys())[:10] if isinstance(body, dict) else []
-                debug.append(
-                    f"GET {tmpl}: 200, no instructions; keys={keys}"
+            if not (200 <= status < 300):
+                err_str = (
+                    json.dumps(body)[:200] if isinstance(body, dict)
+                    else str(body)[:200]
                 )
-            elif 200 <= status < 300:
+                debug.append(f"GET {tmpl}: {status} - {err_str}")
+                continue
+
+            if not isinstance(body, dict):
                 debug.append(
                     f"GET {tmpl}: 200 but body type {type(body).__name__}"
                 )
+                continue
+
+            keys = list(body.keys())[:14]
+
+            # First, try direct extraction — works if the response
+            # already includes the full instructions blob.
+            extracted = _extract_instructions_from_result(body)
+            # Defensive: 'blueprint_reference' is a Foundry agent TYPE
+            # marker that legacy code ended up returning by mistake;
+            # treat it as a non-result and keep probing.
+            if extracted and extracted != "blueprint_reference":
+                debug.append(
+                    f"GET {tmpl}: 200, {len(extracted)} chars (keys={keys})"
+                )
+                instructions = extracted
+                break
+
+            # Metadata-only response. Look for a version number to
+            # follow up with /versions/{N}.
+            version = _find_version(body)
+            if not version:
+                debug.append(
+                    f"GET {tmpl}: 200, no instructions and no version "
+                    f"field; keys={keys}"
+                )
+                continue
+
+            # Build the version-specific URL by inserting /versions/{N}
+            # before the query string. e.g. /agents/triage?api-version
+            # -> /agents/triage/versions/3?api-version
+            if "?" in url:
+                path, _, qs = url.partition("?")
+                version_url = f"{path}/versions/{version}?{qs}"
             else:
-                # Truncate the error body so debug stays readable.
-                if isinstance(body, dict):
-                    err_str = json.dumps(body)[:200]
-                else:
-                    err_str = str(body)[:200]
-                debug.append(f"GET {tmpl}: {status} - {err_str}")
+                version_url = f"{url}/versions/{version}"
+
+            v_status, v_body, v_err = _do_get(version_url)
+            if v_err is not None:
+                debug.append(
+                    f"GET {tmpl}: 200 (version={version}), "
+                    f"version GET err: {v_err}"
+                )
+                continue
+            if not (200 <= v_status < 300):
+                v_err_str = (
+                    json.dumps(v_body)[:200] if isinstance(v_body, dict)
+                    else str(v_body)[:200]
+                )
+                debug.append(
+                    f"GET {tmpl}: 200 (version={version}), version GET "
+                    f"{v_status} - {v_err_str}"
+                )
+                continue
+
+            v_extracted = _extract_instructions_from_result(v_body)
+            if v_extracted and v_extracted != "blueprint_reference":
+                debug.append(
+                    f"GET {tmpl} -> /versions/{version}: 200, "
+                    f"{len(v_extracted)} chars"
+                )
+                instructions = v_extracted
+                break
+            else:
+                v_keys = list(v_body.keys())[:14] if isinstance(v_body, dict) else []
+                debug.append(
+                    f"GET {tmpl} -> /versions/{version}: 200, no "
+                    f"instructions; keys={v_keys}"
+                )
 
         if not instructions:
             print(
