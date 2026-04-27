@@ -71,6 +71,22 @@
     }
     #${ROOT_ID} tbody tr.running { background: rgba(0,153,204,0.06); }
     #${ROOT_ID} .num { font-weight: 700; color: #0e2a47; }
+    #${ROOT_ID} .num a {
+      color: inherit;
+      text-decoration: none;
+      border-bottom: 1px dotted #cbd5e1;
+    }
+    #${ROOT_ID} .num a:hover {
+      color: #0099cc;
+      border-bottom-color: #0099cc;
+    }
+    #${ROOT_ID} .num a .ext {
+      font-size: 11px;
+      margin-left: 4px;
+      color: #6b7280;
+      vertical-align: top;
+    }
+    #${ROOT_ID} .num a:hover .ext { color: #0099cc; }
     #${ROOT_ID} .title { max-width: 420px; }
     #${ROOT_ID} .cost { text-align: right; font-variant-numeric: tabular-nums; }
 
@@ -265,6 +281,14 @@
     return fmtElapsed(sec);
   }
 
+  function sentinelPortalUrl(inc) {
+    // Sentinel's incident blade is reached via the "asset" deep-link format.
+    // The arm_id field already includes the full /subscriptions/... path so
+    // this renders correctly even if the demo moves between subscriptions.
+    if (!inc || !inc.arm_id) return null;
+    return `https://portal.azure.com/#asset/Microsoft_Azure_Security_Insights/Incident${inc.arm_id}`;
+  }
+
   function statusIcon(status) {
     if (status === 'completed') return '<span style="color:#166534;font-weight:700;">✓</span>';
     if (status === 'failed')    return '<span style="color:#991b1b;font-weight:700;">✗</span>';
@@ -333,8 +357,17 @@
         const summary = runsSummary[String(num)] || null;
         const isExpanded = expandedIncidents.has(String(num));
 
+        const portalUrl = sentinelPortalUrl(inc);
         body += `<tr class="${running ? 'running' : ''}">`;
-        body += `<td class="num">#${num}</td>`;
+        body += `<td class="num">`;
+        if (portalUrl) {
+          body += `<a href="${escapeHtml(portalUrl)}" target="_blank" rel="noopener" `
+                + `title="Open incident #${num} in Microsoft Sentinel">`
+                + `#${num}<span class="ext">↗</span></a>`;
+        } else {
+          body += `#${num}`;
+        }
+        body += `</td>`;
         body += `<td class="title">${escapeHtml(inc.title || '')}</td>`;
         body += `<td><span class="sev ${severityClass(inc.severity)}">${escapeHtml(inc.severity || '?')}</span></td>`;
         body += `<td><span class="status ${severityClass(inc.status)}">${escapeHtml(inc.status || '?')}</span></td>`;
