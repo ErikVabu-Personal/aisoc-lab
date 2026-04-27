@@ -665,6 +665,7 @@ def config_view(request: Request) -> Response:
         '  Live agent telemetry. Toggle the JSON switch on each card to see the raw'
         '  state PixelAgents Web has on file.'
         '</p>'
+        '<div id="aisoc-auto-pickup-root"></div>'
         '<div id="aisoc-config-root"></div>'
     )
     return HTMLResponse(_render_shell(
@@ -727,6 +728,182 @@ def _end_run(rec: dict[str, Any], status: str, *, error: str | None = None,
         rec["error"] = error
     if summary is not None:
         rec["summary"] = summary
+
+
+# ── Auto-pickup (continuous Sentinel monitoring) ─────────────────────
+# When enabled, a background task polls Sentinel every AUTO_PICKUP_INTERVAL
+# seconds. The first "New" incident we haven't seen before triggers the
+# orchestration pipeline. If the run fails, we DO NOT retry — the incident
+# is marked seen, and a human analyst takes over from the dashboard.
+# State is in-memory; container restart resets the seen set (next poll
+# will re-pick the latest unhandled New incident, which is fine — the
+# orchestrator is idempotent enough for the demo).
+AUTO_PICKUP: dict[str, Any] = {
+    "enabled": False,
+    "seen_incidents": set(),  # set[int] — incident numbers already dispatched
+    "last_check_ts": None,    # unix seconds, last poll completion
+    "last_event": None,       # human-readable status string
+    "last_event_ts": None,    # unix seconds
+}
+AUTO_PICKUP_INTERVAL_SEC = float(os.getenv("AUTO_PICKUP_INTERVAL_SEC", "15"))
+
+
+def _auto_pickup_set_event(msg: str) -> None:
+    AUTO_PICKUP["last_event"] = msg
+    AUTO_PICKUP["last_event_ts"] = time.time()
+    print(f"[auto-pickup] {msg}", flush=True)
+
+
+async def _auto_pickup_tick() -> None:
+    """One iteration of the background loop. Skips if disabled, if a
+    run is already in flight, or if no fresh New incident exists."""
+
+    import asyncio
+
+    if not AUTO_PICKUP.get("enabled"):
+        return
+
+    # Don't start a new run while one is already executing — prevents
+    # piling up overlapping pipelines if a run takes longer than the
+    # poll interval.
+    if CURRENT_INCIDENT.get("incident_number") is not None:
+        return
+
+    try:
+        incidents = await asyncio.to_thread(_fetch_sentinel_incidents)
+    except Exception as e:
+        _auto_pickup_set_event(f"Sentinel poll failed: {e!r}")
+        AUTO_PICKUP["last_check_ts"] = time.time()
+        return
+
+    AUTO_PICKUP["last_check_ts"] = time.time()
+
+    # Find the oldest unseen "New" incident. Sentinel returns newest-first;
+    # iterate reversed so we handle them in arrival order.
+    seen: set = AUTO_PICKUP["seen_incidents"]
+    candidate: dict[str, Any] | None = None
+    for inc in reversed(incidents):
+        num = inc.get("number")
+        if not isinstance(num, int):
+            continue
+        status = (inc.get("status") or "").strip().lower()
+        if status != "new":
+            continue
+        if num in seen:
+            continue
+        candidate = inc
+        break
+
+    if candidate is None:
+        return
+
+    num = int(candidate["number"])
+    title = candidate.get("title") or f"Incident #{num}"
+
+    # Mark seen BEFORE dispatch so a failure doesn't retry on the next
+    # tick. The toggle is "if it fails, the human takes over."
+    seen.add(num)
+
+    _auto_pickup_set_event(f"Picked up new incident #{num}: {title}")
+    try:
+        await _orchestrate_one(num, mode="full", writeback=True)
+        _auto_pickup_set_event(f"Completed #{num}")
+    except OrchestratorError as e:
+        body_repr = ""
+        try:
+            body_repr = json.dumps(e.body)[:300] if e.body is not None else ""
+        except Exception:
+            body_repr = str(e.body)[:300]
+        _auto_pickup_set_event(
+            f"Failed #{num} (no retry — analyst takes over): "
+            f"status={e.status} {body_repr}"
+        )
+    except Exception as e:
+        _auto_pickup_set_event(f"Failed #{num} (no retry — analyst takes over): {e!r}")
+
+
+async def _auto_pickup_loop() -> None:
+    """Long-running background task. Started once at app startup; runs
+    forever, regardless of toggle state — _auto_pickup_tick() is the
+    one that respects the enabled flag."""
+
+    import asyncio
+
+    while True:
+        try:
+            await _auto_pickup_tick()
+        except Exception as e:
+            print(f"[auto-pickup] loop error: {e!r}", flush=True)
+        await asyncio.sleep(AUTO_PICKUP_INTERVAL_SEC)
+
+
+@app.on_event("startup")
+async def _start_auto_pickup() -> None:
+    import asyncio
+
+    asyncio.create_task(_auto_pickup_loop())
+
+
+def _auto_pickup_public_state() -> dict[str, Any]:
+    """Snapshot suitable for the JSON API (sets aren't JSON-serializable)."""
+    return {
+        "enabled": bool(AUTO_PICKUP.get("enabled")),
+        "interval_sec": AUTO_PICKUP_INTERVAL_SEC,
+        "last_check_ts": AUTO_PICKUP.get("last_check_ts"),
+        "last_event": AUTO_PICKUP.get("last_event"),
+        "last_event_ts": AUTO_PICKUP.get("last_event_ts"),
+        "seen_count": len(AUTO_PICKUP.get("seen_incidents") or ()),
+    }
+
+
+@app.get("/api/auto_pickup")
+def api_auto_pickup_get(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
+    return _auto_pickup_public_state()
+
+
+@app.post("/api/auto_pickup")
+async def api_auto_pickup_set(
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(req, x_pixelagents_token)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    new_val = bool(body.get("enabled"))
+    prev = bool(AUTO_PICKUP.get("enabled"))
+    AUTO_PICKUP["enabled"] = new_val
+
+    # When flipping ON, prime the seen set with the currently-listed
+    # incidents so we don't retroactively pick up stale "New" entries
+    # that the user has been ignoring all morning. From this moment on,
+    # only incidents that appear *after* the toggle was flipped will
+    # trigger the workflow.
+    if new_val and not prev:
+        import asyncio
+
+        try:
+            incidents = await asyncio.to_thread(_fetch_sentinel_incidents)
+            primed = 0
+            for inc in incidents:
+                num = inc.get("number")
+                if isinstance(num, int):
+                    AUTO_PICKUP["seen_incidents"].add(num)
+                    primed += 1
+            _auto_pickup_set_event(f"Enabled — primed {primed} existing incident(s) as seen")
+        except Exception as e:
+            _auto_pickup_set_event(f"Enabled — could not prime seen set: {e!r}")
+    elif (not new_val) and prev:
+        _auto_pickup_set_event("Disabled by user")
+
+    return _auto_pickup_public_state()
 
 
 @app.get("/api/current_incident")
@@ -1114,6 +1291,61 @@ def _arm_token() -> str:
     return DefaultAzureCredential().get_token("https://management.azure.com/.default").token
 
 
+def _fetch_sentinel_incidents() -> list[dict[str, Any]]:
+    """Fetch + parse the Sentinel incidents list. Used by both the
+    public list_sentinel_incidents endpoint (with caching wrapper) and
+    the auto-pickup background loop (no caching). Raises RuntimeError
+    on misconfiguration or ARM failure."""
+
+    sub = os.getenv("AZURE_SUBSCRIPTION_ID", "")
+    rg = os.getenv("AZURE_RESOURCE_GROUP", "")
+    ws = os.getenv("SENTINEL_WORKSPACE_NAME", "")
+    missing = [n for n, v in (
+        ("AZURE_SUBSCRIPTION_ID", sub),
+        ("AZURE_RESOURCE_GROUP", rg),
+        ("SENTINEL_WORKSPACE_NAME", ws),
+    ) if not v]
+    if missing:
+        raise RuntimeError(f"Missing env vars for Sentinel incidents query: {missing}")
+
+    import requests as _requests
+
+    token = _arm_token()
+    url = (
+        f"https://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}"
+        f"/providers/Microsoft.OperationalInsights/workspaces/{ws}"
+        f"/providers/Microsoft.SecurityInsights/incidents"
+        f"?api-version=2024-03-01&$top=50&$orderby=properties/lastModifiedTimeUtc desc"
+    )
+    r = _requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    if r.status_code >= 400:
+        raise RuntimeError(f"ARM returned {r.status_code}: {r.text[:1000]}")
+
+    data = r.json()
+    incidents: list[dict[str, Any]] = []
+    for item in (data.get("value") or []):
+        props = item.get("properties") or {}
+        owner = props.get("owner") or {}
+        owner_display = (
+            (owner.get("assignedTo") if isinstance(owner, dict) else None)
+            or (owner.get("email") if isinstance(owner, dict) else None)
+            or (owner.get("userPrincipalName") if isinstance(owner, dict) else None)
+            or ""
+        )
+        incidents.append({
+            "id": item.get("name"),
+            "arm_id": item.get("id"),
+            "number": props.get("incidentNumber"),
+            "title": props.get("title"),
+            "severity": props.get("severity"),
+            "status": props.get("status"),
+            "owner": owner_display,
+            "created": props.get("createdTimeUtc"),
+            "last_modified": props.get("lastModifiedTimeUtc"),
+        })
+    return incidents
+
+
 @app.get("/api/sentinel/incidents")
 def list_sentinel_incidents(
     request: Request,
@@ -1137,149 +1369,57 @@ def list_sentinel_incidents(
     if cached is not None and (now - float(_INCIDENTS_CACHE.get("ts") or 0)) < _INCIDENTS_CACHE_TTL_SEC:
         return cached
 
-    sub = os.getenv("AZURE_SUBSCRIPTION_ID", "")
-    rg = os.getenv("AZURE_RESOURCE_GROUP", "")
-    ws = os.getenv("SENTINEL_WORKSPACE_NAME", "")
-    missing = [n for n, v in (("AZURE_SUBSCRIPTION_ID", sub), ("AZURE_RESOURCE_GROUP", rg), ("SENTINEL_WORKSPACE_NAME", ws)) if not v]
-    if missing:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Missing env vars for Sentinel incidents query: {missing}",
-        )
-
     try:
-        token = _arm_token()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"ARM auth failed: {e!r}") from e
+        incidents = _fetch_sentinel_incidents()
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
 
-    import requests as _requests
-
-    url = (
-        f"https://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}"
-        f"/providers/Microsoft.OperationalInsights/workspaces/{ws}"
-        f"/providers/Microsoft.SecurityInsights/incidents"
-        f"?api-version=2024-03-01&$top=50&$orderby=properties/lastModifiedTimeUtc desc"
-    )
-
-    r = _requests.get(
-        url,
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=30,
-    )
-    if r.status_code >= 400:
-        detail: Any
-        try:
-            detail = r.json()
-        except Exception:
-            detail = r.text[:4000]
-        raise HTTPException(
-            status_code=502,
-            detail={"arm_status": r.status_code, "body": detail},
-        )
-
-    try:
-        data = r.json()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"ARM returned non-JSON body: {e!r}") from e
-
-    incidents: list[dict[str, Any]] = []
-    for item in (data.get("value") or []):
-        props = item.get("properties") or {}
-        owner = props.get("owner") or {}
-        # Sentinel's owner object can contain assignedTo / email /
-        # userPrincipalName / objectId — pick the first non-empty
-        # display-friendly one. Agents only set assignedTo.
-        owner_display = (
-            (owner.get("assignedTo") if isinstance(owner, dict) else None)
-            or (owner.get("email") if isinstance(owner, dict) else None)
-            or (owner.get("userPrincipalName") if isinstance(owner, dict) else None)
-            or ""
-        )
-        incidents.append(
-            {
-                "id": item.get("name"),  # incident GUID
-                "arm_id": item.get("id"),
-                "number": props.get("incidentNumber"),
-                "title": props.get("title"),
-                "severity": props.get("severity"),
-                "status": props.get("status"),
-                "owner": owner_display,
-                "created": props.get("createdTimeUtc"),
-                "last_modified": props.get("lastModifiedTimeUtc"),
-            }
-        )
-
-    payload = {
-        "incidents": incidents,
-        "count": len(incidents),
-        "ts": now,
-    }
+    payload = {"incidents": incidents, "count": len(incidents), "ts": now}
     _INCIDENTS_CACHE["payload"] = payload
     _INCIDENTS_CACHE["ts"] = now
     return payload
 
 
-@app.post("/api/sentinel/incidents/{incident_number}/orchestrate")
-async def orchestrate_incident(
-    incident_number: int,
-    req: Request,
-    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
-) -> dict[str, Any]:
-    """Kick off the AISOC Orchestrator pipeline for a specific incident.
+class OrchestratorError(RuntimeError):
+    """Raised by _orchestrate_one() when the upstream pipeline fails.
 
-    Proxies to the Orchestrator Function App (see terraform/2-deploy-aisoc/
-    orchestrator.tf). The orchestrator itself runs triage → investigator →
-    reporter in sequence; this is a blocking call that returns the
-    orchestrator's JSON result once the pipeline completes.
-
-    Body (all optional):
-      {
-        "mode": "full" | "triage_only"  (default: "full")
-        "writeback": bool               (default: true — reporter adds Sentinel comment)
-      }
+    Carries the orchestrator's HTTP status + parsed error body when
+    available so the public API handler can re-raise as HTTPException
+    with the same shape, and the auto-pickup loop can log it.
     """
 
-    _require_auth(req, x_pixelagents_token)
+    def __init__(self, message: str, *, status: int | None = None, body: Any = None):
+        super().__init__(message)
+        self.status = status
+        self.body = body
+
+
+async def _orchestrate_one(incident_number: int, mode: str, writeback: bool) -> dict[str, Any]:
+    """Run the orchestrator for a specific incident.
+
+    Sets CURRENT_INCIDENT for the duration of the call, appends a run
+    record to WORKFLOW_RUNS, dispatches to the Orchestrator Function
+    App, and returns its JSON response. Raises OrchestratorError on
+    misconfiguration or upstream failure. Used by both the public
+    /orchestrate endpoint and the auto-pickup background loop.
+    """
 
     orch_base = os.getenv("ORCHESTRATOR_URL", "")
     orch_key = os.getenv("ORCHESTRATOR_FUNCTION_KEY", "")
     if not orch_base or not orch_key:
-        raise HTTPException(
-            status_code=500,
-            detail="Orchestrator not configured (ORCHESTRATOR_URL / ORCHESTRATOR_FUNCTION_KEY missing).",
+        raise OrchestratorError(
+            "Orchestrator not configured (ORCHESTRATOR_URL / ORCHESTRATOR_FUNCTION_KEY missing).",
         )
-
-    try:
-        body = await req.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-
-    mode = body.get("mode") or "full"
-    writeback = body["writeback"] if "writeback" in body else True
 
     import asyncio
     import requests as _requests
 
-    # Mark this incident as the live one for the duration of the
-    # orchestrator call. The Live Agent View polls /api/current_incident
-    # to render a "working on incident #N" banner.
     CURRENT_INCIDENT["incident_number"] = incident_number
     CURRENT_INCIDENT["started_at"] = time.time()
-
-    # Append a 'running' record to the incident's run history. We update
-    # this same record on success / failure so the dashboard can render
-    # an inline list of past runs.
     run_rec = _start_run(incident_number, mode)
 
     url = f"{orch_base.rstrip('/')}/incident/pipeline?code={orch_key}"
     try:
-        # The orchestrator pipeline runs 1-3 minutes for tool-heavy
-        # incidents. Use asyncio.to_thread so the blocking `requests.post`
-        # runs on a worker thread and the FastAPI event loop stays
-        # responsive — without this, every other request to PixelAgents
-        # Web (poll, navigate, chat) queues behind this one call.
         r = await asyncio.to_thread(
             _requests.post,
             url,
@@ -1294,24 +1434,18 @@ async def orchestrate_incident(
         CURRENT_INCIDENT["incident_number"] = None
         CURRENT_INCIDENT["started_at"] = None
         _end_run(run_rec, "failed", error=f"Orchestrator call failed: {e!r}")
-        raise HTTPException(status_code=502, detail=f"Orchestrator call failed: {e!r}") from e
+        raise OrchestratorError(f"Orchestrator call failed: {e!r}") from e
 
     if r.status_code >= 400:
         CURRENT_INCIDENT["incident_number"] = None
         CURRENT_INCIDENT["started_at"] = None
-        detail: Any
         try:
             detail = r.json()
         except Exception:
             detail = r.text[:4000]
-        # Stash the orchestrator's error body verbatim — the dashboard
-        # surfaces this when the user clicks the run record.
         err_text = json.dumps({"orchestrator_status": r.status_code, "body": detail})[:8000]
         _end_run(run_rec, "failed", error=err_text)
-        raise HTTPException(
-            status_code=502,
-            detail={"orchestrator_status": r.status_code, "body": detail},
-        )
+        raise OrchestratorError(err_text, status=r.status_code, body=detail)
 
     CURRENT_INCIDENT["incident_number"] = None
     CURRENT_INCIDENT["started_at"] = None
@@ -1320,9 +1454,6 @@ async def orchestrate_incident(
     except Exception:
         result = {"raw": r.text[:4000]}
 
-    # Pull a short summary out of the orchestrator's response so the
-    # dashboard's run-history list can show something useful at a glance
-    # before the user clicks for details.
     summary = None
     try:
         if isinstance(result, dict):
@@ -1335,6 +1466,38 @@ async def orchestrate_incident(
         pass
     _end_run(run_rec, "completed", summary=summary)
     return result
+
+
+@app.post("/api/sentinel/incidents/{incident_number}/orchestrate")
+async def orchestrate_incident(
+    incident_number: int,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Public orchestrate endpoint — auth + body parsing, delegates the
+    actual run to _orchestrate_one()."""
+
+    _require_auth(req, x_pixelagents_token)
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    mode = body.get("mode") or "full"
+    writeback = body["writeback"] if "writeback" in body else True
+
+    try:
+        return await _orchestrate_one(incident_number, mode, bool(writeback))
+    except OrchestratorError as e:
+        if e.status is not None:
+            raise HTTPException(
+                status_code=502,
+                detail={"orchestrator_status": e.status, "body": e.body},
+            ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # ─── Cost tracking ────────────────────────────────────────────────────────
@@ -2043,6 +2206,7 @@ def index(request: Request) -> Response:
         f'<script src="/static/live_incident_banner.js" defer></script>'
         f'<script src="/static/default_zoom.js" defer></script>'
         f'<script src="/static/bottom_bar_layout.js" defer></script>'
+        f'<script src="/static/auto_pickup_badge.js" defer></script>'
     )
 
     if "</body>" in html:
