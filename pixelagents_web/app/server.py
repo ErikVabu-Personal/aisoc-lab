@@ -1613,6 +1613,228 @@ def api_foundry_agent_instructions(
     return payload
 
 
+def _foundry_post_new_version(
+    slug: str,
+    new_instructions: str,
+) -> dict[str, Any]:
+    """Create a new version of `slug`'s Foundry agent with the given
+    instructions, preserving model + tools from the current version.
+
+    Steps:
+      1. GET /agents/{slug}?api-version=... to find the latest version
+         (Foundry inlines the full version body under versions.latest
+         in this project's API surface).
+      2. Use that body as a template; swap in the new instructions.
+      3. POST /agents/{slug}/versions?api-version=... to create the
+         new version (which becomes the implicit "latest" for future
+         agent_reference invocations).
+
+    Returns a dict with at least {"ok": bool, "_debug": [...]} and on
+    success {"new_version": <str>}. On failure raises HTTPException
+    (so FastAPI surfaces a sensible status code to the UI).
+    """
+
+    project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
+    if not project_endpoint:
+        raise HTTPException(status_code=500, detail="AZURE_AI_FOUNDRY_PROJECT_ENDPOINT not set")
+
+    try:
+        from azure.identity import DefaultAzureCredential
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"azure-identity not available: {e!r}")
+
+    try:
+        token = DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"could not get bearer token: {e!r}")
+
+    base = project_endpoint.rstrip("/")
+    api_ver = "2025-05-15-preview"
+    debug: list[str] = []
+
+    import requests as _requests
+
+    # 1. Fetch metadata + inline latest version body.
+    meta_url = f"{base}/agents/{slug}?api-version={api_ver}"
+    try:
+        r = _requests.get(meta_url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"agent metadata GET raised: {e!r}")
+    debug.append(f"GET {meta_url}: {r.status_code}")
+    if r.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"metadata fetch returned {r.status_code}: {r.text[:1000]}",
+        )
+
+    try:
+        meta = r.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"metadata not JSON: {e!r}")
+
+    versions_obj = meta.get("versions") if isinstance(meta, dict) else None
+    latest = versions_obj.get("latest") if isinstance(versions_obj, dict) else None
+    if not isinstance(latest, dict):
+        raise HTTPException(
+            status_code=502,
+            detail=f"agent metadata has no versions.latest dict; keys={list(meta.keys()) if isinstance(meta, dict) else None}",
+        )
+
+    # If `latest` is summary-only, fetch the full version body
+    # explicitly. Heuristic: if neither instructions nor definition
+    # is present, do the round trip.
+    needs_full_fetch = (
+        "instructions" not in latest
+        and "definition" not in latest
+        and "model" not in latest
+    )
+    if needs_full_fetch:
+        v_num = latest.get("version") or (
+            latest.get("id", "").split(":")[-1] if isinstance(latest.get("id"), str) else None
+        )
+        if not v_num:
+            raise HTTPException(
+                status_code=502,
+                detail=f"could not determine version number from versions.latest: {list(latest.keys())}",
+            )
+        v_url = f"{base}/agents/{slug}/versions/{v_num}?api-version={api_ver}"
+        debug.append(f"versions.latest summary-only; fetching {v_url}")
+        try:
+            r2 = _requests.get(v_url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"version GET raised: {e!r}")
+        debug.append(f"GET {v_url}: {r2.status_code}")
+        if r2.status_code >= 400:
+            raise HTTPException(
+                status_code=502,
+                detail=f"version fetch returned {r2.status_code}: {r2.text[:1000]}",
+            )
+        try:
+            full_version = r2.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"version body not JSON: {e!r}")
+    else:
+        full_version = latest
+
+    # 2. Build the new version body. Prefer the {definition: {...}}
+    # nesting if it's there (matches the SDK's PromptAgentDefinition
+    # shape); otherwise spread top-level fields. Either way, swap in
+    # new instructions and drop fields that the API generates server-
+    # side (id, version, created_at, etc.).
+    READ_ONLY_FIELDS = {
+        "id", "object", "version", "created_at", "createdAt",
+        "updated_at", "updatedAt", "name", "agent_endpoint",
+        "instance_identity", "metadata",
+    }
+
+    if isinstance(full_version.get("definition"), dict):
+        new_definition = {
+            k: v for k, v in full_version["definition"].items()
+            if k not in READ_ONLY_FIELDS
+        }
+        new_definition["instructions"] = new_instructions
+        new_body: dict[str, Any] = {"definition": new_definition}
+        if "description" in full_version:
+            new_body["description"] = full_version["description"]
+    else:
+        # Flat shape — copy top-level fields except read-only ones,
+        # swap in the new instructions.
+        new_body = {
+            k: v for k, v in full_version.items()
+            if k not in READ_ONLY_FIELDS
+        }
+        new_body["instructions"] = new_instructions
+
+    # 3. POST the new version.
+    create_url = f"{base}/agents/{slug}/versions?api-version={api_ver}"
+    try:
+        r3 = _requests.post(
+            create_url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=new_body,
+            timeout=30,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"create_version raised: {e!r}")
+    debug.append(f"POST {create_url}: {r3.status_code}")
+    if r3.status_code >= 400:
+        # Most likely 403 (RBAC) or 400 (body shape). Surface the
+        # response body verbatim — the UI shows it directly so we can
+        # iterate without log access.
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": f"create_version returned {r3.status_code}",
+                "body": r3.text[:2000],
+                "_debug": debug,
+            },
+        )
+
+    try:
+        created = r3.json()
+    except Exception:
+        created = {}
+
+    # Bust the read cache so the next GET reflects the new content.
+    _FOUNDRY_INSTRUCTIONS_CACHE["payload"] = None
+    _FOUNDRY_INSTRUCTIONS_CACHE["ts"] = 0.0
+
+    return {
+        "ok": True,
+        "agent": slug,
+        "new_version": created.get("version") or created.get("id"),
+        "_debug": debug,
+    }
+
+
+@app.post("/api/foundry/agents/{agent_id}/instructions")
+async def api_foundry_agent_instructions_set(
+    agent_id: str,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Update a single Foundry agent's instructions. Body shape:
+
+        {"instructions": "<full new instructions blob>"}
+
+    The frontend sends the FULL instructions string (common preamble
+    + role-specific tail) so the server doesn't have to do any
+    splitting — it just creates a new version on Foundry with this
+    text, preserving model + tools from the current version.
+    """
+
+    _require_auth(req, x_pixelagents_token)
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    new_instructions = body.get("instructions")
+    if not isinstance(new_instructions, str) or not new_instructions.strip():
+        raise HTTPException(status_code=400, detail="Missing 'instructions' (non-empty string)")
+
+    slug = _slug_agent(agent_id)
+    if not slug or slug == "unknown":
+        raise HTTPException(status_code=400, detail="Invalid agent id")
+
+    # Belt-and-braces: only accept slugs that are part of the
+    # configured roster, so a mistyped agent_id can't accidentally
+    # create a brand-new agent on Foundry.
+    if slug not in set(_default_agent_roster()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"agent {slug!r} is not in the configured roster",
+        )
+
+    return _foundry_post_new_version(slug, new_instructions)
+
+
 def _ai_projects_token() -> str:
     """Acquire a bearer token for the Foundry Responses API."""
 

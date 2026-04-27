@@ -117,6 +117,60 @@
       word-break: break-word;
       max-height: 480px;
     }
+    /* Editable variant of the instructions panel. Shares the wrapped-
+       prose look of pre.instr but allows resize and accepts input. */
+    #${ROOT_ID} .card textarea.instr-edit {
+      width: 100%;
+      box-sizing: border-box;
+      margin: 12px 0 0;
+      padding: 12px;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #1f2937;
+      resize: vertical;
+      min-height: 200px;
+      max-height: 600px;
+    }
+    #${ROOT_ID} .card textarea.instr-edit:focus {
+      outline: none;
+      border-color: #0099cc;
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+    }
+    #${ROOT_ID} .card .instr-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    #${ROOT_ID} .card .instr-actions button.save {
+      background: #0099cc;
+      color: #ffffff;
+      border: 1px solid #0099cc;
+    }
+    #${ROOT_ID} .card .instr-actions button.save:hover:not(:disabled) {
+      background: #33b0dd;
+    }
+    #${ROOT_ID} .card .instr-actions button.save:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    #${ROOT_ID} .card .instr-status {
+      font-size: 12px;
+      flex: 1;
+    }
+    #${ROOT_ID} .card .instr-status.saving { color: #6b7280; font-style: italic; }
+    #${ROOT_ID} .card .instr-status.ok     { color: #065f46; }
+    #${ROOT_ID} .card .instr-status.error  {
+      color: #991b1b;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
 
     #${ROOT_ID} .empty,
     #${ROOT_ID} .err {
@@ -142,6 +196,16 @@
   const expanded = new Set();
   // Track which agent cards have role-specific instructions expanded.
   const expandedInstructions = new Set();
+  // Track which agent cards are in INSTRUCTION-EDIT mode (mutually
+  // exclusive with the read-only expanded state — entering edit mode
+  // implies expanded).
+  const editingInstructions = new Set();
+  // {agent_name: draft_text} — preserved across renders so a user's
+  // typing doesn't get clobbered by the 60s background re-fetch.
+  const editDrafts = {};
+  // {agent_name: {state: 'saving'|'ok'|'error', message: str}} — most
+  // recent save outcome, surfaced in the panel.
+  const editStatus = {};
   // {slug: instructions_text} populated by fetchInstructions(); used by
   // both renderAgent (per-agent expander) and the Generic card IIFE.
   let agentInstructions = {};
@@ -217,9 +281,13 @@
     html += '</dl>';
 
     const showInstr = expandedInstructions.has(name);
+    const editing = editingInstructions.has(name);
     const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const instr = agentInstructions[slug];
     const hasInstr = typeof instr === 'string' && instr.length > 0;
+    // (`status` is already in scope above as the agent's lifecycle
+    // state from /api/agents/state — use a distinct name here.)
+    const editState = editStatus[name];
 
     html += '<div class="toggle">';
     if (hasInstr || agentInstructions.__loaded) {
@@ -228,11 +296,44 @@
         : 'No instructions';
       const disabled = hasInstr ? '' : 'disabled';
       html += `<button data-instr="${escapeHtml(name)}" ${disabled}>${label}</button>`;
+      // Edit button only shows when the panel is expanded AND we have
+      // content AND we're not already editing.
+      if (showInstr && hasInstr && !editing) {
+        html += `<button data-instr-edit="${escapeHtml(name)}">Edit</button>`;
+      }
     }
     html += `<button data-agent="${escapeHtml(name)}">${showRaw ? 'Hide raw JSON' : 'Show raw JSON'}</button>`;
     html += '</div>';
-    if (showInstr && hasInstr) {
+
+    if (showInstr && editing) {
+      // Editor — pre-fill the textarea with the current draft (which
+      // defaults to the role-tail content the user is editing).
+      const draft = editDrafts[name] != null ? editDrafts[name] : (instr || '');
+      const saving = editState && editState.state === 'saving';
+      const statusCls = editState ? editState.state : '';
+      const statusMsg = editState ? editState.message : '';
+      html += `<textarea class="instr-edit" data-instr-textarea="${escapeHtml(name)}" `
+            + `${saving ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>`;
+      html += '<div class="instr-actions">';
+      html += `<button class="save" data-instr-save="${escapeHtml(name)}" `
+            + `${saving ? 'disabled' : ''}>${saving ? 'Saving…' : 'Save'}</button>`;
+      html += `<button data-instr-cancel="${escapeHtml(name)}" `
+            + `${saving ? 'disabled' : ''}>Cancel</button>`;
+      if (statusMsg) {
+        html += `<span class="instr-status ${escapeHtml(statusCls)}">${escapeHtml(statusMsg)}</span>`;
+      } else {
+        html += `<span class="instr-status" style="color:#6b7280">`
+              + `Editing the role-specific tail (the shared preamble is preserved)</span>`;
+      }
+      html += '</div>';
+    } else if (showInstr && hasInstr) {
       html += `<pre class="instr">${escapeHtml(instr)}</pre>`;
+      // Surface the most recent save outcome below the read-only view
+      // (e.g. "Saved version 2" stays visible after the editor closes).
+      if (editState && editState.state === 'ok') {
+        html += `<div class="instr-status ok" style="margin-top:8px;font-size:12px;">`
+              + `${escapeHtml(editState.message)}</div>`;
+      }
     }
     if (showRaw) {
       html += `<pre>${escapeHtml(JSON.stringify(a, null, 2))}</pre>`;
@@ -262,11 +363,129 @@
     root.querySelectorAll('.card .toggle button[data-instr]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const n = btn.dataset.instr;
-        if (expandedInstructions.has(n)) expandedInstructions.delete(n);
-        else expandedInstructions.add(n);
+        if (expandedInstructions.has(n)) {
+          expandedInstructions.delete(n);
+          // Closing the panel also exits edit mode and forgets the
+          // draft — reasonable demo-grade behaviour.
+          editingInstructions.delete(n);
+          delete editDrafts[n];
+        } else {
+          expandedInstructions.add(n);
+        }
         render(window.__AISOC_AGENTS_LAST || []);
       });
     });
+    root.querySelectorAll('.card .toggle button[data-instr-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const n = btn.dataset.instrEdit;
+        editingInstructions.add(n);
+        // Seed the draft with the current role-tail content.
+        const slug = String(n).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        if (editDrafts[n] == null) {
+          editDrafts[n] = agentInstructions[slug] || '';
+        }
+        // Clear any previous status when entering a fresh edit session.
+        delete editStatus[n];
+        render(window.__AISOC_AGENTS_LAST || []);
+      });
+    });
+    root.querySelectorAll('[data-instr-textarea]').forEach((ta) => {
+      ta.addEventListener('input', () => {
+        editDrafts[ta.getAttribute('data-instr-textarea')] = ta.value;
+      });
+    });
+    root.querySelectorAll('[data-instr-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const n = btn.getAttribute('data-instr-cancel');
+        editingInstructions.delete(n);
+        delete editDrafts[n];
+        delete editStatus[n];
+        render(window.__AISOC_AGENTS_LAST || []);
+      });
+    });
+    root.querySelectorAll('[data-instr-save]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        onInstructionsSave(btn.getAttribute('data-instr-save'));
+      });
+    });
+  }
+
+  // ── Save handler ───────────────────────────────────────────────────
+  // Concatenates the shared common preamble with the user's edited
+  // role-tail, then POSTs the FULL instructions blob to Foundry. The
+  // server doesn't have to do any splitting — it just persists what
+  // we send (preserving the agent's existing model + tools wiring).
+  async function onInstructionsSave(name) {
+    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const draft = editDrafts[name] != null ? editDrafts[name] : '';
+    if (!draft.trim()) {
+      editStatus[name] = { state: 'error', message: 'Cannot save empty instructions' };
+      render(window.__AISOC_AGENTS_LAST || []);
+      return;
+    }
+    // Reconstruct the full instructions: common preamble (if any) +
+    // blank-line separator + role tail. Matches the format the
+    // Phase-2 deploy script writes.
+    const fullInstructions = giCommon
+      ? `${giCommon}\n\n${draft}`
+      : draft;
+
+    editStatus[name] = { state: 'saving', message: 'Saving to Foundry…' };
+    render(window.__AISOC_AGENTS_LAST || []);
+
+    try {
+      const r = await fetch(
+        `/api/foundry/agents/${encodeURIComponent(slug)}/instructions`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ instructions: fullInstructions }),
+        },
+      );
+      const respText = await r.text();
+      let data;
+      try { data = respText ? JSON.parse(respText) : {}; } catch (_) { data = { raw: respText }; }
+
+      if (!r.ok) {
+        // Server packs structured errors into data.detail. Pull a
+        // readable message out of it.
+        let msg = `HTTP ${r.status}`;
+        const detail = data && data.detail;
+        if (typeof detail === 'string') {
+          msg = `${msg}: ${detail}`;
+        } else if (detail && typeof detail === 'object') {
+          msg = `${msg}: ${detail.error || ''}\n${detail.body || ''}`.trim();
+        } else if (data && data.raw) {
+          msg = `${msg}: ${data.raw.slice(0, 500)}`;
+        }
+        editStatus[name] = { state: 'error', message: msg };
+        render(window.__AISOC_AGENTS_LAST || []);
+        return;
+      }
+
+      const newVer = data && (data.new_version || data.agent);
+      editStatus[name] = {
+        state: 'ok',
+        message: newVer ? `Saved (new version: ${newVer})` : 'Saved',
+      };
+      // Exit edit mode + drop the draft. Keep status visible — it'll
+      // show under the refreshed read-only block.
+      editingInstructions.delete(name);
+      delete editDrafts[name];
+      render(window.__AISOC_AGENTS_LAST || []);
+
+      // Re-fetch instructions so the read-only view reflects the new
+      // content. The server already busted its cache on POST, but
+      // this is what populates agentInstructions client-side.
+      fetchAgentInstructions();
+    } catch (e) {
+      editStatus[name] = {
+        state: 'error',
+        message: `Network error: ${e.message || e}`,
+      };
+      render(window.__AISOC_AGENTS_LAST || []);
+    }
   }
 
   async function poll() {
