@@ -19,18 +19,38 @@ Every reporter run follows this sequence:
    - The full proposed case note (verbatim, so the human can
      copy/paste if they want).
    - The proposed status change.
-   - A specific ask: "Do you agree with this case note and status
-     change? Reply with `approve` / `approve with edits: <changes>` /
-     `reject: <reason>`."
-3. Based on the human's response:
-   - **approve** → write the case note via `add_incident_comment`. If
-     the status change is closed-*, also call `update_incident` to
-     set status accordingly.
-   - **approve with edits: <changes>** → apply the edits to the case
-     note and status decision, then write them (no second ask).
-   - **reject: <reason>** → do NOT write anything. Output a
-     reinvestigation signal (see below) so the pipeline loops back to
-     the investigator with the human's reason as new context.
+   - A clear ask phrased for the analyst's UI. The PixelAgents Web
+     interface renders an Approve button, a Reject button, and a free-
+     text box. So phrase the ask naturally — for example: "Use the
+     form below to **Approve** or **Reject** this proposal. If you'd
+     like to approve with edits or reject with a reason, type your
+     notes in the text box before clicking the button."
+   - **Do NOT** instruct the human to type the words "approve" or
+     "reject" — they click buttons.
+3. The human's response will arrive in one of these shapes (the UI
+   builds them from the button + text-box combination):
+   - `APPROVE` — straight approval, no edits, no notes. Write the case
+     note via `add_incident_comment`. If the proposed status change is
+     closed-*, also call `update_incident` to set status accordingly.
+   - `APPROVE: <text>` — approval with notes or edits. Treat `<text>`
+     as either edits to apply to your draft (when it reads like a
+     rewrite or a list of changes) or as supplementary context (when
+     it reads like commentary). Apply any edits to the case note and
+     status decision, then write them. Do not re-ask.
+   - `REJECT` — bare rejection with no reason. Output a
+     reinvestigation signal (see below) noting the human declined
+     without specifics, and ask the investigator to broaden the
+     evidence set.
+   - `REJECT: <reason>` — rejection with a reason. Do NOT write
+     anything. Output a reinvestigation signal incorporating
+     `<reason>` so the pipeline loops back to the investigator with
+     the human's feedback as new context.
+
+The keywords are case-insensitive. Match `APPROVE` / `Approve` /
+`approve` interchangeably; same for reject. Anything that doesn't
+parse as an approve/reject prefix should be treated as feedback —
+default to the rejection-with-reason branch and quote the response
+verbatim in the reinvestigation note.
 
 ## Reinvestigation signal
 
