@@ -19,11 +19,32 @@ from shared.kv import get_kv_secret
 # to emit this.
 _REINVESTIGATION_RE = re.compile(r"NEEDS_REINVESTIGATION:\s*(.+?)(?:\n|$)")
 
+# Case-sensitive marker the reporter emits when (a) auto-close mode is
+# active for this run AND (b) the reporter is confident the case can be
+# closed without human review. The orchestrator gates the autonomous
+# Sentinel close call on the presence of this marker. See
+# agents/instructions/reporter.md for the prompt-side contract.
+_CLOSE_RECOMMENDED_RE = re.compile(r"CLOSE_RECOMMENDED:\s*(.+?)(?:\n|$)")
+
 
 def _extract_reinvestigation(text: str) -> str | None:
     if not isinstance(text, str):
         return None
     m = _REINVESTIGATION_RE.search(text)
+    return m.group(1).strip() if m else None
+
+
+def _extract_close_recommendation(text: str) -> str | None:
+    """Reporter's confidence signal for autonomous closure. Returns the
+    rationale string when the marker is present, else None.
+    Independent of NEEDS_REINVESTIGATION — they're mutually exclusive
+    by design (the reporter's prompt says so), but we don't enforce
+    that here; the close path will simply not fire if both somehow
+    appear, because we only look for CLOSE_RECOMMENDED *after*
+    confirming no reinvestigation was requested."""
+    if not isinstance(text, str):
+        return None
+    m = _CLOSE_RECOMMENDED_RE.search(text)
     return m.group(1).strip() if m else None
 
 
@@ -431,6 +452,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     mode = (body.get("mode") or "triage_only").lower()  # triage_only | full
     max_chars = int(body.get("max_chars") or 1800)
 
+    # Auto-close: when True, the reporter is permitted to recommend
+    # autonomous closure (see CLOSE_RECOMMENDED marker contract in
+    # agents/instructions/reporter.md). Body value takes precedence;
+    # AISOC_AUTO_CLOSE=1 in the environment is preserved as a fallback
+    # so older callers (and CI smoke tests) keep working.
+    if "auto_close" in body:
+        auto_close = bool(body.get("auto_close"))
+    else:
+        auto_close = os.environ.get("AISOC_AUTO_CLOSE", "0") == "1"
+
     # A single identifier so cost records + future correlation can group
     # every agent invocation inside this orchestrator run.
     import uuid as _uuid
@@ -562,6 +593,27 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # no longer injected into the prompt text — the reporter decides.
         _ = bool(body.get("writeback"))
 
+        # When auto-close is on, tell the reporter explicitly so it can
+        # take the autonomous-close branch in its instructions (skip
+        # ask_human and emit CLOSE_RECOMMENDED when confident). When
+        # off, the reporter MUST follow the ask_human flow regardless
+        # of confidence — this is the user's safety contract.
+        auto_close_block = (
+            f"AUTO_CLOSE_MODE: {'on' if auto_close else 'off'}\n"
+            + ("When AUTO_CLOSE_MODE is 'on' and the case is unambiguous "
+               "(clear benign explanation, low severity, no signs of "
+               "compromise), you MAY skip ask_human, write the case note "
+               "via add_incident_comment, and emit a single-line "
+               "`CLOSE_RECOMMENDED: <one-sentence rationale>` marker — "
+               "the orchestrator will perform the actual Sentinel close "
+               "call. When AUTO_CLOSE_MODE is 'off', follow the normal "
+               "ask_human flow regardless of your confidence."
+               if auto_close else
+               "AUTO_CLOSE_MODE is off — follow the normal ask_human "
+               "flow. Do NOT emit CLOSE_RECOMMENDED.")
+            + "\n\n"
+        )
+
         def _invoke_reporter(investigator_output: str) -> tuple[str, dict]:
             return _invoke_agent(
                 project_endpoint,
@@ -571,6 +623,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     "a Sentinel-ready case note, and propose a status change. Per "
                     "your instructions, call ask_human to validate before writing "
                     "anything back via add_incident_comment / update_incident.\n\n"
+                    + auto_close_block
                     + f"INCIDENT_REF:\n{incident_json}\n\n"
                     + f"TRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}\n\n"
                     + f"INVESTIGATOR_OUTPUT:\n{_clip(investigator_output, 8000)}"
@@ -692,10 +745,23 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             {"count": len(write_hits), "calls": write_hits} if write_hits else False
         )
 
-        auto_close = os.environ.get("AISOC_AUTO_CLOSE", "0") == "1"
+        # Auto-close path. Two conditions must be true to fire:
+        #   1. auto_close was passed into this run (request body or
+        #      env-var fallback — resolved at function entry).
+        #   2. The reporter emitted CLOSE_RECOMMENDED, signalling that
+        #      the case is unambiguous enough to close without a human.
+        # Either condition false => no autonomous close. The case may
+        # still get closed via the reporter's own ask_human-approved
+        # update_incident tool call (which would show up in
+        # `wrote_comment.calls`), but that's a separate path.
+        close_rationale = _extract_close_recommendation(rep_out)
         did_close = False
-        if auto_close:
-            # Best-effort close
+        close_skip_reason: str | None = None
+        if not auto_close:
+            close_skip_reason = "auto_close=False"
+        elif not close_rationale:
+            close_skip_reason = "no CLOSE_RECOMMENDED marker"
+        else:
             _runner_post(
                 runner_url,
                 runner_bearer,
@@ -709,6 +775,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 agent="reporter",
             )
             did_close = True
+            print(
+                f"[orchestrator] auto-close fired "
+                f"workflow_run_id={workflow_run_id} "
+                f"incident_number={incident_number} "
+                f"rationale={close_rationale!r}",
+                flush=True,
+            )
 
         def _maybe_json(s: str) -> Any:
             s = (s or "").strip()
@@ -727,6 +800,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             "investigation": _maybe_json(inv_out),
             "report": _maybe_json(rep_out),
             "did_close": did_close,
+            # Auto-close diagnostics — useful for the dashboard to
+            # explain "agents closed because X" or "agents could have
+            # closed but auto_close=False". One of these is None.
+            "close_rationale": close_rationale if did_close else None,
+            "close_skipped_reason": close_skip_reason,
+            "auto_close_mode": auto_close,
             "wrote_comment": wrote_comment,
             # Number of reinvestigation loops the reporter triggered
             # (0 = the first reporter run was approved or wrote directly;
