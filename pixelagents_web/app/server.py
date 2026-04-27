@@ -43,6 +43,30 @@ EVENTS: Deque[dict[str, Any]] = deque(maxlen=2000)
 # of the container will drop any in-flight questions.
 HITL_QUESTIONS: Dict[str, Dict[str, Any]] = {}
 
+# Per-user, per-agent ad-hoc chat history. Survives navigation + refresh
+# (in-memory; restart clears it — same lifetime as AGENTS/HITL_QUESTIONS).
+# Shape: CONVERSATIONS[user_key][agent_slug] -> list of message records.
+# Each message record:
+#   {
+#     "id":          str (token_urlsafe(8)),
+#     "role":        "user" | "assistant",
+#     "text":        str,
+#     "tool_calls":  list[{"name": str, "arguments": dict}],
+#     "status":      "user" | "streaming" | "completed" | "failed",
+#     "error":       str | None,
+#     "started_at":  float (unix sec),
+#     "ended_at":    float | None,
+#   }
+# Status semantics:
+#   - "user"       — a user message; never changes after creation
+#   - "streaming"  — assistant placeholder; background task is filling it
+#   - "completed"  — assistant response finished
+#   - "failed"     — assistant stream errored; .error has the reason
+CONVERSATIONS: Dict[str, Dict[str, list[Dict[str, Any]]]] = defaultdict(
+    lambda: defaultdict(list)
+)
+CONVERSATIONS_CAP = 100  # max messages per (user, agent); oldest get trimmed
+
 # Per-incident cost accumulators. Keyed by str(incident_number); a special
 # bucket "chat" aggregates ad-hoc chat-drawer calls that aren't tied to
 # a specific incident. Each bucket:
@@ -2077,6 +2101,268 @@ async def hitl_wait(
         await _asyncio.sleep(1.0)
 
 
+# ── Conversation persistence helpers ─────────────────────────────────
+
+
+def _conv_user_key(req: Request) -> str:
+    """Stable owner identity for keying CONVERSATIONS. Uses session
+    email when available, falls back to a generic anon bucket."""
+    user = _session_user(req)
+    return user or "_anon"
+
+
+def _conv_append(user: str, agent: str, msg: Dict[str, Any]) -> Dict[str, Any]:
+    """Append a message record and trim the bucket to CONVERSATIONS_CAP."""
+    bucket = CONVERSATIONS[user][agent]
+    bucket.append(msg)
+    if len(bucket) > CONVERSATIONS_CAP:
+        del bucket[: len(bucket) - CONVERSATIONS_CAP]
+    return msg
+
+
+def _conv_find(user: str, agent: str, message_id: str) -> Dict[str, Any] | None:
+    """Locate a message record by id within a bucket."""
+    for m in CONVERSATIONS.get(user, {}).get(agent, []):
+        if m.get("id") == message_id:
+            return m
+    return None
+
+
+def _run_chat_blocking(
+    user: str,
+    agent_name: str,
+    message_id: str,
+    message_text: str,
+    project_endpoint: str,
+    token: str,
+) -> None:
+    """Synchronously run the Foundry SSE chat call and accumulate the
+    response into the message record identified by message_id.
+
+    Designed to run in a threadpool via asyncio.to_thread so it survives
+    client disconnection: the request handler that started us can be
+    cancelled (e.g. browser navigation kills the SSE connection) and we
+    keep going regardless. The follow_generator below tails the same
+    record to surface the streaming view to whoever's connected at the
+    time.
+    """
+
+    msg = _conv_find(user, agent_name, message_id)
+    if msg is None:
+        return  # gone before we got here (capped out)
+
+    import requests as _requests
+
+    url = project_endpoint.rstrip("/") + "/openai/v1/responses"
+    payload = {
+        "input": message_text,
+        "agent_reference": {"name": agent_name, "type": "agent_reference"},
+        "stream": True,
+    }
+
+    upstream = None
+    try:
+        upstream = _requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            json=payload,
+            stream=True,
+            timeout=240,
+        )
+    except Exception as e:
+        msg["status"] = "failed"
+        msg["error"] = f"connection failed: {e!r}"
+        msg["ended_at"] = time.time()
+        return
+
+    try:
+        if upstream.status_code >= 400:
+            try:
+                detail = upstream.json()
+            except Exception:
+                detail = upstream.text[:4000]
+            msg["status"] = "failed"
+            msg["error"] = json.dumps({"status": upstream.status_code, "body": detail})[:8000]
+            msg["ended_at"] = time.time()
+            return
+
+        current_event: str | None = None
+        data_lines: list[str] = []
+        total_text_emitted = 0
+
+        def _text_from_message_item(item: dict) -> str:
+            parts: list[str] = []
+            content = item.get("content") or []
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        parts.append(block["text"])
+            return "".join(parts)
+
+        for line in upstream.iter_lines(decode_unicode=True):
+            if line is None:
+                continue
+            if line == "":
+                if current_event and data_lines:
+                    data_str = "".join(data_lines)
+                    try:
+                        ev_data = json.loads(data_str)
+                    except Exception:
+                        ev_data = None
+
+                    if (
+                        current_event == "response.output_text.delta"
+                        and isinstance(ev_data, dict)
+                    ):
+                        delta = ev_data.get("delta")
+                        if isinstance(delta, str) and delta:
+                            total_text_emitted += len(delta)
+                            msg["text"] = (msg.get("text") or "") + delta
+
+                    elif (
+                        current_event == "response.output_item.done"
+                        and isinstance(ev_data, dict)
+                    ):
+                        item = ev_data.get("item") or {}
+                        if not isinstance(item, dict):
+                            item = {}
+                        item_type = item.get("type")
+                        if item_type in ("openapi_call", "tool_call", "function_call"):
+                            args = item.get("arguments") or {}
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except Exception:
+                                    args = {}
+                            name = (
+                                (args.get("tool_name") if isinstance(args, dict) else None)
+                                or item.get("name")
+                                or (item.get("tool") or {}).get("name")
+                            )
+                            if name:
+                                entry = {
+                                    "name": name,
+                                    "arguments": args if isinstance(args, dict) else {},
+                                }
+                                tools = msg.setdefault("tool_calls", [])
+                                tools.append(entry)
+                        elif item_type == "message":
+                            # Some agents emit messages as a single completed
+                            # item rather than per-token deltas — fall back
+                            # to the full text when no deltas were seen.
+                            if total_text_emitted == 0:
+                                txt = _text_from_message_item(item)
+                                if txt:
+                                    total_text_emitted += len(txt)
+                                    msg["text"] = (msg.get("text") or "") + txt
+
+                    elif (
+                        current_event == "response.completed"
+                        and isinstance(ev_data, dict)
+                    ):
+                        response = ev_data.get("response") or {}
+                        usage = response.get("usage") if isinstance(response, dict) else None
+                        if usage:
+                            try:
+                                _record_usage_locally(
+                                    incident_key="chat",
+                                    agent=agent_name,
+                                    phase="chat-stream",
+                                    usage=usage,
+                                )
+                            except Exception:
+                                pass
+                        if total_text_emitted == 0:
+                            output = response.get("output") or []
+                            if isinstance(output, list):
+                                collected = "".join(
+                                    _text_from_message_item(it)
+                                    for it in output
+                                    if isinstance(it, dict) and it.get("type") == "message"
+                                )
+                                if collected:
+                                    total_text_emitted += len(collected)
+                                    msg["text"] = (msg.get("text") or "") + collected
+
+                    elif current_event in ("response.failed", "response.incomplete"):
+                        resp = (
+                            ev_data.get("response")
+                            if isinstance(ev_data, dict)
+                            else None
+                        ) or {}
+                        err = resp.get("error") if isinstance(resp, dict) else None
+                        msg["status"] = "failed"
+                        msg["error"] = json.dumps(err or resp or ev_data or {"reason": current_event})[:4000]
+                        msg["ended_at"] = time.time()
+                        return
+
+                    elif current_event == "error" and isinstance(ev_data, dict):
+                        msg["status"] = "failed"
+                        msg["error"] = json.dumps(ev_data)[:4000]
+                        msg["ended_at"] = time.time()
+                        return
+
+                current_event = None
+                data_lines = []
+            elif line.startswith(":"):
+                continue
+            elif line.startswith("event:"):
+                current_event = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                chunk = line[len("data:"):]
+                if chunk.startswith(" "):
+                    chunk = chunk[1:]
+                data_lines.append(chunk)
+
+        # Stream ended cleanly. Mark completed if not already failed.
+        if msg.get("status") == "streaming":
+            msg["status"] = "completed"
+            msg["ended_at"] = time.time()
+
+    except Exception as e:
+        msg["status"] = "failed"
+        msg["error"] = f"stream error: {e!r}"
+        msg["ended_at"] = time.time()
+    finally:
+        if upstream is not None:
+            try:
+                upstream.close()
+            except Exception:
+                pass
+        try:
+            _emit_agent_end(agent_name, "adhoc_chat")
+        except Exception:
+            pass
+
+
+@app.get("/api/agents/{agent_id}/messages")
+def list_agent_messages(
+    agent_id: str,
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> Dict[str, Any]:
+    """Return the calling user's chat history with a specific agent.
+    Used by the sidebar to hydrate STATE.conversations on page load /
+    navigation, so the user's question and the agent's response survive
+    a refresh."""
+
+    _require_auth(request, x_pixelagents_token)
+    user = _conv_user_key(request)
+    agent_name = _slug_agent(agent_id)
+    bucket = CONVERSATIONS.get(user, {}).get(agent_name, [])
+    # Return a shallow copy so the caller sees a stable snapshot — the
+    # background task may still be mutating individual records.
+    return {
+        "agent": agent_name,
+        "messages": [dict(m) for m in bucket],
+        "ts": time.time(),
+    }
+
+
 @app.post("/api/agents/{agent_id}/message/stream")
 async def stream_message_to_agent(
     agent_id: str,
@@ -2096,6 +2382,13 @@ async def stream_message_to_agent(
       - event: error,     data: {"status": <int>, "body": <string|object>}
 
     See send_message_to_agent above for the request-body contract and caveats.
+
+    The actual Foundry call runs as a detached background task that
+    accumulates into a CONVERSATIONS record — this endpoint just tails
+    that record and emits SSE events. Net effect: closing the browser
+    tab mid-response (or navigating away) does NOT cancel the Foundry
+    call; the response keeps accumulating server-side and is visible
+    when the user comes back via GET /api/agents/{agent}/messages.
     """
 
     _require_auth(req, x_pixelagents_token)
@@ -2128,231 +2421,134 @@ async def stream_message_to_agent(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Foundry auth failed: {e!r}") from e
 
-    import requests as _requests
+    user = _conv_user_key(req)
 
-    url = project_endpoint.rstrip("/") + "/openai/v1/responses"
-    payload = {
-        "input": message.strip(),
-        "agent_reference": {"name": agent_name, "type": "agent_reference"},
-        "stream": True,
+    # 1. Persist the user message in CONVERSATIONS so it survives a
+    #    refresh / navigation regardless of what happens to the stream.
+    user_msg = {
+        "id": secrets.token_urlsafe(8),
+        "role": "user",
+        "text": message.strip(),
+        "tool_calls": [],
+        "status": "user",
+        "error": None,
+        "started_at": time.time(),
+        "ended_at": time.time(),
     }
+    _conv_append(user, agent_name, user_msg)
+
+    # 2. Create the assistant placeholder in "streaming" state. The
+    #    background task fills it in. The follow generator below tails
+    #    its growth and emits SSE events.
+    asst_msg = {
+        "id": secrets.token_urlsafe(8),
+        "role": "assistant",
+        "text": "",
+        "tool_calls": [],
+        "status": "streaming",
+        "error": None,
+        "started_at": time.time(),
+        "ended_at": None,
+    }
+    _conv_append(user, agent_name, asst_msg)
+    asst_id = asst_msg["id"]
+
+    # 3. Spawn the actual Foundry call as a detached background task.
+    #    Critical: runs on the asyncio event loop, NOT inside the
+    #    request lifecycle — so a client disconnect (browser navigate,
+    #    refresh) does NOT cancel the upstream connection. The response
+    #    keeps accumulating into asst_msg either way.
+    import asyncio
+
+    asyncio.create_task(
+        asyncio.to_thread(
+            _run_chat_blocking,
+            user,
+            agent_name,
+            asst_id,
+            message.strip(),
+            project_endpoint,
+            token,
+        )
+    )
 
     def generate():
-        """Blocking generator — FastAPI runs it in a threadpool."""
+        """Blocking generator — tails asst_msg's growth and emits SSE
+        events. Cancellation here only stops the live view; the
+        background task above keeps the record current.
+        """
 
-        tool_calls_observed: list[dict] = []
+        # Resume from a fresh tail: fewer surprises if the request
+        # somehow re-attaches to the same record (currently only a
+        # single follower per send, but cheap to make safe).
+        last_text_len = 0
+        last_tool_count = 0
+        # 30s grace beyond the upstream's 240s read timeout; if the
+        # background task is alive after this we abandon the live tail
+        # but the user can still see the eventual answer via GET
+        # /messages on next poll.
+        deadline = time.time() + 270
+        # Yield-loop polling interval. Small enough to feel
+        # near-real-time, large enough to avoid burning a thread.
+        TICK_SEC = 0.05
 
-        # Open the upstream streaming request inside the generator so any
-        # connection failures surface as an SSE error rather than a 5xx.
-        try:
-            upstream = _requests.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream",
-                },
-                json=payload,
-                stream=True,
-                timeout=240,
-            )
-        except Exception as e:
-            yield _sse_event("error", {"status": 0, "body": f"connection failed: {e!r}"})
-            yield _sse_event("done", {"tool_calls": []})
-            return
-
-        try:
-            if upstream.status_code >= 400:
-                detail: Any
-                try:
-                    detail = upstream.json()
-                except Exception:
-                    detail = upstream.text[:4000]
-                yield _sse_event("error", {"status": upstream.status_code, "body": detail})
+        while True:
+            m = _conv_find(user, agent_name, asst_id)
+            if m is None:
+                yield _sse_event("error", {"status": 0, "body": "message gone"})
+                yield _sse_event("done", {"tool_calls": []})
                 return
 
-            current_event: str | None = None
-            data_lines: list[str] = []
+            cur_text = m.get("text") or ""
+            if len(cur_text) > last_text_len:
+                yield _sse_event(
+                    "delta", {"text": cur_text[last_text_len:]}
+                )
+                last_text_len = len(cur_text)
 
-            # Track whether we've actually streamed any text out to the
-            # client. Some agents / Foundry flows don't emit per-token
-            # deltas and instead deliver text as a completed message item;
-            # in that case we extract text from output_item.done or, as
-            # a last resort, from response.completed.
-            total_text_emitted = 0
-            # Diagnostic: count each distinct upstream event type we saw
-            # so the frontend can surface "the agent emitted X item.done
-            # events but no text" when things look weird.
-            event_type_counts: Dict[str, int] = {}
+            tools = m.get("tool_calls") or []
+            while last_tool_count < len(tools):
+                yield _sse_event("tool_call", tools[last_tool_count])
+                last_tool_count += 1
 
-            def _text_from_message_item(item: dict) -> str:
-                parts: list[str] = []
-                content = item.get("content") or []
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and isinstance(block.get("text"), str):
-                            parts.append(block["text"])
-                return "".join(parts)
+            status = m.get("status")
+            if status == "completed":
+                yield _sse_event(
+                    "done",
+                    {
+                        "tool_calls": tools,
+                        "text_chars": len(cur_text),
+                    },
+                )
+                return
+            if status == "failed":
+                err = m.get("error") or "stream failed"
+                # Try to surface a structured body so the UI can render
+                # it like a normal error from the old endpoint.
+                try:
+                    body_payload = json.loads(err) if isinstance(err, str) else err
+                except Exception:
+                    body_payload = err
+                yield _sse_event("error", {"status": 0, "body": body_payload})
+                yield _sse_event("done", {"tool_calls": tools})
+                return
 
-            # Foundry streams SSE: lines are either "event: X", "data: {...}",
-            # comments starting with ':', or blank (event terminator).
-            for line in upstream.iter_lines(decode_unicode=True):
-                if line is None:
-                    continue
-                if line == "":
-                    # Flush accumulated event
-                    if current_event and data_lines:
-                        event_type_counts[current_event] = (
-                            event_type_counts.get(current_event, 0) + 1
-                        )
-                        data_str = "".join(data_lines)
-                        try:
-                            ev_data = json.loads(data_str)
-                        except Exception:
-                            ev_data = None
+            if time.time() > deadline:
+                # Background task is alive but we've waited a long time
+                # — release the connection. The record is still
+                # mutating; clients that re-poll will get the final
+                # answer when it's ready.
+                yield _sse_event(
+                    "error",
+                    {
+                        "status": 0,
+                        "body": "live tail timed out — response may still be in flight",
+                    },
+                )
+                yield _sse_event("done", {"tool_calls": tools})
+                return
 
-                        if (
-                            current_event == "response.output_text.delta"
-                            and isinstance(ev_data, dict)
-                        ):
-                            delta = ev_data.get("delta")
-                            if isinstance(delta, str) and delta:
-                                total_text_emitted += len(delta)
-                                yield _sse_event("delta", {"text": delta})
-
-                        elif (
-                            current_event == "response.output_item.done"
-                            and isinstance(ev_data, dict)
-                        ):
-                            item = ev_data.get("item") or {}
-                            if not isinstance(item, dict):
-                                item = {}
-                            item_type = item.get("type")
-                            if item_type in ("openapi_call", "tool_call", "function_call"):
-                                args = item.get("arguments") or {}
-                                if isinstance(args, str):
-                                    try:
-                                        args = json.loads(args)
-                                    except Exception:
-                                        args = {}
-                                name = (
-                                    (args.get("tool_name") if isinstance(args, dict) else None)
-                                    or item.get("name")
-                                    or (item.get("tool") or {}).get("name")
-                                )
-                                if name:
-                                    entry = {
-                                        "name": name,
-                                        "arguments": args if isinstance(args, dict) else {},
-                                    }
-                                    tool_calls_observed.append(entry)
-                                    yield _sse_event("tool_call", entry)
-                            elif item_type == "message":
-                                # Some agents emit messages as a single
-                                # completed item rather than per-token
-                                # deltas. If we haven't streamed any text
-                                # yet, surface the whole thing now so the
-                                # UI at least shows the response.
-                                if total_text_emitted == 0:
-                                    txt = _text_from_message_item(item)
-                                    if txt:
-                                        total_text_emitted += len(txt)
-                                        yield _sse_event("delta", {"text": txt})
-
-                        elif (
-                            current_event == "response.completed"
-                            and isinstance(ev_data, dict)
-                        ):
-                            response = ev_data.get("response") or {}
-
-                            # Capture token usage for the cost tracker
-                            # (best-effort; stays in the chat bucket).
-                            usage = response.get("usage") if isinstance(response, dict) else None
-                            if usage:
-                                _record_usage_locally(
-                                    incident_key="chat",
-                                    agent=agent_name,
-                                    phase="chat-stream",
-                                    usage=usage,
-                                )
-
-                            # Last-resort fallback: walk the final response's
-                            # output array and extract text from any message
-                            # items we may have missed.
-                            if total_text_emitted == 0:
-                                output = response.get("output") or []
-                                if isinstance(output, list):
-                                    collected = "".join(
-                                        _text_from_message_item(it)
-                                        for it in output
-                                        if isinstance(it, dict) and it.get("type") == "message"
-                                    )
-                                    if collected:
-                                        total_text_emitted += len(collected)
-                                        yield _sse_event("delta", {"text": collected})
-
-                        elif current_event in ("response.failed", "response.incomplete"):
-                            # Upstream explicitly signalled a failure mid-
-                            # stream (token limit, content filter, tool
-                            # error, etc.). Surface it as a proper error so
-                            # the chat drawer renders a red bubble with the
-                            # actual reason instead of "(no text returned)".
-                            resp = (
-                                ev_data.get("response")
-                                if isinstance(ev_data, dict)
-                                else None
-                            ) or {}
-                            err = resp.get("error") if isinstance(resp, dict) else None
-                            yield _sse_event(
-                                "error",
-                                {
-                                    "status": 0,
-                                    "body": err
-                                    or resp
-                                    or ev_data
-                                    or {"reason": current_event},
-                                },
-                            )
-
-                        elif current_event == "error" and isinstance(ev_data, dict):
-                            # Top-level error event from Foundry's stream.
-                            yield _sse_event(
-                                "error", {"status": 0, "body": ev_data}
-                            )
-
-                    current_event = None
-                    data_lines = []
-                elif line.startswith(":"):
-                    # SSE comment / heartbeat — ignore.
-                    continue
-                elif line.startswith("event:"):
-                    current_event = line[len("event:"):].strip()
-                elif line.startswith("data:"):
-                    # Per SSE spec, trim exactly one leading space if present.
-                    chunk = line[len("data:"):]
-                    if chunk.startswith(" "):
-                        chunk = chunk[1:]
-                    data_lines.append(chunk)
-                # other field types (id:, retry:) ignored
-        finally:
-            try:
-                upstream.close()
-            except Exception:
-                pass
-
-            # Synthetic end for the chat — informational only, doesn't
-            # extend the activity window (the start at the top of the
-            # handler already opened it).
-            _emit_agent_end(agent_name, "adhoc_chat")
-
-            yield _sse_event(
-                "done",
-                {
-                    "tool_calls": tool_calls_observed,
-                    "text_chars": total_text_emitted,
-                    "event_counts": event_type_counts,
-                },
-            )
+            time.sleep(TICK_SEC)
 
     return StreamingResponse(
         generate(),

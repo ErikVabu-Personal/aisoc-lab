@@ -253,6 +253,8 @@
     drafts: { hitl: {}, chat: {} },
     sending: new Set(),          // ids currently sending
     chatErrors: {},              // agent -> string
+    historyLoaded: new Set(),    // agents whose history we've fetched at least once
+    historyPolling: new Set(),   // agents we're actively re-polling (in-flight on server)
   };
 
   // ── Helpers ─────────────────────────────────────────────────────────
@@ -637,7 +639,82 @@
       const data = await r.json();
       STATE.agents = (data && data.agents) || [];
       render();
+
+      // First time we see the roster, hydrate per-agent chat history
+      // from the server. Lets a navigation / refresh restore
+      // conversations that happened in earlier visits.
+      if (!STATE.__historyHydrated) {
+        STATE.__historyHydrated = true;
+        const slugs = STATE.agents.map(agentName).filter(Boolean);
+        for (const slug of slugs) hydrateAgentHistory(slug);
+      }
     } catch (_) { /* ignore */ }
+  }
+
+  // ── Per-agent chat history ─────────────────────────────────────────
+  // The server persists each user's conversation with each agent in
+  // CONVERSATIONS, so this fetch returns whatever was previously sent
+  // (including responses that arrived while we were away on another
+  // page). After hydration, if any message is still streaming on the
+  // server, set up a 2s repoll until it lands or fails.
+  function convertServerMessage(m) {
+    if (!m || typeof m !== 'object') return null;
+    const out = { role: m.role || 'assistant', text: m.text || '' };
+    if (Array.isArray(m.tool_calls) && m.tool_calls.length) {
+      out.toolCalls = m.tool_calls.map((t) => ({ name: (t && t.name) || '' }));
+    }
+    if (m.status === 'streaming') out.streaming = true;
+    if (m.status === 'failed') {
+      out.error = true;
+      if (!out.text) {
+        let body = m.error || 'stream failed';
+        // Server often packs structured errors as JSON strings — pretty
+        // them up so the user sees readable text in the bubble.
+        try {
+          const parsed = JSON.parse(body);
+          body = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+        } catch (_) { /* keep raw string */ }
+        out.text = `Error: ${body}`;
+      }
+    }
+    return out;
+  }
+
+  async function hydrateAgentHistory(slug) {
+    if (!slug) return;
+    try {
+      const r = await fetch(
+        `/api/agents/${encodeURIComponent(slug)}/messages`,
+        { credentials: 'same-origin', headers: authHeaders() },
+      );
+      if (!r.ok) return;
+      const data = await r.json();
+      const messages = (data && data.messages) || [];
+      const converted = messages.map(convertServerMessage).filter(Boolean);
+
+      // Don't clobber a send that's currently in flight in THIS tab —
+      // the local SSE handler is the authoritative writer for it.
+      const inFlightLocal = STATE.sending.has(`chat-${slug}`);
+      if (!inFlightLocal) {
+        STATE.conversations[slug] = converted;
+        render();
+      }
+
+      STATE.historyLoaded.add(slug);
+
+      // If anything is still streaming server-side, keep refreshing
+      // until it lands. Coalesce concurrent calls per agent.
+      const stillStreaming = converted.some((m) => m && m.streaming);
+      if (stillStreaming) {
+        if (!STATE.historyPolling.has(slug)) {
+          STATE.historyPolling.add(slug);
+          setTimeout(() => {
+            STATE.historyPolling.delete(slug);
+            hydrateAgentHistory(slug);
+          }, 2000);
+        }
+      }
+    } catch (_) { /* ignore — next render keeps showing what we have */ }
   }
 
   ensureRoot();
