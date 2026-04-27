@@ -156,6 +156,7 @@ def _require_token(x_pixelagents_token: str | None) -> None:
 # container restart logs everyone out — acceptable for a demo.
 USERS: dict[str, str] = {
     "erik.vanbuggenhout@nviso.eu": "admin123",
+    "jeroen.laureys@nviso.eu": "saleswarmachine",
 }
 SESSIONS: dict[str, dict[str, Any]] = {}  # sid -> {"user": str, "created": float}
 SESSION_COOKIE = "aisoc_session"
