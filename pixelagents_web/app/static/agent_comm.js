@@ -37,9 +37,9 @@
       color: var(--color-text, #1f2937);
     }
     /*
-      The vendored Pixel Agents bundle has a global `* { font-family:
-      'FS Pixel Sans' }` rule that cascades into every descendant of
-      the sidebar — text inside chat bubbles, headers, buttons,
+      The vendored Pixel Agents bundle has a global "all-elements"
+      font-family rule (FS Pixel Sans) that cascades into every
+      descendant of the sidebar — chat bubbles, headers, buttons,
       placeholders all flip back to the pixel font once the bundle's
       stylesheet loads. Force the system stack on every descendant of
       the sidebar with !important so the vendor rule loses the
