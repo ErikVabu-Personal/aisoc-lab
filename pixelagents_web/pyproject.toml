@@ -15,7 +15,11 @@ dependencies = [
   # Used by /api/foundry/agents/instructions to read each agent's
   # current instructions blob from Foundry. Same SDK the Phase-2
   # deploy script uses to write them, so the call shape is symmetric.
-  "azure-ai-projects>=1.0.0b5",
+  # Pinned to match the orchestrator's pin (function_app/requirements.txt)
+  # — that version is known-good in this repo. It's a beta SDK and pip's
+  # pre-release resolution with a >= range can be flaky, so the equality
+  # is intentional.
+  "azure-ai-projects==1.0.0b11",
 ]
 
 [project.scripts]
