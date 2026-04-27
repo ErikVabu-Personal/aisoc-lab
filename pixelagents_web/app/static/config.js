@@ -347,10 +347,41 @@
       root.innerHTML = '<div class="empty">No agents reporting yet. Run a workflow to populate this page.</div>';
       return;
     }
+
+    // ── Preserve focus + selection across re-renders ────────────────
+    // The /api/agents/state poll fires every 4s and the instructions
+    // background fetch fires every 60s; both call render() which does
+    // an innerHTML wipe and would otherwise yank focus out of any
+    // open instructions-edit textarea mid-typing.
+    const active = document.activeElement;
+    let focusKey = null;
+    let selStart = 0;
+    let selEnd = 0;
+    let scrollTop = 0;
+    if (active && active.tagName === 'TEXTAREA') {
+      focusKey = active.getAttribute('data-instr-textarea');
+      if (focusKey) {
+        try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
+        scrollTop = active.scrollTop;
+      }
+    }
+
     let body = '<div class="agents">';
     for (const a of agents) body += renderAgent(a);
     body += '</div>';
     root.innerHTML = body;
+
+    if (focusKey) {
+      const sel = `textarea[data-instr-textarea="${focusKey.replace(/"/g, '\\"')}"]`;
+      const ta = root.querySelector(sel);
+      if (ta) {
+        try {
+          ta.focus({ preventScroll: true });
+          ta.setSelectionRange(selStart, selEnd);
+          ta.scrollTop = scrollTop;
+        } catch (_) { /* best-effort */ }
+      }
+    }
 
     root.querySelectorAll('.card .toggle button[data-agent]').forEach((btn) => {
       btn.addEventListener('click', () => {
