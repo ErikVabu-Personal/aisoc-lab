@@ -1242,16 +1242,23 @@ def _extract_instructions_from_result(result: Any) -> str:
     return ""
 
 
+_FOUNDRY_LAST_AVAILABLE_METHODS: list[str] = []
+
+
 def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
     """Return {agent_slug: {"instructions": str, "_debug": list[str]}}
-    for each agent in the configured roster.
+    for each agent in the configured roster. Side-effect: caches the
+    list of methods on client.agents into
+    _FOUNDRY_LAST_AVAILABLE_METHODS so the public endpoint can surface
+    it as a top-level _debug field (lets us iterate on SDK shape from
+    the browser without needing log access).
 
-    The debug list captures what we tried for each agent — useful
-    because the azure-ai-projects SDK changes its agents-read surface
-    between versions, and this lets us see from the browser exactly
-    which method names exist and which raised. Raises RuntimeError
-    only on misconfiguration / SDK import failure; per-agent failures
-    are logged into _debug and the agent's instructions stays "".
+    The per-agent debug list captures what we tried for each agent —
+    useful because the azure-ai-projects SDK changes its agents-read
+    surface between versions, and this lets us see from the browser
+    exactly which method names exist and which raised. Raises
+    RuntimeError only on misconfiguration / SDK import failure;
+    per-agent failures fall through to "" and are recorded in _debug.
     """
 
     project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
@@ -1280,6 +1287,9 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
         f"[foundry-instr] client.agents methods: {available_methods}",
         flush=True,
     )
+    # Also stash for the API response — saves Erik having to grep logs.
+    global _FOUNDRY_LAST_AVAILABLE_METHODS
+    _FOUNDRY_LAST_AVAILABLE_METHODS = available_methods
 
     out: dict[str, dict[str, Any]] = {}
     for slug in _default_agent_roster():
@@ -1416,6 +1426,11 @@ def api_foundry_agent_instructions(
             }
             for slug in _default_agent_roster()
         ],
+        # Top-level diagnostic: every callable method available on
+        # client.agents in the running SDK. When the per-agent _debug
+        # shows "not on client.agents" for everything, this tells me
+        # what to call instead.
+        "_available_methods": list(_FOUNDRY_LAST_AVAILABLE_METHODS),
         "ts": now,
     }
     _FOUNDRY_INSTRUCTIONS_CACHE["payload"] = payload
