@@ -158,6 +158,17 @@ resource "azurerm_container_app" "pixelagents" {
         name  = "SHOW_COST"
         value = "1"
       }
+
+      # Demo login roster — JSON object {email: password}. The server
+      # falls back to a hardcoded roster if this is empty, so the
+      # Container App still boots cleanly on first deploy. Stored as a
+      # Container App secret (encrypted at rest in ACA) rather than a
+      # plain env value so the password list doesn't show up in
+      # `az containerapp show` output.
+      env {
+        name        = "AISOC_USERS_JSON"
+        secret_name = "aisoc-users-json"
+      }
     }
   }
 
@@ -169,6 +180,14 @@ resource "azurerm_container_app" "pixelagents" {
   secret {
     name  = "orchestrator-function-key"
     value = data.terraform_remote_state.aisoc.outputs.orchestrator_function_key
+  }
+
+  # JSON-encoded user roster. Empty map → "{}" → server-side
+  # `_load_users()` sees an empty dict and falls back to the hardcoded
+  # bootstrap roster. Non-empty map → server uses these creds.
+  secret {
+    name  = "aisoc-users-json"
+    value = jsonencode(var.pixelagents_users)
   }
 }
 

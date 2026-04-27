@@ -154,10 +154,42 @@ def _require_token(x_pixelagents_token: str | None) -> None:
 # Web is pinned to a single replica, so in-memory state survives
 # between requests as long as the container doesn't restart. A
 # container restart logs everyone out — acceptable for a demo.
-USERS: dict[str, str] = {
-    "erik.vanbuggenhout@nviso.eu": "admin123",
-    "jeroen.laureys@nviso.eu": "saleswarmachine",
-}
+def _load_users() -> dict[str, str]:
+    """Build the demo's user roster.
+
+    Order of precedence:
+
+    1. AISOC_USERS_JSON env var — JSON object {email: password}. The
+       intended path: Terraform stores this as a Container App secret
+       and wires it through, so adding/removing users is a one-line
+       tfvars change instead of a code change.
+    2. Hardcoded fallback roster — used when AISOC_USERS_JSON is unset
+       or unparseable. Lets the demo boot on first deploy without any
+       config and gives a known-good identity if the env var ever
+       breaks.
+
+    Emails are case-folded; passwords are stored verbatim. This is a
+    demo-grade store — for anything closer to production, hash the
+    passwords (bcrypt / passlib) and gate them on a real identity
+    provider.
+    """
+
+    raw = os.getenv("AISOC_USERS_JSON", "").strip()
+    if raw:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            data = None
+        if isinstance(data, dict) and data:
+            return {str(k).lower().strip(): str(v) for k, v in data.items()}
+
+    return {
+        "erik.vanbuggenhout@nviso.eu": "admin123",
+        "jeroen.laureys@nviso.eu": "saleswarmachine",
+    }
+
+
+USERS: dict[str, str] = _load_users()
 SESSIONS: dict[str, dict[str, Any]] = {}  # sid -> {"user": str, "created": float}
 SESSION_COOKIE = "aisoc_session"
 SESSION_TTL_SEC = 12 * 3600

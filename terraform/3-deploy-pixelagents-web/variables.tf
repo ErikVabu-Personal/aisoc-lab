@@ -31,6 +31,22 @@ variable "create_log_analytics" {
   default     = true
 }
 
+variable "pixelagents_users" {
+  type = map(string)
+  description = <<-EOT
+    Demo login roster: { email = password }. Wired into the Container App
+    as a secret + env var (AISOC_USERS_JSON), so adding/removing demo
+    accounts is a one-line tfvars change. Leave empty {} to fall back to
+    the hardcoded server-side roster (useful for first-deploy bootstrap).
+
+    Demo-grade only — passwords are stored verbatim in the Container App
+    secret. For anything closer to production, hash the values and run
+    them through a real identity provider.
+  EOT
+  default     = {}
+  sensitive   = true
+}
+
 # Note: the Foundry project endpoint used by the ad-hoc chat endpoint is
 # inherited from Phase 2's `foundry_project_endpoint` output; it is no longer
 # a Phase 3 variable. If Phase 2's output scheme ever needs overriding,
