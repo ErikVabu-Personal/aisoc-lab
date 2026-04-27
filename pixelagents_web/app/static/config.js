@@ -234,18 +234,61 @@
   poll();
   setInterval(poll, POLL_MS);
 
-  // ── Auto-pickup toggle ────────────────────────────────────────────
-  // Sits at the top of the Configuration page. The matching read-only
-  // badge on the Live Agent View is rendered by auto_pickup_badge.js.
-  (function autoPickup() {
-    const apRoot = document.getElementById('aisoc-auto-pickup-root');
-    if (!apRoot) return;
+  // ── Toggle widgets (auto-pickup + auto-close) ─────────────────────
+  // Both render the same pill-switch card layout with their own polled
+  // state from /api/auto_pickup or /api/auto_close. The matching read-
+  // only badges on the Live Agent View are rendered by
+  // auto_pickup_badge.js.
+  injectToggleStyles();
 
-    const apCss = `
-      #aisoc-auto-pickup-root {
-        margin-bottom: 20px;
-      }
-      #aisoc-auto-pickup-root .ap-card {
+  setupToggle({
+    rootId: 'aisoc-auto-pickup-root',
+    apiPath: '/api/auto_pickup',
+    title: 'Automated alert pickup',
+    desc:
+      'When enabled, PixelAgents continuously monitors Microsoft Sentinel '
+      + 'for new incidents and triggers the orchestration workflow '
+      + 'automatically. If a workflow run fails, the incident is marked '
+      + 'seen and <strong>not</strong> retried — the human analyst takes '
+      + 'over from the dashboard.',
+    renderState: (s) => {
+      const intervalTxt = s.interval_sec ? `${Math.round(s.interval_sec)}s` : '—';
+      const checkTxt = s.last_check_ts ? fmtAgoLocal(s.last_check_ts) : 'never';
+      return (
+        `Poll every ${escapeHtml(intervalTxt)} · last check ${escapeHtml(checkTxt)}`
+        + ` · ${escapeHtml(String(s.seen_count || 0))} incident(s) seen`
+      );
+    },
+  });
+
+  setupToggle({
+    rootId: 'aisoc-auto-close-root',
+    apiPath: '/api/auto_close',
+    title: 'Automated incident closure',
+    desc:
+      'When enabled, the reporter agent is permitted to close Sentinel '
+      + 'incidents directly when its analysis is conclusive. When disabled '
+      + '(default), every workflow run hands back to the human analyst — '
+      + 'the agents <strong>cannot</strong> close incidents on their own.',
+    renderState: () => 'Reporter closes incidents when confident',
+  });
+
+  // ── Helpers ────────────────────────────────────────────────────────
+  function fmtAgoLocal(t) {
+    if (t == null || !Number(t)) return null;
+    const sec = Math.floor(Date.now() / 1000) - Number(t);
+    if (sec < 0)   return 'just now';
+    if (sec < 60)  return `${sec}s ago`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+    return `${Math.floor(sec / 86400)}d ago`;
+  }
+
+  function injectToggleStyles() {
+    if (document.getElementById('aisoc-toggle-styles')) return;
+    const css = `
+      .aisoc-toggle-root { margin-bottom: 16px; }
+      .aisoc-toggle-root .ap-card {
         background: #ffffff;
         border: 1px solid #e5e7eb;
         border-radius: 8px;
@@ -253,25 +296,22 @@
         display: flex; align-items: center; gap: 16px;
         flex-wrap: wrap;
       }
-      #aisoc-auto-pickup-root .ap-info { flex: 1; min-width: 240px; }
-      #aisoc-auto-pickup-root .ap-title {
+      .aisoc-toggle-root .ap-info { flex: 1; min-width: 240px; }
+      .aisoc-toggle-root .ap-title {
         font-size: 15px; font-weight: 700; color: #1f2937;
         margin-bottom: 4px;
       }
-      #aisoc-auto-pickup-root .ap-desc {
+      .aisoc-toggle-root .ap-desc {
         font-size: 13px; color: #6b7280; line-height: 1.4;
       }
-      #aisoc-auto-pickup-root .ap-state {
+      .aisoc-toggle-root .ap-state {
         margin-top: 8px;
         font-size: 12px;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         color: #6b7280;
       }
-      #aisoc-auto-pickup-root .ap-state .ev {
-        color: #1f2937;
-      }
-      /* Pill switch */
-      #aisoc-auto-pickup-root .ap-switch {
+      .aisoc-toggle-root .ap-state .ev { color: #1f2937; }
+      .aisoc-toggle-root .ap-switch {
         position: relative;
         width: 56px; height: 30px;
         background: #d1d5db;
@@ -280,9 +320,9 @@
         transition: background 0.15s ease;
         flex-shrink: 0;
       }
-      #aisoc-auto-pickup-root .ap-switch.on { background: #10b981; }
-      #aisoc-auto-pickup-root .ap-switch.busy { opacity: 0.6; cursor: wait; }
-      #aisoc-auto-pickup-root .ap-switch::after {
+      .aisoc-toggle-root .ap-switch.on { background: #10b981; }
+      .aisoc-toggle-root .ap-switch.busy { opacity: 0.6; cursor: wait; }
+      .aisoc-toggle-root .ap-switch::after {
         content: '';
         position: absolute;
         top: 3px; left: 3px;
@@ -292,8 +332,8 @@
         box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         transition: left 0.15s ease;
       }
-      #aisoc-auto-pickup-root .ap-switch.on::after { left: 29px; }
-      #aisoc-auto-pickup-root .ap-label {
+      .aisoc-toggle-root .ap-switch.on::after { left: 29px; }
+      .aisoc-toggle-root .ap-label {
         font-size: 13px; font-weight: 700;
         color: #6b7280;
         text-transform: uppercase;
@@ -301,91 +341,78 @@
         min-width: 36px;
         text-align: left;
       }
-      #aisoc-auto-pickup-root .ap-switch.on + .ap-label { color: #065f46; }
+      .aisoc-toggle-root .ap-switch.on + .ap-label { color: #065f46; }
     `;
-    const apStyle = document.createElement('style');
-    apStyle.textContent = apCss;
-    document.head.appendChild(apStyle);
+    const style = document.createElement('style');
+    style.id = 'aisoc-toggle-styles';
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
 
-    let state = { enabled: false, last_event: null, last_event_ts: null,
-                  last_check_ts: null, interval_sec: null, seen_count: 0 };
+  // Generic two-state toggle backed by GET/POST {apiPath} returning at
+  // least { enabled: bool, last_event?, last_event_ts? }. Renders into
+  // the element with id=opts.rootId and polls every 5s.
+  function setupToggle(opts) {
+    const root = document.getElementById(opts.rootId);
+    if (!root) return;
+    root.classList.add('aisoc-toggle-root');
+
+    let state = { enabled: false, last_event: null, last_event_ts: null };
     let busy = false;
 
-    function fmtAgoLocal(t) {
-      if (t == null || !Number(t)) return null;
-      const sec = Math.floor(Date.now() / 1000) - Number(t);
-      if (sec < 0)   return 'just now';
-      if (sec < 60)  return `${sec}s ago`;
-      if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-      if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-      return `${Math.floor(sec / 86400)}d ago`;
-    }
-
-    function renderAP() {
+    function r() {
       const onCls = state.enabled ? 'on' : '';
       const busyCls = busy ? 'busy' : '';
       const label = state.enabled ? 'ON' : 'OFF';
-      const intervalTxt = state.interval_sec
-        ? `${Math.round(state.interval_sec)}s`
-        : '—';
-      const checkTxt = state.last_check_ts
-        ? `${fmtAgoLocal(state.last_check_ts)}`
-        : 'never';
+      const extraState = (typeof opts.renderState === 'function')
+        ? opts.renderState(state) : '';
       const evTxt = state.last_event
         ? `<span class="ev">${escapeHtml(state.last_event)}</span>`
-            + (state.last_event_ts ? ` · ${fmtAgoLocal(state.last_event_ts)}` : '')
+            + (state.last_event_ts ? ` · ${escapeHtml(fmtAgoLocal(state.last_event_ts) || '')}` : '')
         : 'no events yet';
 
-      apRoot.innerHTML = `
+      const btnId = opts.rootId + '-btn';
+      root.innerHTML = `
         <div class="ap-card">
           <div class="ap-info">
-            <div class="ap-title">Automated alert pickup</div>
-            <div class="ap-desc">
-              When enabled, PixelAgents continuously monitors Microsoft Sentinel
-              for new incidents and triggers the orchestration workflow
-              automatically. If a workflow run fails, the incident is marked
-              seen and <strong>not</strong> retried — the human analyst takes
-              over from the dashboard.
-            </div>
+            <div class="ap-title">${escapeHtml(opts.title)}</div>
+            <div class="ap-desc">${opts.desc}</div>
             <div class="ap-state">
-              Poll every ${escapeHtml(intervalTxt)} · last check ${escapeHtml(checkTxt)}
-              · ${escapeHtml(String(state.seen_count || 0))} incident(s) seen<br>
+              ${extraState}<br>
               Last event: ${evTxt}
             </div>
           </div>
-          <div class="ap-switch ${onCls} ${busyCls}" id="ap-switch-btn"
+          <div class="ap-switch ${onCls} ${busyCls}" id="${escapeHtml(btnId)}"
                role="switch" aria-checked="${state.enabled}"
                tabindex="0"></div>
           <div class="ap-label">${label}</div>
         </div>
       `;
-      const btn = document.getElementById('ap-switch-btn');
+      const btn = document.getElementById(btnId);
       if (btn) {
-        btn.addEventListener('click', toggleAP);
+        btn.addEventListener('click', toggle);
         btn.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter' || ev.key === ' ') {
             ev.preventDefault();
-            toggleAP();
+            toggle();
           }
         });
       }
     }
 
-    async function pollAP() {
+    async function poll() {
       try {
-        const r = await fetch('/api/auto_pickup', { credentials: 'same-origin' });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        state = await r.json();
-        renderAP();
+        const resp = await fetch(opts.apiPath, { credentials: 'same-origin' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        state = await resp.json();
+        r();
       } catch (e) {
-        // Best-effort — surface failure inside the card without breaking
-        // the rest of the page.
-        apRoot.innerHTML = `
+        root.innerHTML = `
           <div class="ap-card">
             <div class="ap-info">
-              <div class="ap-title">Automated alert pickup</div>
+              <div class="ap-title">${escapeHtml(opts.title)}</div>
               <div class="ap-desc" style="color:#991b1b">
-                Failed to load auto-pickup state: ${escapeHtml(e.message || String(e))}
+                Failed to load: ${escapeHtml(e.message || String(e))}
               </div>
             </div>
           </div>
@@ -393,34 +420,33 @@
       }
     }
 
-    async function toggleAP() {
+    async function toggle() {
       if (busy) return;
       busy = true;
       const desired = !state.enabled;
-      renderAP();
+      r();
       try {
-        const r = await fetch('/api/auto_pickup', {
+        const resp = await fetch(opts.apiPath, {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enabled: desired }),
         });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        state = await r.json();
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        state = await resp.json();
       } catch (e) {
-        // Refresh from server so the UI stays in sync with reality.
         try {
-          const r = await fetch('/api/auto_pickup', { credentials: 'same-origin' });
-          if (r.ok) state = await r.json();
+          const resp = await fetch(opts.apiPath, { credentials: 'same-origin' });
+          if (resp.ok) state = await resp.json();
         } catch (_) { /* ignore */ }
-        alert('Failed to update auto-pickup: ' + (e.message || String(e)));
+        alert(`Failed to update ${opts.title}: ` + (e.message || String(e)));
       } finally {
         busy = false;
-        renderAP();
+        r();
       }
     }
 
-    pollAP();
-    setInterval(pollAP, 5000);
-  })();
+    poll();
+    setInterval(poll, 5000);
+  }
 })();

@@ -104,13 +104,49 @@
     #${ROOT_ID} .sev.low            { color: #166534; background: rgba(34,197,94,0.12);  border: 1px solid rgba(34,197,94,0.4); }
     #${ROOT_ID} .sev.informational  { color: #1e40af; background: rgba(0,153,204,0.12);  border: 1px solid rgba(0,153,204,0.4); }
 
+    /* View-level status pill — combines Sentinel.status with our
+       agentic/human phase tracking. Four classes:
+       new | active-agentic | active-human | closed. */
     #${ROOT_ID} .status {
-      font-size: 13px;
-      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      border: 1px solid transparent;
     }
-    #${ROOT_ID} .status.new    { color: #991b1b; }
-    #${ROOT_ID} .status.active { color: #92400e; }
-    #${ROOT_ID} .status.closed { color: #6b7280; }
+    #${ROOT_ID} .status .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    #${ROOT_ID} .status.new {
+      color: #991b1b; background: rgba(239,68,68,0.10); border-color: rgba(239,68,68,0.35);
+    }
+    #${ROOT_ID} .status.active-agentic {
+      color: #1e40af; background: rgba(0,153,204,0.12); border-color: rgba(0,153,204,0.4);
+    }
+    #${ROOT_ID} .status.active-agentic .dot {
+      animation: aisoc-status-pulse 1.4s ease-out infinite;
+    }
+    @keyframes aisoc-status-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(0,153,204,0.55); }
+      70%  { box-shadow: 0 0 0 6px rgba(0,153,204,0);    }
+      100% { box-shadow: 0 0 0 0 rgba(0,153,204,0);    }
+    }
+    #${ROOT_ID} .status.active-human {
+      color: #92400e; background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.4);
+    }
+    #${ROOT_ID} .status.closed {
+      color: #6b7280; background: #f3f4f6; border-color: #e5e7eb;
+    }
+    #${ROOT_ID} .status.unknown {
+      color: #6b7280; background: #f9fafb; border-color: #e5e7eb;
+    }
 
     #${ROOT_ID} button.run {
       background: #0099cc;
@@ -264,6 +300,23 @@
     return String(sev || '').toLowerCase();
   }
 
+  // Map our 4-way view_status to a readable label. Falls back to the
+  // raw string for any unexpected value (so a server-side label change
+  // doesn't break rendering, just looks slightly less polished).
+  function viewStatusLabel(s) {
+    switch (s) {
+      case 'new':              return 'New';
+      case 'active-agentic':   return 'Active · Agentic Analysis';
+      case 'active-human':     return 'Active · Human Analysis';
+      case 'closed':           return 'Closed';
+      default:                 return s ? s.replace(/-/g, ' ') : 'Unknown';
+    }
+  }
+  function viewStatusClass(s) {
+    return ['new','active-agentic','active-human','closed'].includes(s)
+      ? s : 'unknown';
+  }
+
   function isRunning(incidentNumber) {
     return currentIncident && Number(currentIncident.incident_number) === Number(incidentNumber);
   }
@@ -343,7 +396,7 @@
         + '<th style="width:60px;">#</th>'
         + '<th>Title</th>'
         + '<th style="width:110px;">Severity</th>'
-        + '<th style="width:90px;">Status</th>'
+        + '<th style="width:170px;">Status</th>'
         + '<th class="cost" style="width:120px;">Cost</th>'
         + '<th style="width:90px;">Runs</th>'
         + '<th style="width:130px;"></th>'
@@ -370,7 +423,26 @@
         body += `</td>`;
         body += `<td class="title">${escapeHtml(inc.title || '')}</td>`;
         body += `<td><span class="sev ${severityClass(inc.severity)}">${escapeHtml(inc.severity || '?')}</span></td>`;
-        body += `<td><span class="status ${severityClass(inc.status)}">${escapeHtml(inc.status || '?')}</span></td>`;
+        // Prefer the server-provided view_status (combines Sentinel
+        // status with our agentic/human phase tracking). Fall back to
+        // a sensible default derived from the raw Sentinel status if
+        // the field isn't present (e.g. running against an older
+        // server build).
+        {
+          let vs = inc.view_status;
+          if (!vs) {
+            const raw = String(inc.status || '').toLowerCase();
+            vs = raw === 'new' ? 'new'
+               : raw === 'closed' ? 'closed'
+               : raw === 'active' ? 'active-human'
+               : 'unknown';
+          }
+          const cls = viewStatusClass(vs);
+          const label = viewStatusLabel(vs);
+          body += `<td><span class="status ${cls}">`
+                + `<span class="dot"></span>${escapeHtml(label)}`
+                + `</span></td>`;
+        }
         body += `<td class="cost">${eur > 0 ? fmtEur(eur) : '—'}</td>`;
 
         // Runs badge — class flips to fail/ok/run based on most recent run.

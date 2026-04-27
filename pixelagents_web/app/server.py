@@ -666,6 +666,7 @@ def config_view(request: Request) -> Response:
         '  state PixelAgents Web has on file.'
         '</p>'
         '<div id="aisoc-auto-pickup-root"></div>'
+        '<div id="aisoc-auto-close-root"></div>'
         '<div id="aisoc-config-root"></div>'
     )
     return HTMLResponse(_render_shell(
@@ -691,6 +692,53 @@ CURRENT_INCIDENT: dict[str, Any] = {"incident_number": None, "started_at": None}
 # container restart wipes history.
 WORKFLOW_RUNS: dict[str, list[dict[str, Any]]] = {}
 WORKFLOW_RUNS_CAP = 20
+
+
+# ── View-level phase per incident ────────────────────────────────────
+# Sentinel only knows New / Active / Closed. Our UI distinguishes a
+# fourth axis on top of "Active": is the incident currently in the
+# agents' hands, or has it been handed back to the human analyst?
+#
+# Keys: str(incident_number). Values:
+#   { "phase": "agentic" | "human", "since": float, "reason": str }
+#
+# When a Sentinel incident is in "Active" and we have no recorded phase,
+# we default to "human" — the safest interpretation for an incident the
+# agents haven't touched. When Sentinel says "New" or "Closed", phase is
+# ignored.
+INCIDENT_PHASES: dict[str, dict[str, Any]] = {}
+
+
+def _set_phase(incident_number: int, phase: str, reason: str) -> None:
+    """Record the current view-level phase for an incident."""
+    INCIDENT_PHASES[str(incident_number)] = {
+        "phase": phase,
+        "since": time.time(),
+        "reason": reason,
+    }
+
+
+def _get_phase(incident_number: Any) -> str | None:
+    rec = INCIDENT_PHASES.get(str(incident_number)) if incident_number is not None else None
+    return (rec or {}).get("phase")
+
+
+def _view_status(sentinel_status: str | None, phase: str | None) -> str:
+    """Combine raw Sentinel status with our phase axis into the 4-way
+    UI status. Returns one of: new, active-agentic, active-human, closed.
+
+    - Sentinel.New      -> "new"          (phase ignored — not yet picked up)
+    - Sentinel.Active   -> "active-agentic" if phase == "agentic" else "active-human"
+    - Sentinel.Closed   -> "closed"       (phase ignored)
+    """
+    s = (sentinel_status or "").strip().lower()
+    if s == "new":
+        return "new"
+    if s == "closed":
+        return "closed"
+    if s == "active":
+        return "active-agentic" if phase == "agentic" else "active-human"
+    return s or "unknown"
 
 
 def _runs_bucket(incident_number: int) -> list[dict[str, Any]]:
@@ -806,7 +854,7 @@ async def _auto_pickup_tick() -> None:
 
     _auto_pickup_set_event(f"Picked up new incident #{num}: {title}")
     try:
-        await _orchestrate_one(num, mode="full", writeback=True)
+        await _orchestrate_one(num, mode="full", writeback=True, trigger="auto-pickup")
         _auto_pickup_set_event(f"Completed #{num}")
     except OrchestratorError as e:
         body_repr = ""
@@ -863,6 +911,65 @@ def api_auto_pickup_get(
 ) -> dict[str, Any]:
     _require_auth(request, x_pixelagents_token)
     return _auto_pickup_public_state()
+
+
+# ── Auto-close (let the reporter close incidents in Sentinel) ────────
+# When enabled, the orchestrator request body includes auto_close=True
+# and the reporter agent is permitted to close the Sentinel incident
+# directly when its analysis is conclusive. When disabled (the default),
+# every successful run hands back to the human analyst for review and
+# closure. Decoupled from auto-pickup: an analyst can run automation on
+# pickup without giving up final closure authority.
+AUTO_CLOSE: dict[str, Any] = {
+    "enabled": False,
+    "last_event": None,
+    "last_event_ts": None,
+}
+
+
+def _auto_close_set_event(msg: str) -> None:
+    AUTO_CLOSE["last_event"] = msg
+    AUTO_CLOSE["last_event_ts"] = time.time()
+    print(f"[auto-close] {msg}", flush=True)
+
+
+def _auto_close_public_state() -> dict[str, Any]:
+    return {
+        "enabled": bool(AUTO_CLOSE.get("enabled")),
+        "last_event": AUTO_CLOSE.get("last_event"),
+        "last_event_ts": AUTO_CLOSE.get("last_event_ts"),
+    }
+
+
+@app.get("/api/auto_close")
+def api_auto_close_get(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
+    return _auto_close_public_state()
+
+
+@app.post("/api/auto_close")
+async def api_auto_close_set(
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(req, x_pixelagents_token)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    new_val = bool(body.get("enabled"))
+    prev = bool(AUTO_CLOSE.get("enabled"))
+    AUTO_CLOSE["enabled"] = new_val
+    if new_val and not prev:
+        _auto_close_set_event("Enabled — reporter may close confident incidents")
+    elif (not new_val) and prev:
+        _auto_close_set_event("Disabled — every run hands back to analyst")
+    return _auto_close_public_state()
 
 
 @app.post("/api/auto_pickup")
@@ -1332,13 +1439,21 @@ def _fetch_sentinel_incidents() -> list[dict[str, Any]]:
             or (owner.get("userPrincipalName") if isinstance(owner, dict) else None)
             or ""
         )
+        sentinel_status = props.get("status")
+        number = props.get("incidentNumber")
+        phase = _get_phase(number)
         incidents.append({
             "id": item.get("name"),
             "arm_id": item.get("id"),
-            "number": props.get("incidentNumber"),
+            "number": number,
             "title": props.get("title"),
             "severity": props.get("severity"),
-            "status": props.get("status"),
+            "status": sentinel_status,
+            # View-level state combining Sentinel.status + our phase
+            # tracking. Used by the dashboard table to show one of:
+            # "new" | "active-agentic" | "active-human" | "closed".
+            "view_status": _view_status(sentinel_status, phase),
+            "phase": phase,
             "owner": owner_display,
             "created": props.get("createdTimeUtc"),
             "last_modified": props.get("lastModifiedTimeUtc"),
@@ -1394,14 +1509,31 @@ class OrchestratorError(RuntimeError):
         self.body = body
 
 
-async def _orchestrate_one(incident_number: int, mode: str, writeback: bool) -> dict[str, Any]:
+async def _orchestrate_one(
+    incident_number: int,
+    mode: str,
+    writeback: bool,
+    *,
+    trigger: str = "manual",
+) -> dict[str, Any]:
     """Run the orchestrator for a specific incident.
 
     Sets CURRENT_INCIDENT for the duration of the call, appends a run
-    record to WORKFLOW_RUNS, dispatches to the Orchestrator Function
-    App, and returns its JSON response. Raises OrchestratorError on
-    misconfiguration or upstream failure. Used by both the public
-    /orchestrate endpoint and the auto-pickup background loop.
+    record to WORKFLOW_RUNS, transitions the view-level phase between
+    "agentic" (run in flight) and "human" (run completed or failed —
+    handed back to the analyst), dispatches to the Orchestrator
+    Function App, and returns its JSON response. Raises
+    OrchestratorError on misconfiguration or upstream failure. Used by
+    both the public /orchestrate endpoint and the auto-pickup loop.
+
+    The `trigger` argument is recorded as the phase-transition reason
+    (typically "manual" from the dashboard or "auto-pickup" from the
+    background loop) — it doesn't affect orchestrator behavior.
+
+    The reporter's permission to close the Sentinel incident is driven
+    by AUTO_CLOSE["enabled"], which is forwarded as `auto_close` in the
+    orchestrator request body. The orchestrator/reporter side must
+    honor that flag.
     """
 
     orch_base = os.getenv("ORCHESTRATOR_URL", "")
@@ -1414,8 +1546,14 @@ async def _orchestrate_one(incident_number: int, mode: str, writeback: bool) -> 
     import asyncio
     import requests as _requests
 
+    auto_close_flag = bool(AUTO_CLOSE.get("enabled"))
+
     CURRENT_INCIDENT["incident_number"] = incident_number
     CURRENT_INCIDENT["started_at"] = time.time()
+    # As soon as we kick off, the view phase is "agentic" — this drives
+    # the dashboard pill to flip to "Active - Agentic Analysis" even
+    # before the first phase event from the orchestrator arrives.
+    _set_phase(incident_number, "agentic", reason=trigger)
     run_rec = _start_run(incident_number, mode)
 
     url = f"{orch_base.rstrip('/')}/incident/pipeline?code={orch_key}"
@@ -1427,18 +1565,25 @@ async def _orchestrate_one(incident_number: int, mode: str, writeback: bool) -> 
                 "incidentNumber": incident_number,
                 "mode": mode,
                 "writeback": bool(writeback),
+                # Tell the reporter whether it's allowed to close the
+                # Sentinel incident on its own. The orchestrator must
+                # respect this — when False, every run hands back to
+                # the human analyst regardless of reporter confidence.
+                "auto_close": auto_close_flag,
             },
             timeout=600,
         )
     except Exception as e:
         CURRENT_INCIDENT["incident_number"] = None
         CURRENT_INCIDENT["started_at"] = None
+        _set_phase(incident_number, "human", reason="failure")
         _end_run(run_rec, "failed", error=f"Orchestrator call failed: {e!r}")
         raise OrchestratorError(f"Orchestrator call failed: {e!r}") from e
 
     if r.status_code >= 400:
         CURRENT_INCIDENT["incident_number"] = None
         CURRENT_INCIDENT["started_at"] = None
+        _set_phase(incident_number, "human", reason="failure")
         try:
             detail = r.json()
         except Exception:
@@ -1453,6 +1598,19 @@ async def _orchestrate_one(incident_number: int, mode: str, writeback: bool) -> 
         result = r.json()
     except Exception:
         result = {"raw": r.text[:4000]}
+
+    # On success, hand back to the human. If the reporter actually
+    # closed the Sentinel incident (only possible when auto_close was
+    # True), the next /api/sentinel/incidents poll will surface
+    # status="Closed" and the view pill flips to "Closed" — phase is
+    # ignored when Sentinel says Closed.
+    _set_phase(incident_number, "human", reason="run-complete")
+
+    # Invalidate the cached incidents list so the dashboard sees the
+    # post-run Sentinel status (New→Active, or Active→Closed) without
+    # waiting up to 10s for the cache TTL to expire.
+    _INCIDENTS_CACHE["payload"] = None
+    _INCIDENTS_CACHE["ts"] = 0.0
 
     summary = None
     try:
