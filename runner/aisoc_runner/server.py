@@ -395,9 +395,15 @@ def tools_execute(
                 if not properties:
                     return {"result": {"ok": True, "wrote_comment": True}}
 
-                # Demo hardening: when comment writeback is requested, ignore status patching.
-                # Some Sentinel incident status updates can be finicky/unsupported depending on API/version.
-                properties.pop("status", None)
+                # NOTE: an earlier version of this code popped properties.status
+                # here ("demo hardening") because direct PATCH on the incident
+                # root used to flake under certain api-versions. The Gateway
+                # has since switched to a GET-then-PUT-with-etag flow (see
+                # foundry/function_app/shared/sentinel.py::update_incident)
+                # which is the Microsoft-documented pattern that avoids those
+                # flakes — so status changes can ride along with comment
+                # writebacks now. Removing the pop was the fix for "reporter
+                # closes but Sentinel still says New". Don't reintroduce it.
 
             r = requests.patch(
                 _gw_url(f"sentinel/incidents/{incident_id}"),

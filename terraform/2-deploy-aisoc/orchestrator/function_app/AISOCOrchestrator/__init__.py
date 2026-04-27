@@ -363,6 +363,55 @@ def _emit_cost_record(
 # ─── Incident owner assignment ────────────────────────────────────────────
 
 
+def _set_incident_status(
+    runner_url: str,
+    runner_bearer: str,
+    incident_number: Any,
+    incident_id: Any,
+    status: str,
+) -> None:
+    """Update incident.status (e.g. New -> Active) via the runner's
+    update_incident tool.
+
+    Status transitions are nice-to-have for the UI's view-state pill
+    ("Active · Agentic Analysis" rendered in PixelAgents Web). If the
+    write fails for any reason — bad permissions, ARM hiccup, schema
+    mismatch — log it but don't block the pipeline; the analysis itself
+    still produces value.
+    """
+
+    args: dict[str, Any] = {"properties": {"status": status}}
+    if incident_number is not None:
+        args["incidentNumber"] = incident_number
+    elif incident_id is not None:
+        args["id"] = incident_id
+    else:
+        return
+
+    try:
+        result = _runner_post(
+            runner_url,
+            runner_bearer,
+            {"tool_name": "update_incident", "arguments": args},
+            # Tag with "orchestrator" — this isn't a per-agent action,
+            # it's a coordinated pipeline transition. (Per-phase owner
+            # assignment is done separately by _assign_incident_owner.)
+            agent="orchestrator",
+        )
+        body = result.get("result") if isinstance(result, dict) else None
+        if isinstance(body, dict) and body.get("ok") is False:
+            err = body.get("error") or body
+            print(
+                f"[orchestrator] status set to {status!r} rejected: {err}",
+                flush=True,
+            )
+    except Exception as e:
+        print(
+            f"[orchestrator] status set to {status!r} raised: {e!r}",
+            flush=True,
+        )
+
+
 def _assign_incident_owner(
     runner_url: str,
     runner_bearer: str,
@@ -511,6 +560,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         incident_json = json.dumps(inc.get("result"), indent=2)[:12000]
+
+        # Promote the incident from "New" -> "Active" before the first
+        # agentic phase begins. Per the UI design, any workflow run —
+        # auto-pickup OR manual — moves the incident into the Active
+        # state so the dashboard pill flips to "Active · Agentic
+        # Analysis". The call is idempotent against an already-Active
+        # incident; on a Closed incident the manual re-trigger will
+        # re-open it (which matches the "human asked for more work"
+        # branch of the design). Best-effort — failures don't block the
+        # pipeline.
+        _set_incident_status(runner_url, runner_bearer, incident_number, incident_id, "Active")
 
         # Call agents via Foundry Agent Service runtime (agents + responses).
         # Each phase: (1) assign the incident to the agent so the UI +
