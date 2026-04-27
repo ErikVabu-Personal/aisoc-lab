@@ -1291,50 +1291,116 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
     global _FOUNDRY_LAST_AVAILABLE_METHODS
     _FOUNDRY_LAST_AVAILABLE_METHODS = available_methods
 
+    # The 1.0.0b11 SDK exposes an Assistants-shaped surface
+    # (list_agents / get_agent / create_agent) keyed by an opaque
+    # assistant_id, NOT by the human-readable agent_name we use
+    # everywhere else in this repo. The Phase-2 deploy script uses a
+    # newer SDK with the versioned create_version API, but the agents
+    # it creates are still visible via this older list_agents call.
+    # Strategy:
+    #   1. list_agents() once.
+    #   2. Build a name -> agent record map (try several name fields:
+    #      `name`, then any slug-like attribute) so we can look up by
+    #      our roster slug.
+    #   3. For each roster slug, find the matching agent and pull its
+    #      instructions field.
+    list_method = getattr(client.agents, "list_agents", None)
+    listed: list[Any] = []
+    list_debug: list[str] = []
+    if list_method is None:
+        list_debug.append("list_agents: not on client.agents")
+    else:
+        try:
+            paged = list_method()
+            try:
+                listed = list(paged)
+            except Exception as e:
+                list_debug.append(
+                    f"list_agents: iterating raised {type(e).__name__}: {str(e)[:160]}"
+                )
+                listed = []
+            list_debug.append(f"list_agents: got {len(listed)} item(s)")
+            # Sample first few item types + any visible name-like field
+            # so we can see how to match them up to our slugs.
+            for it in listed[:6]:
+                fields = []
+                for fld in ("name", "id", "assistant_id", "agent_name", "display_name"):
+                    val = getattr(it, fld, None)
+                    if val is None and isinstance(it, dict):
+                        val = it.get(fld)
+                    if val is not None:
+                        fields.append(f"{fld}={val!r}")
+                list_debug.append(
+                    f"  - {type(it).__name__}: {' '.join(fields) or '<no recognised name fields>'}"
+                )
+        except Exception as e:
+            list_debug.append(
+                f"list_agents: call raised {type(e).__name__}: {str(e)[:160]}"
+            )
+
+    print(f"[foundry-instr] {list_debug}", flush=True)
+
+    # Build slug -> agent record map. Match candidates loosely: a slug
+    # like 'detection-engineer' might be stored as 'Detection Engineer'
+    # (display_name with title case) or 'detection-engineer' verbatim.
+    def _slug_of(s: str) -> str:
+        return _slug_agent(s) if s else ""
+
+    by_slug: dict[str, Any] = {}
+    for it in listed:
+        for fld in ("name", "agent_name", "display_name", "id"):
+            val = getattr(it, fld, None)
+            if val is None and isinstance(it, dict):
+                val = it.get(fld)
+            if isinstance(val, str) and val:
+                key = _slug_of(val)
+                if key and key not in by_slug:
+                    by_slug[key] = it
+
     out: dict[str, dict[str, Any]] = {}
     for slug in _default_agent_roster():
         instructions = ""
-        debug: list[str] = []
+        debug: list[str] = list(list_debug)  # share the listing diag with each agent
 
-        # Ordered list of (method_name, kwargs) to try. Most likely to
-        # work first. Each candidate is independent — if the method
-        # exists but raises, we move on to the next.
-        attempts = [
-            ("get_latest_version", {"agent_name": slug}),
-            ("get_version",        {"agent_name": slug, "version": "latest"}),
-            ("get",                {"agent_name": slug}),
-            ("get_version",        {"agent_name": slug}),
-            ("list_versions",      {"agent_name": slug}),
-        ]
-
-        for method_name, kwargs in attempts:
-            method = getattr(client.agents, method_name, None)
-            if method is None:
-                debug.append(f"{method_name}: not on client.agents")
-                continue
-            try:
-                result = method(**kwargs)
-            except TypeError as e:
-                debug.append(f"{method_name}: TypeError: {str(e)[:160]}")
-                continue
-            except Exception as e:
-                debug.append(
-                    f"{method_name}: {type(e).__name__}: {str(e)[:160]}"
-                )
-                continue
-
-            extracted = _extract_instructions_from_result(result)
+        match = by_slug.get(slug)
+        if match is None:
+            debug.append(f"no agent matched slug={slug!r} via name/agent_name/display_name/id")
+            # Last-ditch attempt: get_agent(assistant_id=slug) — usually
+            # fails because assistant_id is a GUID, but try anyway.
+            ga = getattr(client.agents, "get_agent", None)
+            if ga is not None:
+                try:
+                    result = ga(assistant_id=slug)
+                    extracted = _extract_instructions_from_result(result)
+                    if extracted:
+                        debug.append(
+                            f"get_agent(assistant_id={slug!r}): ok, {len(extracted)} chars"
+                        )
+                        instructions = extracted
+                except Exception as e:
+                    debug.append(
+                        f"get_agent(assistant_id={slug!r}): {type(e).__name__}: {str(e)[:120]}"
+                    )
+        else:
+            extracted = _extract_instructions_from_result(match)
             if extracted:
                 debug.append(
-                    f"{method_name}: ok, {len(extracted)} chars from "
-                    f"{type(result).__name__}"
+                    f"matched via list_agents -> {type(match).__name__}, "
+                    f"{len(extracted)} chars"
                 )
                 instructions = extracted
-                break
             else:
                 debug.append(
-                    f"{method_name}: returned {type(result).__name__} but no instructions"
+                    f"matched via list_agents -> {type(match).__name__}, "
+                    f"but no instructions field"
                 )
+                # Surface what attributes ARE on the matched object so
+                # the next iteration can target them.
+                attrs = sorted(
+                    a for a in dir(match)
+                    if not a.startswith("_") and not callable(getattr(match, a, None))
+                )[:20]
+                debug.append(f"  attrs: {attrs}")
 
         if not instructions:
             print(
