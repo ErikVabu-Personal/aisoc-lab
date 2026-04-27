@@ -1195,10 +1195,64 @@ _FOUNDRY_INSTRUCTIONS_CACHE: Dict[str, Any] = {"ts": 0.0, "payload": None}
 _FOUNDRY_INSTRUCTIONS_TTL_SEC = 30.0
 
 
-def _fetch_foundry_agent_instructions() -> dict[str, str]:
-    """Return {agent_slug: full_instructions_string} for each agent in
-    the configured roster. Raises RuntimeError on misconfiguration or
-    Foundry failure."""
+def _extract_instructions_from_result(result: Any) -> str:
+    """Probe a Foundry agents-API result shape for an instructions
+    string. Different SDK calls return different objects (a
+    PromptAgentDefinition, a Version wrapping one, an iterable of
+    versions, a plain dict). Walk through the plausible shapes
+    defensively rather than hard-coding one."""
+
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result
+
+    # Direct attribute on the top-level object.
+    instr = getattr(result, "instructions", None)
+    if isinstance(instr, str) and instr:
+        return instr
+    if isinstance(result, dict):
+        instr = result.get("instructions")
+        if isinstance(instr, str) and instr:
+            return instr
+
+    # Nested under .definition (PromptAgentDefinition wrapped by a
+    # Version object — what create_version returns).
+    for accessor in ("definition", "_definition", "properties"):
+        obj = getattr(result, accessor, None)
+        if obj is None and isinstance(result, dict):
+            obj = result.get(accessor)
+        if obj is None:
+            continue
+        nested = _extract_instructions_from_result(obj)
+        if nested:
+            return nested
+
+    # Iterable result (list_versions / pageable). Walk newest-first.
+    if hasattr(result, "__iter__") and not isinstance(result, (bytes, bytearray)):
+        try:
+            items = list(result)
+        except Exception:
+            items = []
+        for item in reversed(items):
+            nested = _extract_instructions_from_result(item)
+            if nested:
+                return nested
+
+    return ""
+
+
+def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
+    """Return {agent_slug: {"instructions": str, "_debug": list[str]}}
+    for each agent in the configured roster.
+
+    The debug list captures what we tried for each agent — useful
+    because the azure-ai-projects SDK changes its agents-read surface
+    between versions, and this lets us see from the browser exactly
+    which method names exist and which raised. Raises RuntimeError
+    only on misconfiguration / SDK import failure; per-agent failures
+    are logged into _debug and the agent's instructions stays "".
+    """
 
     project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
     if not project_endpoint:
@@ -1212,49 +1266,73 @@ def _fetch_foundry_agent_instructions() -> dict[str, str]:
 
     client = AIProjectClient(endpoint=project_endpoint, credential=DefaultAzureCredential())
 
-    out: dict[str, str] = {}
+    # Snapshot what's actually on client.agents so we can surface it
+    # when no method works. Filter to plausible read methods (heuristic).
+    try:
+        available_methods = sorted(
+            name for name in dir(client.agents)
+            if not name.startswith("_")
+            and callable(getattr(client.agents, name, None))
+        )
+    except Exception:
+        available_methods = []
+    print(
+        f"[foundry-instr] client.agents methods: {available_methods}",
+        flush=True,
+    )
+
+    out: dict[str, dict[str, Any]] = {}
     for slug in _default_agent_roster():
         instructions = ""
-        # Different SDK versions disagree on the exact read method — try
-        # the documented one first, then fall back through plausible
-        # alternatives so we don't block on a minor version bump.
-        for method_name, kwargs in (
-            ("get_version", {"agent_name": slug}),
-            ("get",         {"agent_name": slug}),
-        ):
+        debug: list[str] = []
+
+        # Ordered list of (method_name, kwargs) to try. Most likely to
+        # work first. Each candidate is independent — if the method
+        # exists but raises, we move on to the next.
+        attempts = [
+            ("get_latest_version", {"agent_name": slug}),
+            ("get_version",        {"agent_name": slug, "version": "latest"}),
+            ("get",                {"agent_name": slug}),
+            ("get_version",        {"agent_name": slug}),
+            ("list_versions",      {"agent_name": slug}),
+        ]
+
+        for method_name, kwargs in attempts:
             method = getattr(client.agents, method_name, None)
             if method is None:
+                debug.append(f"{method_name}: not on client.agents")
                 continue
             try:
                 result = method(**kwargs)
-            except Exception:
+            except TypeError as e:
+                debug.append(f"{method_name}: TypeError: {str(e)[:160]}")
                 continue
-            # The "version" object has a `definition` (PromptAgentDefinition)
-            # carrying the instructions string. Probe defensively.
-            for accessor in ("definition", "_definition"):
-                obj = getattr(result, accessor, None) or (
-                    result.get(accessor) if isinstance(result, dict) else None
+            except Exception as e:
+                debug.append(
+                    f"{method_name}: {type(e).__name__}: {str(e)[:160]}"
                 )
-                if obj is None:
-                    continue
-                instr = (
-                    getattr(obj, "instructions", None)
-                    or (obj.get("instructions") if isinstance(obj, dict) else None)
+                continue
+
+            extracted = _extract_instructions_from_result(result)
+            if extracted:
+                debug.append(
+                    f"{method_name}: ok, {len(extracted)} chars from "
+                    f"{type(result).__name__}"
                 )
-                if isinstance(instr, str):
-                    instructions = instr
-                    break
-            if instructions:
+                instructions = extracted
                 break
-            # Some SDK versions expose instructions directly on the result.
-            top_level = (
-                getattr(result, "instructions", None)
-                or (result.get("instructions") if isinstance(result, dict) else None)
+            else:
+                debug.append(
+                    f"{method_name}: returned {type(result).__name__} but no instructions"
+                )
+
+        if not instructions:
+            print(
+                f"[foundry-instr] {slug}: no instructions extracted; debug={debug}",
+                flush=True,
             )
-            if isinstance(top_level, str) and top_level:
-                instructions = top_level
-                break
-        out[slug] = instructions
+
+        out[slug] = {"instructions": instructions, "_debug": debug}
     return out
 
 
@@ -1318,15 +1396,24 @@ def api_foundry_agent_instructions(
         return cached
 
     try:
-        full_by_slug = _fetch_foundry_agent_instructions()
+        rich = _fetch_foundry_agent_instructions()
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
+    full_by_slug = {slug: (rec.get("instructions") or "") for slug, rec in rich.items()}
     common, roles = _split_common_and_role(full_by_slug)
     payload = {
         "common": common,
         "agents": [
-            {"slug": slug, "instructions": roles.get(slug, "")}
+            {
+                "slug": slug,
+                "instructions": roles.get(slug, ""),
+                # Per-agent diagnostic — empty list when extraction
+                # succeeded; populated with method probes + errors
+                # when nothing worked. Useful for debugging SDK
+                # version skew without needing log access.
+                "_debug": rich.get(slug, {}).get("_debug", []),
+            }
             for slug in _default_agent_roster()
         ],
         "ts": now,
