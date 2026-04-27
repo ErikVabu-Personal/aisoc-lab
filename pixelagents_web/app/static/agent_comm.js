@@ -36,6 +36,19 @@
       font: 15px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       color: var(--color-text, #1f2937);
     }
+    /*
+      The vendored Pixel Agents bundle has a global `* { font-family:
+      'FS Pixel Sans' }` rule that cascades into every descendant of
+      the sidebar — text inside chat bubbles, headers, buttons,
+      placeholders all flip back to the pixel font once the bundle's
+      stylesheet loads. Force the system stack on every descendant of
+      the sidebar with !important so the vendor rule loses the
+      cascade. Same pattern as #aisoc-nav.
+    */
+    #${ROOT_ID},
+    #${ROOT_ID} * {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+    }
     #${ROOT_ID} > header {
       flex-shrink: 0;
       padding: 12px 18px;
