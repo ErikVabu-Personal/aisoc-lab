@@ -33,7 +33,7 @@
       z-index: 9999;
       display: flex;
       flex-direction: column;
-      font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font: 15px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       color: var(--color-text, #1f2937);
     }
     #${ROOT_ID} > header {
@@ -149,10 +149,11 @@
     }
     #${ROOT_ID} .msg {
       max-width: 92%;
-      padding: 7px 10px;
+      padding: 8px 12px;
       border-radius: 8px;
       white-space: pre-wrap; word-wrap: break-word;
-      font-size: 13px;
+      font-size: 15px;
+      line-height: 1.45;
     }
     #${ROOT_ID} .msg.user      { align-self: flex-end;   background: #e0f2fe; border: 1px solid #0099cc; }
     #${ROOT_ID} .msg.assistant { align-self: flex-start; background: #f3f4f6; border: 1px solid #cbd5e1; }
@@ -334,7 +335,8 @@
 
   function render() {
     const root = ensureRoot();
-    // Preserve focus + selection across re-renders so typing isn't disrupted.
+
+    // ── Preserve focus + selection across re-renders ──
     const active = document.activeElement;
     let focusKind = null, focusKey = null, selStart = 0, selEnd = 0;
     if (active && active.tagName === 'TEXTAREA') {
@@ -344,6 +346,33 @@
       else if (ck) { focusKind = 'chat'; focusKey = ck; }
       try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
     }
+
+    // ── Snapshot scroll positions before the innerHTML wipe ──
+    // Two scroll containers matter: the sidebar's `.body` (the list of
+    // items) and each open item's `.body-content` (the chat thread or
+    // HITL question). Both reset to top on innerHTML replacement; we
+    // restore here so streaming tokens / poll refreshes don't yank
+    // the user back to the top of whatever they were reading.
+    //
+    // For each, we also remember whether the user was already at the
+    // bottom — if so, we *re-stick* to the bottom after render so new
+    // content appears as if the chat scrolled naturally with it.
+    const STICK_THRESHOLD_PX = 30;
+    function snapshotScroll(el) {
+      if (!el) return null;
+      return {
+        top: el.scrollTop,
+        atBottom: (el.scrollHeight - el.scrollTop - el.clientHeight) < STICK_THRESHOLD_PX,
+      };
+    }
+    const bodyScroll = snapshotScroll(root.querySelector('.body'));
+    const itemScrolls = {};
+    root.querySelectorAll('.item').forEach((item) => {
+      const head = item.querySelector('[data-toggle]');
+      const id = head ? head.getAttribute('data-toggle') : null;
+      const content = item.querySelector('.body-content');
+      if (id && content) itemScrolls[id] = snapshotScroll(content);
+    });
 
     let html = '<header>Agent Communication<div class="sub">Talk to the agents · respond to their requests</div></header>';
     html += '<div class="body">';
@@ -360,7 +389,24 @@
     html += '</div>';
     root.innerHTML = html;
 
-    // Restore focus.
+    // ── Restore scroll positions ──
+    function restoreScroll(el, snap) {
+      if (!el || !snap) return;
+      // Auto-stick to bottom if the user was already there; otherwise
+      // restore the exact prior offset.
+      el.scrollTop = snap.atBottom ? el.scrollHeight : snap.top;
+    }
+    restoreScroll(root.querySelector('.body'), bodyScroll);
+    root.querySelectorAll('.item').forEach((item) => {
+      const head = item.querySelector('[data-toggle]');
+      const id = head ? head.getAttribute('data-toggle') : null;
+      const content = item.querySelector('.body-content');
+      if (id && content && itemScrolls[id]) {
+        restoreScroll(content, itemScrolls[id]);
+      }
+    });
+
+    // ── Restore focus ──
     if (focusKind && focusKey) {
       const sel = focusKind === 'hitl'
         ? `[data-hitl-textarea="${CSS.escape(focusKey)}"]`
