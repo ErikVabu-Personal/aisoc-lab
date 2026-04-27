@@ -221,6 +221,12 @@
   let giCommon = '';
   let giError = '';
   let giLoadedAt = 0;
+  // Editing the shared preamble (fans out to all four agents).
+  let giEditing = false;
+  let giDraft = null;
+  // {state: 'saving'|'ok'|'error', message: str,
+  //  perAgent?: {slug: 'pending'|'ok'|'error'}}
+  let giSaveStatus = null;
 
   function escapeHtml(s) {
     return String(s)
@@ -645,6 +651,102 @@
         color: #991b1b; font-size: 13px;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       }
+      /* Editor for the shared preamble. */
+      #aisoc-generic-instructions-root textarea.gi-edit {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 10px;
+        padding: 12px;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #1f2937;
+        resize: vertical;
+        min-height: 200px;
+        max-height: 600px;
+      }
+      #aisoc-generic-instructions-root textarea.gi-edit:focus {
+        outline: none;
+        border-color: #0099cc;
+        box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+      }
+      #aisoc-generic-instructions-root .gi-edit-warning {
+        margin-top: 8px;
+        padding: 8px 12px;
+        background: rgba(245,158,11,0.08);
+        border: 1px solid rgba(245,158,11,0.4);
+        border-radius: 6px;
+        color: #92400e;
+        font-size: 12px;
+      }
+      #aisoc-generic-instructions-root .gi-edit-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      #aisoc-generic-instructions-root .gi-edit-actions button.save {
+        background: #0099cc;
+        color: #ffffff;
+        border: 1px solid #0099cc;
+        padding: 4px 14px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      #aisoc-generic-instructions-root .gi-edit-actions button.save:hover:not(:disabled) {
+        background: #33b0dd;
+      }
+      #aisoc-generic-instructions-root .gi-edit-actions button.save:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      #aisoc-generic-instructions-root .gi-save-status {
+        font-size: 12px;
+        flex: 1;
+      }
+      #aisoc-generic-instructions-root .gi-save-status.saving { color: #6b7280; font-style: italic; }
+      #aisoc-generic-instructions-root .gi-save-status.ok { color: #065f46; }
+      #aisoc-generic-instructions-root .gi-save-status.error {
+        color: #991b1b;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      /* Per-agent progress badges shown during a fan-out save. */
+      #aisoc-generic-instructions-root .gi-progress {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      #aisoc-generic-instructions-root .gi-progress .pa {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 2px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid #cbd5e1;
+        background: #f9fafb;
+        color: #6b7280;
+      }
+      #aisoc-generic-instructions-root .gi-progress .pa.pending {
+        background: #f3f4f6; color: #6b7280;
+      }
+      #aisoc-generic-instructions-root .gi-progress .pa.ok {
+        background: rgba(34,197,94,0.10);
+        border-color: rgba(34,197,94,0.5);
+        color: #166534;
+      }
+      #aisoc-generic-instructions-root .gi-progress .pa.error {
+        background: rgba(239,68,68,0.10);
+        border-color: rgba(239,68,68,0.5);
+        color: #991b1b;
+      }
     `;
     const style = document.createElement('style');
     style.id = 'aisoc-generic-instr-styles';
@@ -665,36 +767,242 @@
   function renderGenericInstructions() {
     const r = document.getElementById('aisoc-generic-instructions-root');
     if (!r) return;
+
+    // ── Focus preservation across re-renders ────────────────────────
+    // The save fan-out re-renders this card after every agent — we
+    // don't want that to yank the user's textarea focus.
+    const active = document.activeElement;
+    const wasGiTa = active && active.getAttribute && active.getAttribute('data-gi-textarea');
+    let selStart = 0, selEnd = 0, scrollTop = 0;
+    if (wasGiTa) {
+      try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
+      scrollTop = active.scrollTop;
+    }
+
     const ageTxt = giLoadedAt
       ? ` · loaded ${escapeHtml(fmtAgoLocal(giLoadedAt) || '')}`
       : '';
     const hasCommon = typeof giCommon === 'string' && giCommon.length > 0;
+
+    let headRight = '';
+    if (giEditing) {
+      // While editing the head buttons are subdued — Save/Cancel live
+      // in the editor below. Don't render Show/Hide or Edit here.
+    } else {
+      headRight += `<button class="gi-toggle" id="gi-toggle-btn" ${hasCommon ? '' : 'disabled'}>`
+                 + `${giOpen ? 'Hide' : (hasCommon ? 'Show' : 'Loading…')}`
+                 + `</button>`;
+      if (giOpen && hasCommon) {
+        headRight += ` <button class="gi-toggle" id="gi-edit-btn" `
+                   + `style="margin-left:6px;">Edit</button>`;
+      }
+    }
+
     let body = `
       <div class="gi-card">
         <div class="gi-head">
           <span class="gi-title">Generic instructions / context</span>
           <span class="gi-sub">Shared preamble loaded from each Foundry agent's deployed instructions${ageTxt}</span>
-          <button class="gi-toggle" id="gi-toggle-btn" ${hasCommon ? '' : 'disabled'}>
-            ${giOpen ? 'Hide' : (hasCommon ? 'Show' : 'Loading…')}
-          </button>
+          ${headRight}
         </div>
     `;
-    if (giError) {
+
+    if (giEditing) {
+      const draft = giDraft != null ? giDraft : (giCommon || '');
+      const saving = giSaveStatus && giSaveStatus.state === 'saving';
+      const slugs = (window.__AISOC_AGENTS_LAST || [])
+        .map((a) => (a && (a.id || a.agent)) || '').filter(Boolean);
+      body += `<textarea class="gi-edit" data-gi-textarea="common" ${saving ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>`;
+      body += `<div class="gi-edit-warning">`
+            + `<strong>Heads up:</strong> Saving will create a new version on `
+            + `<strong>${slugs.length}</strong> agents in Foundry `
+            + `(${escapeHtml(slugs.join(', '))}). Each gets the new common preamble + that agent's existing role-specific tail.`
+            + `</div>`;
+      body += '<div class="gi-edit-actions">';
+      body += `<button class="save" id="gi-save-btn" ${saving ? 'disabled' : ''}>${saving ? 'Saving…' : 'Save to Foundry'}</button>`;
+      body += `<button class="gi-toggle" id="gi-cancel-btn" ${saving ? 'disabled' : ''}>Cancel</button>`;
+      if (giSaveStatus && giSaveStatus.message) {
+        body += `<span class="gi-save-status ${escapeHtml(giSaveStatus.state)}">${escapeHtml(giSaveStatus.message)}</span>`;
+      }
+      body += '</div>';
+      // Per-agent badges during a fan-out.
+      if (giSaveStatus && giSaveStatus.perAgent) {
+        body += '<div class="gi-progress">';
+        for (const slug of Object.keys(giSaveStatus.perAgent)) {
+          const st = giSaveStatus.perAgent[slug];
+          const sym = st === 'ok' ? '✓' : (st === 'error' ? '✗' : '·');
+          body += `<span class="pa ${escapeHtml(st)}">${sym} ${escapeHtml(slug)}</span>`;
+        }
+        body += '</div>';
+      }
+    } else if (giError) {
       body += `<div class="gi-err">Failed to load instructions: ${escapeHtml(giError)}</div>`;
     } else if (giOpen && hasCommon) {
       body += `<div class="gi-body">${escapeHtml(giCommon)}</div>`;
+      // Surface the most recent save outcome below the read-only view.
+      if (giSaveStatus && giSaveStatus.state === 'ok') {
+        body += `<div class="gi-save-status ok" style="margin-top:8px;">${escapeHtml(giSaveStatus.message)}</div>`;
+      }
     } else if (giOpen && !hasCommon) {
       body += `<div class="gi-empty">No shared preamble found. Either the agents are not yet deployed, or each agent's instructions diverge entirely (no common prefix).</div>`;
     }
     body += '</div>';
     r.innerHTML = body;
 
-    const btn = document.getElementById('gi-toggle-btn');
-    if (btn) {
-      btn.addEventListener('click', () => {
+    // Wire up handlers.
+    const toggleBtn = document.getElementById('gi-toggle-btn');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
         giOpen = !giOpen;
         renderGenericInstructions();
       });
+    }
+    const editBtn = document.getElementById('gi-edit-btn');
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        giEditing = true;
+        if (giDraft == null) giDraft = giCommon || '';
+        giSaveStatus = null;
+        renderGenericInstructions();
+      });
+    }
+    const cancelBtn = document.getElementById('gi-cancel-btn');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
+        giEditing = false;
+        giDraft = null;
+        giSaveStatus = null;
+        renderGenericInstructions();
+      });
+    }
+    const saveBtn = document.getElementById('gi-save-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', onCommonInstructionsSave);
+    }
+    const ta = r.querySelector('textarea[data-gi-textarea="common"]');
+    if (ta) {
+      ta.addEventListener('input', () => { giDraft = ta.value; });
+    }
+
+    // Restore focus on the textarea if we had it before the wipe.
+    if (wasGiTa) {
+      const newTa = r.querySelector(`textarea[data-gi-textarea="${wasGiTa}"]`);
+      if (newTa) {
+        try {
+          newTa.focus({ preventScroll: true });
+          newTa.setSelectionRange(selStart, selEnd);
+          newTa.scrollTop = scrollTop;
+        } catch (_) { /* best-effort */ }
+      }
+    }
+  }
+
+  // ── Common-preamble save (fans out to every roster agent) ─────────
+  // Each agent's stored instructions = common + "\n\n" + role_tail. To
+  // change just the common part we need to re-concat per-agent and
+  // POST a new version to each. Sequential rather than parallel so
+  // partial failures are easy to surface (and the user can see which
+  // ones succeeded before the failure).
+  async function onCommonInstructionsSave() {
+    const draft = giDraft != null ? giDraft : '';
+    if (!draft.trim()) {
+      giSaveStatus = { state: 'error', message: 'Cannot save an empty common preamble' };
+      renderGenericInstructions();
+      return;
+    }
+
+    const slugs = (window.__AISOC_AGENTS_LAST || [])
+      .map((a) => (a && (a.id || a.agent)) || '').filter(Boolean);
+    if (!slugs.length) {
+      giSaveStatus = { state: 'error', message: 'No agents loaded yet — refresh and try again' };
+      renderGenericInstructions();
+      return;
+    }
+
+    const ok = window.confirm(
+      `This will create a new version on ${slugs.length} agents in Foundry:\n  ${slugs.join(', ')}\n\n`
+      + `Each gets: new common preamble + that agent's existing role-specific tail.\n\n`
+      + `The change is live immediately for any incoming workflow runs. Continue?`
+    );
+    if (!ok) return;
+
+    // Initial state: every agent is "pending" until we hit it.
+    const perAgent = {};
+    for (const slug of slugs) perAgent[slug] = 'pending';
+    giSaveStatus = { state: 'saving', message: 'Saving…', perAgent };
+    renderGenericInstructions();
+
+    const errors = [];
+    for (const slug of slugs) {
+      giSaveStatus.message = `Saving ${slug}…`;
+      renderGenericInstructions();
+
+      // Use whatever role tail we have on file for this agent. If
+      // it's missing (agent not yet hydrated), skip — better than
+      // wiping the role with empty.
+      const roleTail = agentInstructions[slug];
+      if (typeof roleTail !== 'string') {
+        perAgent[slug] = 'error';
+        errors.push(`${slug}: no role-tail loaded; refresh /config and retry`);
+        renderGenericInstructions();
+        continue;
+      }
+
+      const fullInstructions = roleTail
+        ? `${draft}\n\n${roleTail}`
+        : draft;
+
+      try {
+        const r = await fetch(
+          `/api/foundry/agents/${encodeURIComponent(slug)}/instructions`,
+          {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instructions: fullInstructions }),
+          },
+        );
+        if (!r.ok) {
+          let msg = `HTTP ${r.status}`;
+          try {
+            const j = await r.json();
+            const detail = j && j.detail;
+            if (typeof detail === 'string') msg += `: ${detail}`;
+            else if (detail) msg += `: ${detail.error || ''} ${detail.body || ''}`.trim();
+          } catch (_) { /* keep msg */ }
+          perAgent[slug] = 'error';
+          errors.push(`${slug}: ${msg}`);
+        } else {
+          perAgent[slug] = 'ok';
+        }
+      } catch (e) {
+        perAgent[slug] = 'error';
+        errors.push(`${slug}: ${e.message || e}`);
+      }
+      renderGenericInstructions();
+    }
+
+    if (errors.length === 0) {
+      giSaveStatus = {
+        state: 'ok',
+        message: `Saved ${slugs.length} agents`,
+        perAgent,
+      };
+      giEditing = false;
+      giDraft = null;
+      renderGenericInstructions();
+      // Pull fresh content so the read-only view shows the new common.
+      fetchAgentInstructions();
+    } else {
+      giSaveStatus = {
+        state: 'error',
+        message:
+          `${slugs.length - errors.length}/${slugs.length} succeeded; failures:\n`
+          + errors.join('\n'),
+        perAgent,
+      };
+      // Stay in edit mode so the user can retry.
+      renderGenericInstructions();
     }
   }
 
