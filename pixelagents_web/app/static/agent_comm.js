@@ -171,6 +171,30 @@
     #${ROOT_ID} .msg.user      { align-self: flex-end;   background: #e0f2fe; border: 1px solid #0099cc; }
     #${ROOT_ID} .msg.assistant { align-self: flex-start; background: #f3f4f6; border: 1px solid #cbd5e1; }
     #${ROOT_ID} .msg.error     { align-self: flex-start; background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.5); color: #991b1b; }
+
+    /* Typing indicator — shown inside an assistant bubble while we're
+       streaming but haven't received the first delta yet. Three dots
+       fade in/out in sequence, like iMessage / Slack. */
+    #${ROOT_ID} .msg.assistant.typing {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 10px 12px;
+      min-height: 18px;
+    }
+    #${ROOT_ID} .msg.assistant.typing .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #6b7280;
+      opacity: 0.35;
+      animation: aisoc-comm-typing 1.2s ease-in-out infinite;
+    }
+    #${ROOT_ID} .msg.assistant.typing .dot:nth-child(2) { animation-delay: 0.15s; }
+    #${ROOT_ID} .msg.assistant.typing .dot:nth-child(3) { animation-delay: 0.30s; }
+    @keyframes aisoc-comm-typing {
+      0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+      40%           { opacity: 1;    transform: translateY(-2px); }
+    }
     #${ROOT_ID} .compose {
       display: flex; gap: 6px;
     }
@@ -324,10 +348,19 @@
     const conv = STATE.conversations[agent] || [];
     const msgsHtml = conv.length
       ? conv.map((m) => {
-          const cls = m.error ? 'msg error' : `msg ${m.role}`;
           const tools = (m.toolCalls && m.toolCalls.length)
             ? `<div style="margin-top:4px; font-size:11px; opacity:0.7; font-family:ui-monospace,Menlo,monospace;">🔧 ${m.toolCalls.map((t) => escapeHtml(t.name || '')).join(', ')}</div>`
             : '';
+          // While we're awaiting the first delta from the model, the
+          // bubble has no text yet — show a three-dot typing indicator
+          // instead of an empty rectangle. Once any text arrives we
+          // switch to normal rendering even if streaming continues.
+          if (m.streaming && !(m.text || '').length && !m.error) {
+            return `<div class="msg assistant typing" aria-label="Agent is typing">`
+                 + `<span class="dot"></span><span class="dot"></span><span class="dot"></span>`
+                 + `${tools}</div>`;
+          }
+          const cls = m.error ? 'msg error' : `msg ${m.role}`;
           return `<div class="${cls}">${escapeHtml(m.text || '')}${tools}</div>`;
         }).join('')
       : '<div class="empty-line" style="padding:8px; font-size:12px;">No messages yet — say hi.</div>';
