@@ -393,10 +393,16 @@ def _set_incident_status(
             runner_url,
             runner_bearer,
             {"tool_name": "update_incident", "arguments": args},
-            # Tag with "orchestrator" — this isn't a per-agent action,
-            # it's a coordinated pipeline transition. (Per-phase owner
-            # assignment is done separately by _assign_incident_owner.)
-            agent="orchestrator",
+            # Tag the runner call with "triage" rather than something
+            # like "orchestrator". Reason: the runner emits a PixelAgents
+            # event for every /tools/execute call using this slug, and
+            # any unrecognised slug spawns a ghost character in the Live
+            # Agent View. This status bump runs at the very start of the
+            # pipeline, immediately before the triage phase, so tagging
+            # it as triage is both visually appropriate (the triage
+            # character lights up briefly as work kicks off) and avoids
+            # adding agents to the PixelAgents roster.
+            agent="triage",
         )
         body = result.get("result") if isinstance(result, dict) else None
         if isinstance(body, dict) and body.get("ok") is False:

@@ -1117,12 +1117,19 @@ def api_agents_state(
         age = now - last_start_ts
         return "reading" if age <= cooldown else "idle"
 
-    # Return stable roster first, then any dynamically discovered agents.
+    # Return only the stable roster. Earlier versions also surfaced
+    # any dynamically discovered agent slug from the AGENTS dict, which
+    # made it easy for an upstream bug (e.g. an orchestrator helper
+    # tagging a runner call with an unrecognised slug) to spawn a
+    # phantom character in the Live View — and the ghost would persist
+    # in memory until the container restarted. The roster is the
+    # contract: anything not in it is treated as noise. To add a new
+    # agent, extend PIXELAGENTS_AGENT_ROSTER (env var) rather than
+    # relying on dynamic discovery.
     roster = _default_agent_roster()
-    dynamic = sorted([k for k in AGENTS.keys() if k not in roster])
 
     agents = []
-    for name in roster + dynamic:
+    for name in roster:
         a = AGENTS.get(name, {})
         status = inferred_status(a)
         # Only surface the current tool while we're actually treating the
