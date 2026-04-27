@@ -146,6 +146,18 @@
   // both renderAgent (per-agent expander) and the Generic card IIFE.
   let agentInstructions = {};
 
+  // ── Generic instructions card state ────────────────────────────────
+  // These are referenced by renderGenericInstructions() which is
+  // (transitively) called from the top-level setup code further down.
+  // `let` bindings sit in the temporal dead zone until their
+  // declaration is reached, so they MUST be declared before the
+  // setup call — moving them here avoids "Cannot access 'giLoadedAt'
+  // before initialization" at module load.
+  let giOpen = false;
+  let giCommon = '';
+  let giError = '';
+  let giLoadedAt = 0;
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -390,12 +402,9 @@
     document.head.appendChild(style);
   }
 
-  // Generic-instructions card state lives in closure variables so it
-  // survives across renders driven by fetchAgentInstructions().
-  let giOpen = false;
-  let giCommon = '';
-  let giError = '';
-  let giLoadedAt = 0;
+  // (Generic-instructions card state — giOpen / giCommon / giError /
+  // giLoadedAt — is declared near the top of the IIFE so render*
+  // helpers can access it before this point in the file.)
 
   function setupGenericInstructions() {
     const r = document.getElementById('aisoc-generic-instructions-root');
