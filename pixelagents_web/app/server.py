@@ -1247,18 +1247,22 @@ _FOUNDRY_LAST_AVAILABLE_METHODS: list[str] = []
 
 def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
     """Return {agent_slug: {"instructions": str, "_debug": list[str]}}
-    for each agent in the configured roster. Side-effect: caches the
-    list of methods on client.agents into
-    _FOUNDRY_LAST_AVAILABLE_METHODS so the public endpoint can surface
-    it as a top-level _debug field (lets us iterate on SDK shape from
-    the browser without needing log access).
+    for each agent in the configured roster.
 
-    The per-agent debug list captures what we tried for each agent —
-    useful because the azure-ai-projects SDK changes its agents-read
-    surface between versions, and this lets us see from the browser
-    exactly which method names exist and which raised. Raises
-    RuntimeError only on misconfiguration / SDK import failure;
-    per-agent failures fall through to "" and are recorded in _debug.
+    Strategy: bypass the SDK entirely. The b11 SDK's `client.agents`
+    surface is OpenAI Assistants-shaped (list_agents/get_agent), and
+    that registry is empty — our agents were created via the newer
+    SDK's create_version() and live in a different Foundry namespace.
+    The orchestrator has the same problem and solves it by calling
+    /openai/v1/responses with `agent_reference: {name, type}` directly.
+    We use the same auth (DefaultAzureCredential -> ai.azure.com
+    bearer) and probe a few plausible REST paths for the agent's
+    instructions field. Whichever one returns 200 + a parseable
+    instructions wins; the others get logged into _debug.
+
+    Raises RuntimeError only on missing project endpoint or token
+    failure; per-agent / per-URL probe failures fall through to "" and
+    are recorded in _debug so we can iterate from the browser.
     """
 
     project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
@@ -1267,140 +1271,87 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
 
     try:
         from azure.identity import DefaultAzureCredential
-        from azure.ai.projects import AIProjectClient
     except Exception as e:
-        raise RuntimeError(f"azure-ai-projects SDK not available: {e!r}") from e
+        raise RuntimeError(f"azure-identity not available: {e!r}") from e
 
-    client = AIProjectClient(endpoint=project_endpoint, credential=DefaultAzureCredential())
-
-    # Snapshot what's actually on client.agents so we can surface it
-    # when no method works. Filter to plausible read methods (heuristic).
     try:
-        available_methods = sorted(
-            name for name in dir(client.agents)
-            if not name.startswith("_")
-            and callable(getattr(client.agents, name, None))
-        )
-    except Exception:
-        available_methods = []
-    print(
-        f"[foundry-instr] client.agents methods: {available_methods}",
-        flush=True,
-    )
-    # Also stash for the API response — saves Erik having to grep logs.
+        token = DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
+    except Exception as e:
+        raise RuntimeError(f"could not get bearer token: {e!r}") from e
+
+    base = project_endpoint.rstrip("/")
+
+    # URL templates to probe per agent. Most-likely-to-work first; the
+    # first one that returns 200 + parseable instructions wins. The
+    # `agents/{slug}/versions/latest` shape mirrors the SDK's
+    # create_version write path, with various plausible api-versions.
+    url_templates = [
+        f"{base}/agents/{{slug}}/versions/latest?api-version=2025-05-15-preview",
+        f"{base}/agents/{{slug}}/versions/latest?api-version=2025-05-01",
+        f"{base}/agents/{{slug}}/versions/latest?api-version=2024-12-01-preview",
+        f"{base}/agents/{{slug}}?api-version=2025-05-15-preview",
+        f"{base}/agents/{{slug}}?api-version=2024-12-01-preview",
+        f"{base}/openai/v1/agents/{{slug}}/versions/latest",
+        f"{base}/openai/v1/agents/{{slug}}",
+    ]
+
+    # Surface the URL list once at the top so the response includes it
+    # for diagnostic purposes, regardless of which one (if any) wins.
     global _FOUNDRY_LAST_AVAILABLE_METHODS
-    _FOUNDRY_LAST_AVAILABLE_METHODS = available_methods
+    _FOUNDRY_LAST_AVAILABLE_METHODS = [t.replace("{slug}", "<slug>") for t in url_templates]
 
-    # The 1.0.0b11 SDK exposes an Assistants-shaped surface
-    # (list_agents / get_agent / create_agent) keyed by an opaque
-    # assistant_id, NOT by the human-readable agent_name we use
-    # everywhere else in this repo. The Phase-2 deploy script uses a
-    # newer SDK with the versioned create_version API, but the agents
-    # it creates are still visible via this older list_agents call.
-    # Strategy:
-    #   1. list_agents() once.
-    #   2. Build a name -> agent record map (try several name fields:
-    #      `name`, then any slug-like attribute) so we can look up by
-    #      our roster slug.
-    #   3. For each roster slug, find the matching agent and pull its
-    #      instructions field.
-    list_method = getattr(client.agents, "list_agents", None)
-    listed: list[Any] = []
-    list_debug: list[str] = []
-    if list_method is None:
-        list_debug.append("list_agents: not on client.agents")
-    else:
-        try:
-            paged = list_method()
-            try:
-                listed = list(paged)
-            except Exception as e:
-                list_debug.append(
-                    f"list_agents: iterating raised {type(e).__name__}: {str(e)[:160]}"
-                )
-                listed = []
-            list_debug.append(f"list_agents: got {len(listed)} item(s)")
-            # Sample first few item types + any visible name-like field
-            # so we can see how to match them up to our slugs.
-            for it in listed[:6]:
-                fields = []
-                for fld in ("name", "id", "assistant_id", "agent_name", "display_name"):
-                    val = getattr(it, fld, None)
-                    if val is None and isinstance(it, dict):
-                        val = it.get(fld)
-                    if val is not None:
-                        fields.append(f"{fld}={val!r}")
-                list_debug.append(
-                    f"  - {type(it).__name__}: {' '.join(fields) or '<no recognised name fields>'}"
-                )
-        except Exception as e:
-            list_debug.append(
-                f"list_agents: call raised {type(e).__name__}: {str(e)[:160]}"
-            )
-
-    print(f"[foundry-instr] {list_debug}", flush=True)
-
-    # Build slug -> agent record map. Match candidates loosely: a slug
-    # like 'detection-engineer' might be stored as 'Detection Engineer'
-    # (display_name with title case) or 'detection-engineer' verbatim.
-    def _slug_of(s: str) -> str:
-        return _slug_agent(s) if s else ""
-
-    by_slug: dict[str, Any] = {}
-    for it in listed:
-        for fld in ("name", "agent_name", "display_name", "id"):
-            val = getattr(it, fld, None)
-            if val is None and isinstance(it, dict):
-                val = it.get(fld)
-            if isinstance(val, str) and val:
-                key = _slug_of(val)
-                if key and key not in by_slug:
-                    by_slug[key] = it
+    import requests as _requests
 
     out: dict[str, dict[str, Any]] = {}
     for slug in _default_agent_roster():
         instructions = ""
-        debug: list[str] = list(list_debug)  # share the listing diag with each agent
+        debug: list[str] = []
 
-        match = by_slug.get(slug)
-        if match is None:
-            debug.append(f"no agent matched slug={slug!r} via name/agent_name/display_name/id")
-            # Last-ditch attempt: get_agent(assistant_id=slug) — usually
-            # fails because assistant_id is a GUID, but try anyway.
-            ga = getattr(client.agents, "get_agent", None)
-            if ga is not None:
-                try:
-                    result = ga(assistant_id=slug)
-                    extracted = _extract_instructions_from_result(result)
-                    if extracted:
-                        debug.append(
-                            f"get_agent(assistant_id={slug!r}): ok, {len(extracted)} chars"
-                        )
-                        instructions = extracted
-                except Exception as e:
+        for tmpl in url_templates:
+            url = tmpl.format(slug=slug)
+            try:
+                r = _requests.get(
+                    url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=15,
+                )
+            except Exception as e:
+                debug.append(
+                    f"GET {tmpl}: {type(e).__name__}: {str(e)[:120]}"
+                )
+                continue
+
+            status = r.status_code
+            try:
+                body = r.json()
+            except Exception:
+                body = r.text[:300] if r.text else ""
+
+            if 200 <= status < 300 and isinstance(body, dict):
+                extracted = _extract_instructions_from_result(body)
+                if extracted:
                     debug.append(
-                        f"get_agent(assistant_id={slug!r}): {type(e).__name__}: {str(e)[:120]}"
+                        f"GET {tmpl}: 200, {len(extracted)} chars"
                     )
-        else:
-            extracted = _extract_instructions_from_result(match)
-            if extracted:
+                    instructions = extracted
+                    break
+                # 200 but no instructions — surface the top-level keys so
+                # we can see what to walk into.
+                keys = list(body.keys())[:10] if isinstance(body, dict) else []
                 debug.append(
-                    f"matched via list_agents -> {type(match).__name__}, "
-                    f"{len(extracted)} chars"
+                    f"GET {tmpl}: 200, no instructions; keys={keys}"
                 )
-                instructions = extracted
+            elif 200 <= status < 300:
+                debug.append(
+                    f"GET {tmpl}: 200 but body type {type(body).__name__}"
+                )
             else:
-                debug.append(
-                    f"matched via list_agents -> {type(match).__name__}, "
-                    f"but no instructions field"
-                )
-                # Surface what attributes ARE on the matched object so
-                # the next iteration can target them.
-                attrs = sorted(
-                    a for a in dir(match)
-                    if not a.startswith("_") and not callable(getattr(match, a, None))
-                )[:20]
-                debug.append(f"  attrs: {attrs}")
+                # Truncate the error body so debug stays readable.
+                if isinstance(body, dict):
+                    err_str = json.dumps(body)[:200]
+                else:
+                    err_str = str(body)[:200]
+                debug.append(f"GET {tmpl}: {status} - {err_str}")
 
         if not instructions:
             print(
