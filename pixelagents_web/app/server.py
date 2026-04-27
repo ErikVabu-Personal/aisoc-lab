@@ -667,6 +667,7 @@ def config_view(request: Request) -> Response:
         '</p>'
         '<div id="aisoc-auto-pickup-root"></div>'
         '<div id="aisoc-auto-close-root"></div>'
+        '<div id="aisoc-generic-instructions-root"></div>'
         '<div id="aisoc-config-root"></div>'
     )
     return HTMLResponse(_render_shell(
@@ -1158,6 +1159,157 @@ def api_agents_state(
         )
 
     return {"agents": agents, "ts": now, "cooldown_sec": cooldown, "roster": roster}
+
+
+# ── Foundry agent instructions (read-only) ───────────────────────────
+# Pulls each agent's current `instructions` blob from Foundry via the
+# AI Projects SDK (same SDK the Phase-2 deploy script uses to write).
+# Splits the shared preamble (common.md content, identical across all
+# four agents) from the role-specific tail. Cached briefly so polling
+# the /config page doesn't hammer Foundry.
+_FOUNDRY_INSTRUCTIONS_CACHE: Dict[str, Any] = {"ts": 0.0, "payload": None}
+_FOUNDRY_INSTRUCTIONS_TTL_SEC = 30.0
+
+
+def _fetch_foundry_agent_instructions() -> dict[str, str]:
+    """Return {agent_slug: full_instructions_string} for each agent in
+    the configured roster. Raises RuntimeError on misconfiguration or
+    Foundry failure."""
+
+    project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
+    if not project_endpoint:
+        raise RuntimeError("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT not set")
+
+    try:
+        from azure.identity import DefaultAzureCredential
+        from azure.ai.projects import AIProjectClient
+    except Exception as e:
+        raise RuntimeError(f"azure-ai-projects SDK not available: {e!r}") from e
+
+    client = AIProjectClient(endpoint=project_endpoint, credential=DefaultAzureCredential())
+
+    out: dict[str, str] = {}
+    for slug in _default_agent_roster():
+        instructions = ""
+        # Different SDK versions disagree on the exact read method — try
+        # the documented one first, then fall back through plausible
+        # alternatives so we don't block on a minor version bump.
+        for method_name, kwargs in (
+            ("get_version", {"agent_name": slug}),
+            ("get",         {"agent_name": slug}),
+        ):
+            method = getattr(client.agents, method_name, None)
+            if method is None:
+                continue
+            try:
+                result = method(**kwargs)
+            except Exception:
+                continue
+            # The "version" object has a `definition` (PromptAgentDefinition)
+            # carrying the instructions string. Probe defensively.
+            for accessor in ("definition", "_definition"):
+                obj = getattr(result, accessor, None) or (
+                    result.get(accessor) if isinstance(result, dict) else None
+                )
+                if obj is None:
+                    continue
+                instr = (
+                    getattr(obj, "instructions", None)
+                    or (obj.get("instructions") if isinstance(obj, dict) else None)
+                )
+                if isinstance(instr, str):
+                    instructions = instr
+                    break
+            if instructions:
+                break
+            # Some SDK versions expose instructions directly on the result.
+            top_level = (
+                getattr(result, "instructions", None)
+                or (result.get("instructions") if isinstance(result, dict) else None)
+            )
+            if isinstance(top_level, str) and top_level:
+                instructions = top_level
+                break
+        out[slug] = instructions
+    return out
+
+
+def _split_common_and_role(
+    full_by_slug: dict[str, str],
+) -> tuple[str, dict[str, str]]:
+    """Find the longest common prefix across all agents' instructions
+    (truncated to a paragraph boundary so we don't split mid-sentence)
+    and return (common_preamble, {slug: role_specific_tail}).
+
+    Falls back gracefully when an agent's instructions are missing or
+    the prefix is degenerate — those agents get their full instructions
+    back as the role tail.
+    """
+    populated = {k: v for k, v in full_by_slug.items() if isinstance(v, str) and v.strip()}
+    if len(populated) < 2:
+        # Need at least two strings to compute a meaningful common
+        # prefix. Surface whatever we have as role-only.
+        return "", dict(full_by_slug)
+
+    texts = list(populated.values())
+    common = texts[0]
+    for t in texts[1:]:
+        n = min(len(common), len(t))
+        i = 0
+        while i < n and common[i] == t[i]:
+            i += 1
+        common = common[:i]
+
+    # Truncate to the last paragraph boundary so the split lands cleanly
+    # between two markdown blocks rather than mid-line.
+    sep_idx = common.rfind("\n\n")
+    common = common[:sep_idx] if sep_idx > 0 else ""
+    common_clean = common.rstrip("\n")
+
+    roles: dict[str, str] = {}
+    for slug, full in full_by_slug.items():
+        if common and isinstance(full, str) and full.startswith(common):
+            roles[slug] = full[len(common):].lstrip("\n")
+        else:
+            roles[slug] = full or ""
+    return common_clean, roles
+
+
+@app.get("/api/foundry/agents/instructions")
+def api_foundry_agent_instructions(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Read-only view of each Foundry agent's current `instructions`
+    field, with the shared common preamble extracted into its own
+    block. Used by /config to render the "Generic instructions /
+    context" card and the per-agent instruction expanders.
+    """
+
+    _require_auth(request, x_pixelagents_token)
+
+    now = time.time()
+    cached = _FOUNDRY_INSTRUCTIONS_CACHE.get("payload")
+    if cached is not None and (now - float(_FOUNDRY_INSTRUCTIONS_CACHE.get("ts") or 0)) < _FOUNDRY_INSTRUCTIONS_TTL_SEC:
+        return cached
+
+    try:
+        full_by_slug = _fetch_foundry_agent_instructions()
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    common, roles = _split_common_and_role(full_by_slug)
+    payload = {
+        "common": common,
+        "agents": [
+            {"slug": slug, "instructions": roles.get(slug, "")}
+            for slug in _default_agent_roster()
+        ],
+        "ts": now,
+    }
+    _FOUNDRY_INSTRUCTIONS_CACHE["payload"] = payload
+    _FOUNDRY_INSTRUCTIONS_CACHE["ts"] = now
+    return payload
 
 
 def _ai_projects_token() -> str:

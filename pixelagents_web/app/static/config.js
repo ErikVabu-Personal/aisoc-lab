@@ -106,6 +106,17 @@
       overflow-x: auto;
       max-height: 320px;
     }
+    /* Instructions panel — same shell as raw-JSON pre, but the body is
+       prose (markdown source) so use a system stack and let it wrap. */
+    #${ROOT_ID} .card pre.instr {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #1f2937;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 480px;
+    }
 
     #${ROOT_ID} .empty,
     #${ROOT_ID} .err {
@@ -129,6 +140,11 @@
 
   // Track which agent cards have raw JSON expanded across re-renders.
   const expanded = new Set();
+  // Track which agent cards have role-specific instructions expanded.
+  const expandedInstructions = new Set();
+  // {slug: instructions_text} populated by fetchInstructions(); used by
+  // both renderAgent (per-agent expander) and the Generic card IIFE.
+  let agentInstructions = {};
 
   function escapeHtml(s) {
     return String(s)
@@ -188,9 +204,24 @@
     }
     html += '</dl>';
 
+    const showInstr = expandedInstructions.has(name);
+    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const instr = agentInstructions[slug];
+    const hasInstr = typeof instr === 'string' && instr.length > 0;
+
     html += '<div class="toggle">';
+    if (hasInstr || agentInstructions.__loaded) {
+      const label = hasInstr
+        ? (showInstr ? 'Hide instructions' : 'Show instructions')
+        : 'No instructions';
+      const disabled = hasInstr ? '' : 'disabled';
+      html += `<button data-instr="${escapeHtml(name)}" ${disabled}>${label}</button>`;
+    }
     html += `<button data-agent="${escapeHtml(name)}">${showRaw ? 'Hide raw JSON' : 'Show raw JSON'}</button>`;
     html += '</div>';
+    if (showInstr && hasInstr) {
+      html += `<pre class="instr">${escapeHtml(instr)}</pre>`;
+    }
     if (showRaw) {
       html += `<pre>${escapeHtml(JSON.stringify(a, null, 2))}</pre>`;
     }
@@ -208,11 +239,19 @@
     body += '</div>';
     root.innerHTML = body;
 
-    root.querySelectorAll('.card .toggle button').forEach((btn) => {
+    root.querySelectorAll('.card .toggle button[data-agent]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const n = btn.dataset.agent;
         if (expanded.has(n)) expanded.delete(n);
         else expanded.add(n);
+        render(window.__AISOC_AGENTS_LAST || []);
+      });
+    });
+    root.querySelectorAll('.card .toggle button[data-instr]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const n = btn.dataset.instr;
+        if (expandedInstructions.has(n)) expandedInstructions.delete(n);
+        else expandedInstructions.add(n);
         render(window.__AISOC_AGENTS_LAST || []);
       });
     });
@@ -272,6 +311,167 @@
       + 'the agents <strong>cannot</strong> close incidents on their own.',
     renderState: () => 'Reporter closes incidents when confident',
   });
+
+  // ── Generic instructions / context (read-only) ────────────────────
+  // Renders the shared preamble (common.md, identical across all
+  // agents) as a single card. Per-agent role-specific instructions are
+  // rendered inline on each agent card via the "Show instructions"
+  // toggle (see renderAgent).
+  injectGenericInstructionsStyles();
+  setupGenericInstructions();
+
+  // Also kick off the fetch — populates `agentInstructions` so the
+  // per-agent "Show instructions" buttons can light up.
+  fetchAgentInstructions();
+  setInterval(fetchAgentInstructions, 60000);
+
+  // ── Generic instructions card ─────────────────────────────────────
+  function injectGenericInstructionsStyles() {
+    if (document.getElementById('aisoc-generic-instr-styles')) return;
+    const css = `
+      #aisoc-generic-instructions-root { margin-bottom: 16px; }
+      #aisoc-generic-instructions-root .gi-card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 16px 20px;
+      }
+      #aisoc-generic-instructions-root .gi-head {
+        display: flex; align-items: baseline; gap: 12px;
+        margin-bottom: 6px;
+      }
+      #aisoc-generic-instructions-root .gi-title {
+        font-size: 15px; font-weight: 700; color: #1f2937;
+      }
+      #aisoc-generic-instructions-root .gi-sub {
+        font-size: 12px; color: #6b7280; flex: 1;
+      }
+      #aisoc-generic-instructions-root .gi-toggle {
+        background: transparent;
+        border: 1px solid #cbd5e1;
+        color: #0099cc;
+        font-weight: 600;
+        font-size: 12px;
+        padding: 4px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #aisoc-generic-instructions-root .gi-toggle:hover {
+        background: #f0f9ff; border-color: #0099cc;
+      }
+      #aisoc-generic-instructions-root .gi-toggle:disabled {
+        opacity: 0.5; cursor: not-allowed;
+      }
+      #aisoc-generic-instructions-root .gi-body {
+        margin-top: 10px;
+        padding: 12px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #1f2937;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 480px;
+        overflow-y: auto;
+      }
+      #aisoc-generic-instructions-root .gi-empty {
+        color: #6b7280; font-style: italic; font-size: 13px;
+      }
+      #aisoc-generic-instructions-root .gi-err {
+        color: #991b1b; font-size: 13px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+    `;
+    const style = document.createElement('style');
+    style.id = 'aisoc-generic-instr-styles';
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  // Generic-instructions card state lives in closure variables so it
+  // survives across renders driven by fetchAgentInstructions().
+  let giOpen = false;
+  let giCommon = '';
+  let giError = '';
+  let giLoadedAt = 0;
+
+  function setupGenericInstructions() {
+    const r = document.getElementById('aisoc-generic-instructions-root');
+    if (!r) return;
+    renderGenericInstructions();
+  }
+
+  function renderGenericInstructions() {
+    const r = document.getElementById('aisoc-generic-instructions-root');
+    if (!r) return;
+    const ageTxt = giLoadedAt
+      ? ` · loaded ${escapeHtml(fmtAgoLocal(giLoadedAt) || '')}`
+      : '';
+    const hasCommon = typeof giCommon === 'string' && giCommon.length > 0;
+    let body = `
+      <div class="gi-card">
+        <div class="gi-head">
+          <span class="gi-title">Generic instructions / context</span>
+          <span class="gi-sub">Shared preamble loaded from each Foundry agent's deployed instructions${ageTxt}</span>
+          <button class="gi-toggle" id="gi-toggle-btn" ${hasCommon ? '' : 'disabled'}>
+            ${giOpen ? 'Hide' : (hasCommon ? 'Show' : 'Loading…')}
+          </button>
+        </div>
+    `;
+    if (giError) {
+      body += `<div class="gi-err">Failed to load instructions: ${escapeHtml(giError)}</div>`;
+    } else if (giOpen && hasCommon) {
+      body += `<div class="gi-body">${escapeHtml(giCommon)}</div>`;
+    } else if (giOpen && !hasCommon) {
+      body += `<div class="gi-empty">No shared preamble found. Either the agents are not yet deployed, or each agent's instructions diverge entirely (no common prefix).</div>`;
+    }
+    body += '</div>';
+    r.innerHTML = body;
+
+    const btn = document.getElementById('gi-toggle-btn');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        giOpen = !giOpen;
+        renderGenericInstructions();
+      });
+    }
+  }
+
+  async function fetchAgentInstructions() {
+    try {
+      const r = await fetch('/api/foundry/agents/instructions',
+                            { credentials: 'same-origin' });
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        throw new Error(`HTTP ${r.status}${text ? `: ${text}` : ''}`);
+      }
+      const data = await r.json();
+      giCommon = (data && typeof data.common === 'string') ? data.common : '';
+      giError = '';
+      giLoadedAt = Math.floor(Date.now() / 1000);
+
+      const map = {};
+      for (const a of (data && data.agents) || []) {
+        if (a && a.slug) map[a.slug] = a.instructions || '';
+      }
+      // Sentinel field so renderAgent can distinguish "loaded but empty"
+      // from "still loading".
+      map.__loaded = true;
+      agentInstructions = map;
+
+      renderGenericInstructions();
+      // Re-render the agents grid so the per-agent buttons appear /
+      // refresh.
+      render(window.__AISOC_AGENTS_LAST || []);
+    } catch (e) {
+      giError = String(e.message || e);
+      // Don't drop previously-loaded agentInstructions on transient
+      // errors — keeps the per-agent buttons usable while we retry.
+      renderGenericInstructions();
+    }
+  }
 
   // ── Helpers ────────────────────────────────────────────────────────
   function fmtAgoLocal(t) {

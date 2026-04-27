@@ -12,6 +12,10 @@ dependencies = [
   # Needed for the ad-hoc chat endpoint that invokes Foundry agents.
   "requests>=2.31",
   "azure-identity>=1.15",
+  # Used by /api/foundry/agents/instructions to read each agent's
+  # current instructions blob from Foundry. Same SDK the Phase-2
+  # deploy script uses to write them, so the call shape is symmetric.
+  "azure-ai-projects>=1.0.0b5",
 ]
 
 [project.scripts]
