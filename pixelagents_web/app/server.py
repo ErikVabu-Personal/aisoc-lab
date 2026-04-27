@@ -1336,21 +1336,54 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
         "version",
     )
 
-    def _find_version(body: dict) -> str | None:
+    def _find_version(body: dict) -> tuple[str | None, str]:
+        """Returns (version_str, debug_note). The version-id format
+        Foundry uses for agents in this project is a list under
+        `versions` — pick the highest entry. Falls back to a wide list
+        of single-value field names for other Foundry surfaces."""
+        # Newest-first list of version objects/ints under `versions`.
+        versions = body.get("versions")
+        if isinstance(versions, list) and versions:
+            # Each item could be: an int, a str, or a dict with an id /
+            # version field. Try to pull a numeric (or numeric-like)
+            # token from each.
+            candidates: list[str] = []
+            for v in versions:
+                if isinstance(v, (int, str)) and str(v):
+                    candidates.append(str(v))
+                elif isinstance(v, dict):
+                    for f in ("version", "id", "name", "version_number", "versionNumber"):
+                        sub = v.get(f)
+                        if isinstance(sub, (int, str)) and str(sub):
+                            candidates.append(str(sub))
+                            break
+            if candidates:
+                # Try numeric sort first; fall back to lexicographic.
+                try:
+                    sorted_nums = sorted(
+                        candidates, key=lambda s: int(str(s)), reverse=True
+                    )
+                    chosen = sorted_nums[0]
+                except Exception:
+                    chosen = sorted(candidates, reverse=True)[0]
+                return (chosen, f"from versions[] ({len(candidates)} candidate(s))")
+
         for f in VERSION_FIELDS:
             v = body.get(f)
             if isinstance(v, (int, str)) and str(v):
-                return str(v)
+                return (str(v), f"from field {f!r}")
+
         # Some shapes nest under .properties or .latest
         for nest_key in ("properties", "latest"):
             sub = body.get(nest_key)
             if isinstance(sub, dict):
-                v = _find_version(sub)
+                v, note = _find_version(sub)
                 if v:
-                    return v
+                    return (v, f"{nest_key}.{note}")
             elif isinstance(sub, (int, str)) and str(sub) and nest_key == "latest":
-                return str(sub)
-        return None
+                return (str(sub), f"from field {nest_key!r}")
+
+        return (None, "no version field found")
 
     out: dict[str, dict[str, Any]] = {}
     for slug in _default_agent_roster():
@@ -1395,11 +1428,13 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
 
             # Metadata-only response. Look for a version number to
             # follow up with /versions/{N}.
-            version = _find_version(body)
+            version, version_note = _find_version(body)
             if not version:
+                # Surface a snippet of `versions` so we can see the shape.
+                versions_repr = repr(body.get("versions"))[:140]
                 debug.append(
-                    f"GET {tmpl}: 200, no instructions and no version "
-                    f"field; keys={keys}"
+                    f"GET {tmpl}: 200, no instructions ({version_note}); "
+                    f"keys={keys}; versions={versions_repr}"
                 )
                 continue
 
@@ -1415,7 +1450,7 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
             v_status, v_body, v_err = _do_get(version_url)
             if v_err is not None:
                 debug.append(
-                    f"GET {tmpl}: 200 (version={version}), "
+                    f"GET {tmpl}: 200 ({version_note} -> {version}), "
                     f"version GET err: {v_err}"
                 )
                 continue
@@ -1425,8 +1460,8 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
                     else str(v_body)[:200]
                 )
                 debug.append(
-                    f"GET {tmpl}: 200 (version={version}), version GET "
-                    f"{v_status} - {v_err_str}"
+                    f"GET {tmpl}: 200 ({version_note} -> {version}), "
+                    f"version GET {v_status} - {v_err_str}"
                 )
                 continue
 
@@ -1434,7 +1469,7 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
             if v_extracted and v_extracted != "blueprint_reference":
                 debug.append(
                     f"GET {tmpl} -> /versions/{version}: 200, "
-                    f"{len(v_extracted)} chars"
+                    f"{len(v_extracted)} chars ({version_note})"
                 )
                 instructions = v_extracted
                 break
