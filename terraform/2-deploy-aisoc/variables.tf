@@ -89,9 +89,9 @@ variable "foundry_model_sku_name" {
 }
 
 variable "foundry_model_sku_capacity" {
-  description = "SKU capacity for the deployment (TPM units in thousands)."
+  description = "SKU capacity for the deployment. For Azure OpenAI's GlobalStandard SKU this is **thousands of tokens-per-minute** — i.e. 1500 = 1,500,000 TPM. Defaults to 1500: any lower and the orchestrator's three-agent pipeline trips Foundry's rate limit (429 'rate_limit_exceeded') on tool-heavy incidents, especially when the investigator and reporter follow triage in quick succession."
   type        = number
-  default     = 10
+  default     = 1500
 }
 
 
