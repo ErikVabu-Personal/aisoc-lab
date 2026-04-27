@@ -70,4 +70,4 @@ resource "azapi_resource" "foundry_account" {
 # We intentionally do NOT create the Foundry Project in Terraform.
 # The azapi provider can intermittently fail reads with "Missing Resource Identity After Read".
 # Create the project after apply using:
-#   python3 scripts/legacy/deploy_foundry_project.py
+#   python3 scripts/deploy_foundry_project.py

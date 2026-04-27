@@ -6,7 +6,7 @@ root="$(cd "$here/.." && pwd)"
 cd "$root"
 
 # Project endpoint is discovered after project creation (we create the project via script, not Terraform).
-# Prefer env var if set, else fall back to scripts/legacy/deploy_foundry_project.py to read it.
+# Prefer env var if set, else fall back to scripts/deploy_foundry_project.py to read it.
 if [[ -n "${AZURE_AI_FOUNDRY_PROJECT_ENDPOINT:-}" ]]; then
   export AZURE_AI_FOUNDRY_PROJECT_ENDPOINT
 else

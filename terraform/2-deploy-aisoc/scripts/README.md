@@ -26,7 +26,3 @@ Notes:
 - `deploy_prompt_agents_with_runner_tools.sh` bootstraps its own `.venv/` and installs Python deps from `scripts/requirements.txt`.
 - It also creates (or fixes) the Foundry project connection `aisoc-runner-key` used for the runner bearer header.
 
-## Legacy scripts
-
-Older experiments and alternate deployment approaches live in `scripts/legacy/`.
-They are kept for reference but are not part of the happy-path demo flow.

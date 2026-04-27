@@ -15,7 +15,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-echo "Deploying Foundry project via scripts/legacy/deploy_foundry_project.py ..." >&2
-python3 scripts/legacy/deploy_foundry_project.py "$@"
+echo "Deploying Foundry project via scripts/deploy_foundry_project.py ..." >&2
+python3 scripts/deploy_foundry_project.py "$@"
 
 echo "OK: Foundry project deploy script completed." >&2
