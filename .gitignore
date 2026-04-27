@@ -10,6 +10,11 @@ crash.*.log
 terraform.tfvars
 *.auto.tfvars
 
+# Local config (contains secrets — admin password, user roster, etc).
+# Copy aisoc.config.example -> aisoc.config and edit; aisoc_demo.sh
+# sources it automatically if present.
+/aisoc.config
+
 # OS
 .DS_Store
 Thumbs.db

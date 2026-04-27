@@ -31,6 +31,12 @@
 #   deploy   — walk Phases 1 → 2 → 3 (build, configure, smoke-test)
 #   destroy  — terraform destroy in reverse order (3 → 2 → 1)
 #
+# Configuration precedence (low → high):
+#   1. variables.tf defaults inside each phase
+#   2. ./aisoc.config (gitignored) — copy from aisoc.config.example
+#   3. --flag=value on the CLI
+#   4. Pre-set TF_VAR_* in the current shell (always wins)
+#
 # Any --key=value is forwarded as TF_VAR_<key> across all phases.
 # Terraform silently ignores TF_VAR_<x> if x isn't declared in that
 # phase's module, so a Phase-1-only var (e.g. --vm-size=...) won't
@@ -131,6 +137,12 @@ Other:
                               for the `deploy` command.
   -h, --help                  show this help
 
+Config file:
+  ./aisoc.config (gitignored, optional). Sourced before CLI parsing so
+  it acts as your baseline; --flag values override for the current run.
+  Copy ./aisoc.config.example to get started — everything documented
+  there: RG, regions, VM password, Foundry model, demo user roster, etc.
+
 Generic pass-through:
   Any unrecognized --key=value is forwarded as TF_VAR_<key>=<value>.
   Dashes in <key> are converted to underscores (--foo-bar -> TF_VAR_foo_bar).
@@ -159,6 +171,23 @@ declare -A USER_VARS=()
 SUBSCRIPTION_OVERRIDE=""
 SKIP_OIDC=0
 ACTION=""
+
+# Source aisoc.config (gitignored) if present, so the user can keep
+# their TF_VAR_* + AISOC_* defaults in one place at the repo root
+# instead of scattered tfvars files. CLI flags parsed below still
+# override these values for the current run.
+if [[ -f "$ROOT/aisoc.config" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT/aisoc.config"
+  echo "Loaded $ROOT/aisoc.config" >&2
+fi
+# aisoc.config can set its own deploy-script-level knobs:
+#   AISOC_SKIP_OIDC=1                 -> skip OIDC bootstrap
+#   AISOC_GITHUB_REPO=<owner>/<repo>  -> override the GitHub repo
+#   AZURE_SUBSCRIPTION_OVERRIDE=<id>  -> switch subscription
+[[ "${AISOC_SKIP_OIDC:-0}" == "1" ]] && SKIP_OIDC=1
+[[ -n "${AISOC_GITHUB_REPO:-}" ]] && REPO="$AISOC_GITHUB_REPO"
+[[ -n "${AZURE_SUBSCRIPTION_OVERRIDE:-}" ]] && SUBSCRIPTION_OVERRIDE="$AZURE_SUBSCRIPTION_OVERRIDE"
 
 # First positional arg is the subcommand: deploy or destroy.
 # Allow --help / -h before the subcommand for convenience.

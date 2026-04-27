@@ -1,0 +1,90 @@
+# aisoc.config.example — single-file configuration for the AISOC demo
+# ─────────────────────────────────────────────────────────────────────
+#
+# 1. Copy this file to `aisoc.config` (gitignored) at the repo root.
+# 2. Uncomment + fill in the values you want to override.
+# 3. Run ./aisoc_demo.sh deploy — the script sources this file before
+#    parsing CLI flags, so:
+#      - aisoc.config            sets the baseline
+#      - --flag=value on CLI     overrides aisoc.config for that run
+#      - pre-set env in shell    overrides everything
+#
+# This is bash-`source`d, so use shell syntax (no quotes needed for
+# simple values; quote anything containing spaces, JSON, or special
+# characters).
+#
+# Most values map to Terraform variables via the TF_VAR_<name> contract
+# Terraform supports natively. A few are deploy-script-level (no
+# TF_VAR_ prefix). Both kinds are listed below.
+
+# ── Azure subscription / resource group / region ────────────────────
+# Resource group Phase 1 will create (if it doesn't exist) and Phases
+# 2 + 3 will deploy into.
+# TF_VAR_resource_group_name="rg-aisoc-demo"
+
+# Region for Phase 1 (Sentinel + lab VM).
+# TF_VAR_azure_location="westus"
+
+# Region for Phase 2 (Function Apps). EP-series quota is most readily
+# available in westcentralus on freshly-onboarded subscriptions.
+# TF_VAR_location_override="westcentralus"
+
+# Region for Foundry. Model Router + gpt-4.1-mini are gated to
+# eastus2 / swedencentral.
+# TF_VAR_foundry_location="eastus2"
+
+# Override the active Azure subscription before any deploy step runs
+# (defaults to whatever `az account show` returns).
+# AZURE_SUBSCRIPTION_OVERRIDE="6e961575-c100-444e-a868-1972223b2410"
+
+# ── Lab VM ──────────────────────────────────────────────────────────
+# Lab VM admin password. If left unset, Phase 1 generates a random
+# 28-char password (held in Terraform state, stable across re-applies)
+# and the deploy script prints it at the end. Set explicitly here if
+# you need a specific password.
+# TF_VAR_admin_password="<your-vm-password>"
+
+# Override the default admin username.
+# TF_VAR_admin_username="azureadmin"
+
+# VM size. Default is Standard_D2s_v3.
+# TF_VAR_vm_size="Standard_D2s_v3"
+
+# ── Foundry model deployment ────────────────────────────────────────
+# Model identity. Defaults match the validated demo combo.
+# TF_VAR_foundry_model_choice="gpt-4.1-mini"
+# TF_VAR_foundry_model_version="2025-04-14"
+# TF_VAR_foundry_model_deployment_name="gpt-4.1-mini"
+
+# SKU + capacity. Capacity is in **thousands of TPM** for the
+# GlobalStandard SKU — 1500 = 1,500,000 TPM.
+# TF_VAR_foundry_model_sku_name="GlobalStandard"
+# TF_VAR_foundry_model_sku_capacity="1500"
+
+# ── Demo login roster (PixelAgents Web) ─────────────────────────────
+# JSON object: {email: password}. Wired into the Container App as a
+# secret (encrypted at rest), exposed to the server as
+# AISOC_USERS_JSON. Adding/removing users from the demo is a one-
+# line edit to this file + `terraform apply` in Phase 3.
+#
+# Demo-grade only: passwords are stored verbatim. Don't reuse real
+# credentials here.
+#
+# Pure single-line JSON keeps the bash escaping simple — no nested
+# quotes inside the string.
+# TF_VAR_pixelagents_users='{"erik.vanbuggenhout@nviso.eu":"admin123","jeroen.laureys@nviso.eu":"saleswarmachine"}'
+
+# ── OpenRouter (optional) ───────────────────────────────────────────
+# Only needed if you've wired the gateway to call OpenRouter as well
+# as Foundry — leave commented for the standard demo.
+# TF_VAR_openrouter_api_key="sk-or-v1-..."
+
+# ── Deploy-script-level options ─────────────────────────────────────
+# Skip the OIDC bootstrap step on subsequent runs (the one-time SP +
+# federated-credential setup). Useful in CI loops where the trust is
+# already configured.
+# AISOC_SKIP_OIDC=1
+
+# GitHub repo to sync repo-vars into. Defaults to ErikVabu-Personal/
+# aisoc-lab; override here if you fork.
+# AISOC_GITHUB_REPO="<owner>/<repo>"
