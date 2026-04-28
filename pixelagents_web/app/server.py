@@ -1095,8 +1095,32 @@ def api_current_incident(
     request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
+    """Snapshot of the in-flight workflow run, if any.
+
+    The base shape is `{"incident_number": int|None, "started_at":
+    float|None}`. When an incident is in flight we enrich the response
+    with `title`, `view_status`, and `phase` pulled from the cached
+    incidents listing — saves the sidebar a separate fetch round-trip
+    per poll just to render the banner.
+    """
+
     _require_auth(request, x_pixelagents_token)
-    return dict(CURRENT_INCIDENT)
+    snapshot: dict[str, Any] = dict(CURRENT_INCIDENT)
+    num = snapshot.get("incident_number")
+    if num is not None:
+        cached = _INCIDENTS_CACHE.get("payload")
+        if isinstance(cached, dict):
+            for inc in (cached.get("incidents") or []):
+                if inc.get("number") == num:
+                    snapshot["title"] = inc.get("title")
+                    snapshot["view_status"] = inc.get("view_status")
+                    snapshot["severity"] = inc.get("severity")
+                    break
+        # Phase tracking from INCIDENT_PHASES (set by _orchestrate_one).
+        phase_rec = INCIDENT_PHASES.get(str(num)) or {}
+        if phase_rec:
+            snapshot["phase"] = phase_rec.get("phase")
+    return snapshot
 
 
 @app.get("/api/sentinel/incidents/{incident_number}/runs")

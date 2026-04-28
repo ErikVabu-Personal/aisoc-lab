@@ -19,6 +19,7 @@
   const POLL_AGENTS_MS = 4000;
   const POLL_ONLINE_MS = 4000;
   const POLL_DM_MS = 3000; // refresh open DM threads
+  const POLL_INCIDENT_MS = 1500; // current_incident — fast so the elapsed timer ticks
   const STREAM_PATH = (agent) => `/api/agents/${encodeURIComponent(agent)}/message/stream`;
 
   // ── Styles ──────────────────────────────────────────────────────────
@@ -258,6 +259,67 @@
       color: #6b7280;
       margin: 12px 12px 6px;
     }
+    /* Active-incident banner at the very top of the sidebar body.
+       Shown only when /api/current_incident reports a non-null
+       incident_number. Click → /dashboard. */
+    #${ROOT_ID} .active-banner {
+      display: block;
+      margin: 8px 8px 12px;
+      padding: 10px 12px;
+      background: rgba(0,153,204,0.10);
+      border: 1px solid rgba(0,153,204,0.45);
+      border-radius: 6px;
+      cursor: pointer;
+      text-decoration: none !important;  /* it's an <a>, kill default underline */
+      color: inherit;
+      transition: background 0.15s ease;
+    }
+    #${ROOT_ID} .active-banner:hover {
+      background: rgba(0,153,204,0.16);
+    }
+    #${ROOT_ID} .active-banner .ab-line1 {
+      display: flex; align-items: center; gap: 8px;
+      font-weight: 700;
+      font-size: 13px;
+      color: #1e3a8a;
+    }
+    #${ROOT_ID} .active-banner .ab-line1 .num {
+      font-variant-numeric: tabular-nums;
+    }
+    #${ROOT_ID} .active-banner .ab-line2 {
+      font-size: 12px;
+      color: #1f2937;
+      margin-top: 4px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #${ROOT_ID} .active-banner .ab-line3 {
+      font-size: 11px;
+      color: #6b7280;
+      margin-top: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    /* Per-agent / per-human "owns #N" pill — blue ribbon next to the
+       row name to mark who's currently holding the incident. */
+    #${ROOT_ID} .item .head .owns-pill {
+      flex-shrink: 0;
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: rgba(0,153,204,0.16);
+      color: #1e3a8a;
+      font-variant-numeric: tabular-nums;
+    }
+    /* Highlight ring on the row currently owning the active incident
+       — subtle so it doesn't fight with the dot pulse, but enough
+       that you can scan to the right row at a glance. */
+    #${ROOT_ID} .item.owns-active {
+      box-shadow: 0 0 0 2px rgba(0,153,204,0.45) inset;
+    }
     /* Online-presence pulse — green dot on each online human's row. */
     #${ROOT_ID} .item .head .dot.online {
       background: #10b981;
@@ -288,6 +350,7 @@
     agents: [],                  // [{agent, state, ...}]
     users: [],                   // [{email, online, last_seen, ago_sec}] — full roster minus me
     me: '',                      // my email (from /api/sessions/online)
+    currentIncident: null,       // {incident_number, started_at, title?, view_status?, phase?} or null
     expanded: new Set(),         // ids 'hitl-{qid}' or 'chat-{agent}' or 'dm-{email}'
     conversations: {},           // agent -> [{role, text, toolCalls?, streaming?, error?}]
     dmThreads: {},               // peer_email -> [{id, from, to, text, ts}]
@@ -334,6 +397,32 @@
   // wrap so the rest of this file can keep reading `agent` / `status`.
   function agentName(a) { return (a && (a.id || a.agent)) || ''; }
   function agentStatus(a) { return (a && a.status) || 'idle'; }
+
+  // Returns the agent slug that currently "owns" the active incident
+  // (i.e., is in reading state while a workflow is in flight) or
+  // null. Heuristic: there's at most one CURRENT_INCIDENT, and during
+  // an in-flight run exactly one agent is in the reading state.
+  function activeOwnerAgent() {
+    if (!STATE.currentIncident || STATE.currentIncident.incident_number == null) {
+      return null;
+    }
+    if (STATE.currentIncident.phase && STATE.currentIncident.phase !== 'agentic') {
+      // Server says the run already handed back to a human — no
+      // agent currently "holds" the incident in the visual sense.
+      return null;
+    }
+    for (const a of STATE.agents) {
+      if (agentStatus(a) === 'reading') return agentName(a);
+    }
+    return null;
+  }
+
+  function fmtElapsed(secs) {
+    const s = Math.max(0, Math.floor(secs));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60), r = s % 60;
+    return `${m}m${String(r).padStart(2, '0')}s`;
+  }
 
   // ── Rendering ───────────────────────────────────────────────────────
   let rootEl = null;
@@ -382,14 +471,28 @@
     const sending = STATE.sending.has(id);
     const chev = expanded ? '▾' : '▸';
     const status = agentStatus(a);
+
+    // "owns #N" badge + highlight ring when this agent currently
+    // holds the active incident.
+    const ownsActive = (
+      STATE.currentIncident
+      && STATE.currentIncident.incident_number != null
+      && activeOwnerAgent() === agent
+    );
+    const ownsPill = ownsActive
+      ? `<span class="owns-pill" title="Currently working on incident #${STATE.currentIncident.incident_number}">#${STATE.currentIncident.incident_number}</span>`
+      : '';
+    const itemCls = ownsActive ? 'item owns-active' : 'item';
+
     const head = `
       <div class="head" data-toggle="${id}">
         <span class="dot ${status}"></span>
         <span class="name">${escapeHtml(capitalize(agent))}</span>
+        ${ownsPill}
         ${expanded ? '' : `<span class="preview">${escapeHtml(lastMessagePreview(agent))}</span>`}
         <span class="chev">${chev}</span>
       </div>`;
-    if (!expanded) return `<div class="item">${head}</div>`;
+    if (!expanded) return `<div class="${itemCls}">${head}</div>`;
     const conv = STATE.conversations[agent] || [];
     const msgsHtml = conv.length
       ? conv.map((m) => {
@@ -421,7 +524,7 @@
         </div>
         ${errLine}
       </div>`;
-    return `<div class="item">${head}${body}</div>`;
+    return `<div class="${itemCls}">${head}${body}</div>`;
   }
 
   // ── DM thread item (one per online human) ──────────────────────────
@@ -553,6 +656,35 @@
 
     let html = '<header>Communication<div class="sub">Talk to agents and humans · respond to their requests</div></header>';
     html += '<div class="body">';
+
+    // Active incident banner — sits at the very top so the user
+    // always knows what's in flight at a glance.
+    const ci = STATE.currentIncident;
+    if (ci && ci.incident_number != null) {
+      const num = ci.incident_number;
+      const title = ci.title || '(loading title…)';
+      const phase = ci.phase || 'agentic';
+      const ownerSlug = activeOwnerAgent();
+      const ownerLabel = ownerSlug
+        ? capitalize(ownerSlug)
+        : (phase === 'human' ? 'Human analyst' : '—');
+      const elapsed = ci.started_at
+        ? fmtElapsed(Date.now() / 1000 - ci.started_at)
+        : '—';
+      html += `
+        <a href="/dashboard" class="active-banner" title="Open in dashboard">
+          <div class="ab-line1">
+            <span class="dot reading"></span>
+            <span class="num">Incident #${num}</span>
+            <span style="opacity:0.7;font-weight:500;">in flight</span>
+          </div>
+          <div class="ab-line2">${escapeHtml(title)}</div>
+          <div class="ab-line3">
+            ${escapeHtml(ownerLabel)} · ${escapeHtml(elapsed)} elapsed
+          </div>
+        </a>`;
+    }
+
     if (STATE.hitl.length) {
       html += '<h2 class="section">Pending requests</h2>';
       for (const q of STATE.hitl) html += renderHitlItem(q);
@@ -883,6 +1015,27 @@
     } catch (_) { /* ignore — next render keeps showing what we have */ }
   }
 
+  // ── Active-incident polling ────────────────────────────────────────
+  // Drives the banner at the top of the sidebar and the "owns #N"
+  // pill on the agent currently working it. Faster than the agent
+  // poll so the elapsed-time counter ticks visibly.
+  async function pollCurrentIncident() {
+    try {
+      const r = await fetch('/api/current_incident',
+                            { credentials: 'same-origin', headers: authHeaders() });
+      if (!r.ok) return;
+      const data = await r.json();
+      const had = !!(STATE.currentIncident && STATE.currentIncident.incident_number != null);
+      const has = !!(data && data.incident_number != null);
+      STATE.currentIncident = has ? data : null;
+      // Re-render only when state actually changed OR when an incident
+      // is in flight (so the elapsed timer ticks). Avoids burning
+      // cycles re-rendering the static "no incident" sidebar every
+      // 1.5s when nothing is happening.
+      if (has || had) render();
+    } catch (_) { /* ignore */ }
+  }
+
   // ── Online presence + DM polling ───────────────────────────────────
   async function pollOnline() {
     try {
@@ -986,9 +1139,10 @@
 
   ensureRoot();
   render();
-  pollHitl(); pollAgents(); pollOnline();
+  pollHitl(); pollAgents(); pollOnline(); pollCurrentIncident();
   setInterval(pollHitl, POLL_HITL_MS);
   setInterval(pollAgents, POLL_AGENTS_MS);
   setInterval(pollOnline, POLL_ONLINE_MS);
   setInterval(pollOpenDms, POLL_DM_MS);
+  setInterval(pollCurrentIncident, POLL_INCIDENT_MS);
 })();
