@@ -181,19 +181,87 @@
       background: rgba(16,185,129,0.16);
     }
 
-    #${ROOT_ID} button.run {
-      background: #0099cc;
-      color: #ffffff;
-      border: none;
-      padding: 6px 14px;
-      border-radius: 4px;
+    /* Filter dropdowns above the incidents table. */
+    #${ROOT_ID} .filters {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    #${ROOT_ID} .filters label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #6b7280;
       font-weight: 600;
-      font-size: 13px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    #${ROOT_ID} .filters select {
+      padding: 4px 26px 4px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #ffffff;
+      font: 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      color: #1f2937;
       cursor: pointer;
     }
-    #${ROOT_ID} button.run:hover { background: #33b0dd; }
-    #${ROOT_ID} button.run:disabled {
-      background: #cbd5e1; cursor: not-allowed;
+    #${ROOT_ID} .filters select:focus {
+      outline: none;
+      border-color: #0099cc;
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+    }
+    #${ROOT_ID} .filters .count {
+      font-size: 12px;
+      color: #6b7280;
+      margin-left: auto;
+      font-variant-numeric: tabular-nums;
+    }
+    #${ROOT_ID} .filters .clear-btn {
+      padding: 4px 10px;
+      border: 1px solid #cbd5e1;
+      background: transparent;
+      color: #0099cc;
+      font: 600 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #${ROOT_ID} .filters .clear-btn:hover {
+      background: #f0f9ff;
+      border-color: #0099cc;
+    }
+
+    /* Click-to-edit cells (Status + Owner). The pill stays visible
+       on hover with a subtle outline so analysts can tell they're
+       editable; the inline <select> takes over on click. */
+    #${ROOT_ID} .editable {
+      cursor: pointer;
+      border-radius: 999px;
+      transition: outline 0.1s ease;
+      outline: 1px dashed transparent;
+      outline-offset: 2px;
+    }
+    #${ROOT_ID} .editable:hover {
+      outline-color: #cbd5e1;
+    }
+    #${ROOT_ID} .editable.saving {
+      opacity: 0.55;
+      cursor: wait;
+    }
+    #${ROOT_ID} td select.cell-edit {
+      padding: 3px 6px;
+      border: 1px solid #0099cc;
+      border-radius: 4px;
+      background: #ffffff;
+      font: 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      color: #1f2937;
+      cursor: pointer;
+    }
+    #${ROOT_ID} td select.cell-edit:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
     }
 
     #${ROOT_ID} .row-spinner {
@@ -307,6 +375,19 @@
   const expandedRuns = new Set();        // run_ids whose error/summary is open
   let currentIncident = null;      // { incident_number, started_at } or null
   let notice = null;               // { kind: 'info'|'success'|'error', text: string }
+  // Click-to-edit state — which cell is currently in edit mode.
+  // Both maps key by incident number (string). Mutually exclusive
+  // per row (you only edit one cell at a time).
+  let editingOwner = null;         // string incident number or null
+  let editingStatus = null;        // string incident number or null
+  let savingCell = null;           // 'owner-N' or 'status-N' while POST is in flight
+  // Configured user roster — fetched once on first poll. Used to
+  // populate the Owner edit dropdown. Includes self.
+  let userRoster = [];             // [{email, ...}]
+  // Filter state — empty string = no filter on that axis.
+  let filterSeverity = '';
+  let filterStatus = '';
+  let filterOwner = '';
 
   // ── Helpers ────────────────────────────────────────────────────────
   function escapeHtml(s) {
@@ -435,28 +516,71 @@
     }
 
     body += '<h2>Incidents</h2>';
+
+    // Filter dropdowns. Owner options are computed dynamically from
+    // current data so the list reflects actual active owners (humans
+    // + "Triage Agent" / "Reporter Agent" depending on what's in
+    // play). Selecting a filter value persists across re-renders
+    // until cleared.
+    const ownersInData = Array.from(
+      new Set(incidents.map((i) => (i.owner || '').trim()).filter(Boolean))
+    ).sort();
+    const sevOptions = ['High', 'Medium', 'Low', 'Informational'];
+    const statusOptions = ['New', 'Active', 'Closed'];
+    body += '<div class="filters">';
+    body += '<label>Severity'
+          + `<select data-filter="severity">`
+          + `<option value="">All</option>`
+          + sevOptions.map((s) => `<option value="${escapeHtml(s)}"${filterSeverity === s ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('')
+          + `</select></label>`;
+    body += '<label>Status'
+          + `<select data-filter="status">`
+          + `<option value="">All</option>`
+          + statusOptions.map((s) => `<option value="${escapeHtml(s)}"${filterStatus === s ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('')
+          + `</select></label>`;
+    body += '<label>Owner'
+          + `<select data-filter="owner">`
+          + `<option value="">All</option>`
+          + ownersInData.map((o) => `<option value="${escapeHtml(o)}"${filterOwner === o ? ' selected' : ''}>${escapeHtml(o)}</option>`).join('')
+          + `</select></label>`;
+    if (filterSeverity || filterStatus || filterOwner) {
+      body += `<button class="clear-btn" data-clear-filters="1">Clear filters</button>`;
+    }
+
+    // Apply filters client-side.
+    const filtered = incidents.filter((inc) => {
+      if (filterSeverity && (inc.severity || '').toLowerCase() !== filterSeverity.toLowerCase()) return false;
+      if (filterStatus && (inc.status || '').toLowerCase() !== filterStatus.toLowerCase()) return false;
+      if (filterOwner && (inc.owner || '').trim() !== filterOwner) return false;
+      return true;
+    });
+    body += `<span class="count">Showing ${filtered.length} of ${incidents.length}</span>`;
+    body += '</div>';
+
     if (!incidentCount) {
       body += '<div class="empty">No incidents to show. Trigger a few failed logins to see them appear here.</div>';
+    } else if (!filtered.length) {
+      body += '<div class="empty">No incidents match the current filters.</div>';
     } else {
       body += '<table>';
       body += '<thead><tr>'
         + '<th style="width:60px;">#</th>'
         + '<th>Title</th>'
         + '<th style="width:110px;">Severity</th>'
-        + '<th style="width:90px;">Status</th>'
-        + '<th style="width:200px;">Owner</th>'
+        + '<th style="width:110px;">Status</th>'
+        + '<th style="width:220px;">Owner</th>'
         + '<th class="cost" style="width:120px;">Cost</th>'
         + '<th style="width:90px;">Runs</th>'
-        + '<th style="width:130px;"></th>'
         + '</tr></thead>';
       body += '<tbody>';
-      for (const inc of incidents) {
+      for (const inc of filtered) {
         const num = inc.number;
+        const numStr = String(num);
         const running = isRunning(num);
-        const cost = costs[String(num)] || {};
+        const cost = costs[numStr] || {};
         const eur = cost.total_eur || 0;
-        const summary = runsSummary[String(num)] || null;
-        const isExpanded = expandedIncidents.has(String(num));
+        const summary = runsSummary[numStr] || null;
+        const isExpanded = expandedIncidents.has(numStr);
 
         const portalUrl = sentinelPortalUrl(inc);
         body += `<tr class="${running ? 'running' : ''}">`;
@@ -471,18 +595,39 @@
         body += `</td>`;
         body += `<td class="title">${escapeHtml(inc.title || '')}</td>`;
         body += `<td><span class="sev ${severityClass(inc.severity)}">${escapeHtml(inc.severity || '?')}</span></td>`;
-        // Status pill — straight Sentinel status (New / Active /
-        // Closed). Agent-vs-human nuance lives in the Owner column
-        // below.
+
+        // Status cell — click to edit (New / Active; Closed lives
+        // in Sentinel itself). When the incident is mid-run we
+        // freeze the cell with a spinner so the user can't
+        // double-fire.
         {
           const sCls = statusClass(inc.status);
           const sLabel = statusLabel(inc.status);
-          body += `<td><span class="status ${sCls}">`
-                + `<span class="dot"></span>${escapeHtml(sLabel)}`
-                + `</span></td>`;
+          const isEditingThis = editingStatus === numStr;
+          const isSavingThis = savingCell === `status-${numStr}`;
+          body += '<td>';
+          if (isEditingThis && !running) {
+            body += `<select class="cell-edit" data-edit-status="${num}" autofocus>`
+                  + `<option value="">Cancel…</option>`
+                  + `<option value="New"${inc.status === 'New' ? ' disabled' : ''}>New (re-triage)</option>`
+                  + `<option value="Active"${inc.status === 'Active' ? ' disabled' : ''}>Active</option>`
+                  + `</select>`;
+          } else if (running) {
+            body += `<span class="status ${sCls}" title="Workflow in flight — status edit disabled">`
+                  + `<span class="dot"></span>${escapeHtml(sLabel)}`
+                  + `</span>`;
+          } else {
+            const cls = `status ${sCls} editable${isSavingThis ? ' saving' : ''}`;
+            body += `<span class="${cls}" data-open-status="${num}" title="Click to change status">`
+                  + `<span class="dot"></span>${escapeHtml(sLabel)}`
+                  + `</span>`;
+          }
+          body += '</td>';
         }
-        // Owner column — colour + glyph distinguishes humans from
-        // agents at a glance. Empty owner shows as muted "Unassigned".
+
+        // Owner cell — click to edit. Options are "Triage Agent"
+        // (kicks off a triage_only run via the orchestrator) and
+        // every configured human (writes Sentinel owner directly).
         {
           const kind = ownerKind(inc.owner);
           const label = ownerLabel(inc.owner);
@@ -492,10 +637,31 @@
           const iconHtml = icon
             ? `<span class="who-icon">${escapeHtml(icon)}</span>`
             : '';
-          body += `<td><span class="owner ${kind}" title="${escapeHtml(label)}">`
-                + `${iconHtml}${escapeHtml(label)}`
-                + `</span></td>`;
+          const isEditingThis = editingOwner === numStr;
+          const isSavingThis = savingCell === `owner-${numStr}`;
+          body += '<td>';
+          if (isEditingThis && !running) {
+            const userOpts = userRoster
+              .map((u) => `<option value="${escapeHtml(u.email)}"${(inc.owner || '').toLowerCase() === u.email.toLowerCase() ? ' disabled' : ''}>${escapeHtml(u.email)}${u.is_self ? ' (you)' : ''}</option>`)
+              .join('');
+            body += `<select class="cell-edit" data-edit-owner="${num}" autofocus>`
+                  + `<option value="">Cancel…</option>`
+                  + `<option value="Triage Agent">⚡ Triage Agent (re-triage)</option>`
+                  + userOpts
+                  + `</select>`;
+          } else if (running) {
+            body += `<span class="owner ${kind}" title="Workflow in flight — owner edit disabled">`
+                  + `${iconHtml}${escapeHtml(label)}`
+                  + `</span>`;
+          } else {
+            const cls = `owner ${kind} editable${isSavingThis ? ' saving' : ''}`;
+            body += `<span class="${cls}" data-open-owner="${num}" title="Click to reassign">`
+                  + `${iconHtml}${escapeHtml(label)}`
+                  + `</span>`;
+          }
+          body += '</td>';
         }
+
         body += `<td class="cost">${eur > 0 ? fmtEur(eur) : '—'}</td>`;
 
         // Runs badge — class flips to fail/ok/run based on most recent run.
@@ -511,21 +677,12 @@
         }
         body += '</td>';
 
-        body += '<td>';
-        if (running) {
-          const phase = cost.last_phase || 'starting';
-          body += `<span class="row-spinner"></span>`
-                + `<span style="font-size:12px;color:#6b7280;">${escapeHtml(phase)}…</span>`;
-        } else {
-          body += `<button class="run" data-incident="${num}">Run workflow</button>`;
-        }
-        body += '</td>';
         body += '</tr>';
 
         // Expanded sub-row: list of runs with click-to-show details.
         if (isExpanded) {
           const list = runsDetail[String(num)] || [];
-          body += '<tr class="runs-row"><td colspan="8">';
+          body += '<tr class="runs-row"><td colspan="7">';
           if (!list.length) {
             body += '<div class="runs-empty">No runs yet.</div>';
           } else {
@@ -565,8 +722,64 @@
 
     root.innerHTML = body;
 
-    root.querySelectorAll('button.run').forEach((btn) => {
-      btn.addEventListener('click', () => onRunWorkflow(Number(btn.dataset.incident)));
+    // Filter dropdowns.
+    root.querySelectorAll('[data-filter]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const which = sel.getAttribute('data-filter');
+        if (which === 'severity') filterSeverity = sel.value;
+        else if (which === 'status') filterStatus = sel.value;
+        else if (which === 'owner') filterOwner = sel.value;
+        render();
+      });
+    });
+    const clearBtn = root.querySelector('[data-clear-filters]');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        filterSeverity = ''; filterStatus = ''; filterOwner = '';
+        render();
+      });
+    }
+
+    // Click-to-edit triggers — Status pill / Owner pill.
+    root.querySelectorAll('[data-open-status]').forEach((el) => {
+      el.addEventListener('click', () => {
+        editingStatus = el.getAttribute('data-open-status');
+        editingOwner = null;  // mutually exclusive
+        render();
+      });
+    });
+    root.querySelectorAll('[data-open-owner]').forEach((el) => {
+      el.addEventListener('click', () => {
+        editingOwner = el.getAttribute('data-open-owner');
+        editingStatus = null;
+        render();
+      });
+    });
+    // The active edit selects — change handler dispatches to the
+    // server, blur cancels back to read-only without saving.
+    root.querySelectorAll('[data-edit-status]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const num = Number(sel.getAttribute('data-edit-status'));
+        const newStatus = sel.value;
+        if (!newStatus) { editingStatus = null; render(); return; }
+        onStatusEdit(num, newStatus);
+      });
+      sel.addEventListener('blur', () => {
+        editingStatus = null;
+        render();
+      });
+    });
+    root.querySelectorAll('[data-edit-owner]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const num = Number(sel.getAttribute('data-edit-owner'));
+        const newOwner = sel.value;
+        if (!newOwner) { editingOwner = null; render(); return; }
+        onOwnerEdit(num, newOwner);
+      });
+      sel.addEventListener('blur', () => {
+        editingOwner = null;
+        render();
+      });
     });
     // "X runs" badge — toggle the per-incident sub-row + lazy-fetch the
     // detailed run list the first time the badge is opened.
@@ -605,34 +818,100 @@
   }
 
   // ── Actions ────────────────────────────────────────────────────────
-  async function onRunWorkflow(incidentNumber) {
-    if (isRunning(incidentNumber)) return;
-    notice = { kind: 'info', text: `Starting workflow for incident #${incidentNumber}…` };
-    // Optimistic UI: stamp it as the active incident so the row
-    // flips to "starting…" before /api/current_incident reflects it.
-    currentIncident = { incident_number: incidentNumber, started_at: Date.now() / 1000 };
-    render();
 
+  async function postCellEdit(path, body) {
+    const r = await fetch(path, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const text = await r.text().catch(() => '');
+    let data;
+    try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      const detail = data && data.detail;
+      if (typeof detail === 'string') msg = `${msg}: ${detail}`;
+      else if (detail && typeof detail === 'object') msg = `${msg}: ${JSON.stringify(detail).slice(0, 400)}`;
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  async function onStatusEdit(incidentNumber, newStatus) {
+    const numStr = String(incidentNumber);
+    savingCell = `status-${numStr}`;
+    editingStatus = null;
+    notice = null;
+    render();
     try {
-      const r = await fetch(`/api/sentinel/incidents/${incidentNumber}/orchestrate`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      if (!r.ok) {
-        const text = await r.text().catch(() => '');
-        throw new Error(`HTTP ${r.status}\n${text}`);
+      const data = await postCellEdit(
+        `/api/sentinel/incidents/${incidentNumber}/status`,
+        { status: newStatus },
+      );
+      if (data.action === 're-triage-triggered') {
+        notice = { kind: 'success', text: `Re-triage started for incident #${incidentNumber}.` };
+        // Optimistic — flip to "running" so the row spinner shows
+        // before the next /api/current_incident poll catches up.
+        currentIncident = { incident_number: incidentNumber, started_at: Date.now() / 1000 };
+      } else {
+        notice = { kind: 'success', text: `Incident #${incidentNumber} status set to ${newStatus}.` };
       }
-      notice = { kind: 'success', text: `Workflow completed for incident #${incidentNumber}.` };
     } catch (e) {
-      notice = { kind: 'error', text: `Workflow failed for #${incidentNumber}\n${e.message || e}` };
+      notice = { kind: 'error', text: `Failed to update status for #${incidentNumber}: ${e.message || e}` };
     } finally {
-      // Refresh the server-driven state so the row reverts to idle.
+      savingCell = null;
+      pollIncidents();
       pollCurrent();
-      pollCosts();
       render();
     }
+  }
+
+  async function onOwnerEdit(incidentNumber, newOwner) {
+    const numStr = String(incidentNumber);
+    savingCell = `owner-${numStr}`;
+    editingOwner = null;
+    notice = null;
+    render();
+    try {
+      const data = await postCellEdit(
+        `/api/sentinel/incidents/${incidentNumber}/owner`,
+        { owner: newOwner },
+      );
+      if (data.action === 'triage-triggered') {
+        notice = { kind: 'success', text: `Triage started for incident #${incidentNumber}.` };
+        currentIncident = { incident_number: incidentNumber, started_at: Date.now() / 1000 };
+      } else {
+        notice = { kind: 'success', text: `Incident #${incidentNumber} reassigned to ${newOwner}.` };
+      }
+    } catch (e) {
+      notice = { kind: 'error', text: `Failed to reassign #${incidentNumber}: ${e.message || e}` };
+    } finally {
+      savingCell = null;
+      pollIncidents();
+      pollCurrent();
+      render();
+    }
+  }
+
+  // ── Roster fetch (drives the Owner edit dropdown) ───────────────────
+  async function pollRoster() {
+    try {
+      const r = await fetch('/api/sessions/online', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const data = await r.json();
+      // /api/sessions/online returns {users: [...]} that already
+      // includes the caller (with is_self=true). Sort: self first,
+      // then alpha.
+      const list = (data && data.users) || [];
+      list.sort((a, b) => {
+        if (a.is_self && !b.is_self) return -1;
+        if (b.is_self && !a.is_self) return 1;
+        return (a.email || '').localeCompare(b.email || '');
+      });
+      userRoster = list;
+    } catch (_) { /* ignore */ }
   }
 
   // ── Polling ────────────────────────────────────────────────────────
@@ -703,8 +982,11 @@
   pollCosts();
   pollCurrent();
   pollRuns();
+  pollRoster();  // populates the Owner edit dropdown
   setInterval(pollIncidents, POLL_INCIDENTS_MS);
   setInterval(pollCosts, POLL_COSTS_MS);
   setInterval(pollCurrent, POLL_CURRENT_MS);
   setInterval(pollRuns, POLL_COSTS_MS);
+  // Roster doesn't change often; refresh once a minute is plenty.
+  setInterval(pollRoster, 60_000);
 })();

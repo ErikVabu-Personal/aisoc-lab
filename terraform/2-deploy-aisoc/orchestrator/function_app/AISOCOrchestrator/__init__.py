@@ -493,8 +493,90 @@ def _assign_incident_owner(
         )
 
 
+def _handle_incident_assign(req: func.HttpRequest) -> func.HttpResponse:
+    """Standalone owner / status writeback. Called by pixelagents_web
+    when an analyst edits the Owner or Status cell on the dashboard.
+    Body: {"incidentNumber": int, "owner"?: str, "status"?: str}.
+
+    Reuses the runner's update_incident tool (same RBAC chain the
+    workflow handoff uses) without invoking any Foundry agents — no
+    triage / investigator / reporter, just the ARM write."""
+
+    body = _json(req)
+    incident_number = body.get("incidentNumber")
+    incident_id = body.get("incidentId")
+    owner = body.get("owner")
+    status = body.get("status")
+
+    if incident_number is None and incident_id is None:
+        return func.HttpResponse("Missing incidentNumber or incidentId", status_code=400)
+    if owner is None and status is None:
+        return func.HttpResponse(
+            "Need at least one of: owner, status",
+            status_code=400,
+        )
+
+    runner_url = os.environ.get("AISOC_RUNNER_URL", "")
+    bearer_secret = os.environ.get("AISOC_RUNNER_BEARER_SECRET_NAME", "aisoc-runner-key")
+    kv_uri = os.environ.get("KEYVAULT_URI", "")
+    if not runner_url:
+        return func.HttpResponse("Missing RUNNER_URL", status_code=500)
+    if not kv_uri:
+        return func.HttpResponse("Missing KEYVAULT_URI", status_code=500)
+
+    try:
+        runner_bearer = get_kv_secret(kv_uri, bearer_secret)
+    except Exception as e:
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": f"runner bearer fetch failed: {e!r}"}),
+            status_code=500,
+            mimetype="application/json",
+        )
+
+    properties: dict[str, Any] = {}
+    if isinstance(owner, str) and owner.strip():
+        properties["owner"] = {"assignedTo": owner.strip()}
+    if isinstance(status, str) and status.strip():
+        properties["status"] = status.strip()
+    if not properties:
+        return func.HttpResponse("Empty owner+status", status_code=400)
+
+    args: dict[str, Any] = {"properties": properties}
+    if incident_number is not None:
+        args["incidentNumber"] = incident_number
+    elif incident_id is not None:
+        args["id"] = incident_id
+
+    try:
+        result = _runner_post(
+            runner_url,
+            runner_bearer,
+            {"tool_name": "update_incident", "arguments": args},
+            agent="triage",  # filtered to the roster slug, no phantom row
+        )
+    except Exception as e:
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": f"runner update_incident raised: {e!r}"}),
+            status_code=502,
+            mimetype="application/json",
+        )
+
+    out = {
+        "ok": True,
+        "incident_number": incident_number,
+        "incident_id": incident_id,
+        "owner": owner,
+        "status": status,
+        "runner_result": result.get("result") if isinstance(result, dict) else None,
+    }
+    return func.HttpResponse(json.dumps(out), mimetype="application/json")
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     route = req.route_params.get("route") or ""
+
+    if route == "incident/assign":
+        return _handle_incident_assign(req)
 
     if route not in ("incident", "incident/pipeline"):
         return func.HttpResponse("Unknown route", status_code=404)

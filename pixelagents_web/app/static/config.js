@@ -568,11 +568,12 @@
     apiPath: '/api/auto_pickup',
     title: 'Automated alert pickup',
     desc:
-      'When enabled, PixelAgents continuously monitors Microsoft Sentinel '
-      + 'for new incidents and triggers the orchestration workflow '
-      + 'automatically. If a workflow run fails, the incident is marked '
-      + 'seen and <strong>not</strong> retried — the human analyst takes '
-      + 'over from the dashboard.',
+      '<strong>On by default.</strong> PixelAgents continuously monitors '
+      + 'Microsoft Sentinel for new incidents and triggers the orchestration '
+      + 'workflow automatically. If a workflow run fails, the incident is '
+      + 'marked seen and <strong>not</strong> retried — the human analyst '
+      + 'takes over from there. Disable this only if you want fully manual '
+      + 'control (e.g., for a maintenance window).',
     renderState: (s) => {
       const intervalTxt = s.interval_sec ? `${Math.round(s.interval_sec)}s` : '—';
       const checkTxt = s.last_check_ts ? fmtAgoLocal(s.last_check_ts) : 'never';

@@ -860,11 +860,15 @@ def _end_run(rec: dict[str, Any], status: str, *, error: str | None = None,
 # seconds. The first "New" incident we haven't seen before triggers the
 # orchestration pipeline. If the run fails, we DO NOT retry — the incident
 # is marked seen, and a human analyst takes over from the dashboard.
-# State is in-memory; container restart resets the seen set (next poll
-# will re-pick the latest unhandled New incident, which is fine — the
-# orchestrator is idempotent enough for the demo).
+# State is in-memory; container restart resets the seen set, but we
+# re-prime it from the current Sentinel listing on startup so we don't
+# retroactively trigger on every existing "New" incident on every redeploy.
+#
+# The default has been ON since the dashboard's "Run workflow" button
+# was retired — the model is now: auto-pickup handles the moment of
+# discovery, humans / agents take it from there.
 AUTO_PICKUP: dict[str, Any] = {
-    "enabled": False,
+    "enabled": True,
     "seen_incidents": set(),  # set[int] — incident numbers already dispatched
     "last_check_ts": None,    # unix seconds, last poll completion
     "last_event": None,       # human-readable status string
@@ -962,9 +966,41 @@ async def _auto_pickup_loop() -> None:
         await asyncio.sleep(AUTO_PICKUP_INTERVAL_SEC)
 
 
+async def _prime_seen_incidents() -> None:
+    """Mark every currently-known incident number as 'seen' so the
+    auto-pickup loop only triggers on incidents that arrive AFTER
+    startup. Without this, every container restart with auto-pickup
+    enabled would replay all existing 'New' incidents through triage
+    one-by-one — not what users expect when the toggle is on."""
+    import asyncio
+
+    try:
+        incidents = await asyncio.to_thread(_fetch_sentinel_incidents)
+    except Exception as e:
+        _auto_pickup_set_event(f"Startup prime failed: {e!r}")
+        return
+    primed = 0
+    for inc in incidents:
+        num = inc.get("number")
+        if isinstance(num, int):
+            AUTO_PICKUP["seen_incidents"].add(num)
+            primed += 1
+    _auto_pickup_set_event(
+        f"Startup primed — {primed} existing incident(s) marked seen; "
+        f"only newly-arriving incidents will trigger workflows"
+    )
+
+
 @app.on_event("startup")
 async def _start_auto_pickup() -> None:
     import asyncio
+
+    # If auto-pickup is enabled at startup (the new default), prime
+    # the seen set from the current Sentinel listing so existing
+    # incidents aren't retroactively re-triaged. We run this BEFORE
+    # the loop kicks off so the first tick has the primed set.
+    if AUTO_PICKUP.get("enabled"):
+        await _prime_seen_incidents()
 
     asyncio.create_task(_auto_pickup_loop())
 
@@ -2465,6 +2501,236 @@ async def orchestrate_incident(
                 detail={"orchestrator_status": e.status, "body": e.body},
             ) from e
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ── Inline owner / status edits from the dashboard ───────────────────
+# These two endpoints power the click-to-edit cells in the incidents
+# table. Both proxy through the runner's update_incident tool so the
+# Gateway's MI does the actual ARM write — no need to thread an extra
+# token through the browser. Auth: cookie session (so the user must
+# be logged in; we record their identity for orchestrator handoff).
+
+
+def _is_triage_assignment(value: str) -> bool:
+    """Recognise a few human-friendly variants of "trigger triage"
+    on an owner-edit. Lets the UI send 'Triage Agent', 'triage',
+    'TRIAGE', or 'triage-agent' — they all mean the same thing here."""
+    s = (value or "").strip().lower()
+    return s in {"triage", "triage agent", "triage-agent", "triageagent"}
+
+
+async def _trigger_triage_only(incident_number: int, triggering_user: str | None) -> dict[str, Any]:
+    """Kick off a triage_only orchestrator run for the given incident.
+    The orchestrator's _set_incident_status will move the incident
+    from New → Active during the run, and its _assign_incident_owner
+    will set owner.assignedTo to "Triage Agent" for the duration.
+    No investigator / reporter / closure happens — just triage."""
+
+    try:
+        return await _orchestrate_one(
+            incident_number,
+            mode="triage_only",
+            writeback=True,
+            trigger="manual-triage",
+            triggering_user=triggering_user,
+        )
+    except OrchestratorError as e:
+        if e.status is not None:
+            raise HTTPException(
+                status_code=502,
+                detail={"orchestrator_status": e.status, "body": e.body},
+            ) from e
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+async def _orchestrator_set_owner_or_status(
+    incident_number: int,
+    *,
+    owner: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    """Proxy through the orchestrator's /incident/assign route to do
+    a plain owner / status writeback on a Sentinel incident — no
+    workflow, just the ARM update via the runner's update_incident.
+
+    pixelagents_web doesn't have its own runner credentials in
+    Terraform today; the orchestrator does (it pulls the bearer from
+    Key Vault). Routing through it is one less env var to wire."""
+
+    orch_base = os.getenv("ORCHESTRATOR_URL", "").strip()
+    orch_key = os.getenv("ORCHESTRATOR_FUNCTION_KEY", "").strip()
+    if not orch_base or not orch_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Orchestrator not configured (ORCHESTRATOR_URL / ORCHESTRATOR_FUNCTION_KEY missing)",
+        )
+
+    payload: dict[str, Any] = {"incidentNumber": incident_number}
+    if owner is not None:
+        payload["owner"] = owner
+    if status is not None:
+        payload["status"] = status
+
+    import asyncio
+    import requests as _requests
+
+    url = f"{orch_base.rstrip('/')}/incident/assign?code={orch_key}"
+    try:
+        r = await asyncio.to_thread(
+            _requests.post,
+            url,
+            json=payload,
+            timeout=30,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Orchestrator call failed: {e!r}") from e
+
+    if r.status_code >= 400:
+        try:
+            body = r.json()
+        except Exception:
+            body = r.text[:1000]
+        raise HTTPException(
+            status_code=502,
+            detail={"orchestrator_status": r.status_code, "body": body},
+        )
+
+    # Bust the incidents cache so the dashboard sees the change on
+    # the next poll without waiting up to 10s for the cache TTL.
+    _INCIDENTS_CACHE["payload"] = None
+    _INCIDENTS_CACHE["ts"] = 0.0
+
+    try:
+        return r.json()
+    except Exception:
+        return {}
+
+
+@app.post("/api/sentinel/incidents/{incident_number}/owner")
+async def api_incident_set_owner(
+    incident_number: int,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Reassign an incident's owner. Body: {"owner": "<value>"}.
+
+    Two paths depending on the value:
+      - "Triage Agent" / "triage" (case-insensitive) — kicks off a
+        triage-only orchestrator run. The orchestrator's existing
+        per-phase owner-assignment will set the owner to "Triage
+        Agent" during the run; the run only does triage (no
+        investigator / reporter / close).
+      - Anything else (typically an email) — written verbatim to
+        Sentinel's owner.assignedTo via the runner. No workflow.
+
+    To avoid creating bogus owners, we only accept either the special
+    triage value or an email that's in the configured user roster.
+    """
+
+    _require_auth(req, x_pixelagents_token)
+    triggering_user = _session_user(req)
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    owner = body.get("owner")
+    if not isinstance(owner, str) or not owner.strip():
+        raise HTTPException(status_code=400, detail="Missing 'owner' (string)")
+    owner = owner.strip()
+
+    if _is_triage_assignment(owner):
+        # Triage path — fire the workflow.
+        result = await _trigger_triage_only(incident_number, triggering_user)
+        return {
+            "ok": True,
+            "action": "triage-triggered",
+            "incident_number": incident_number,
+            "orchestrator_result": result,
+        }
+
+    # Human path — must be a configured user.
+    if owner.lower() not in {e.lower() for e in USERS.keys()}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Owner '{owner}' is not in the configured user roster",
+        )
+
+    await _orchestrator_set_owner_or_status(incident_number, owner=owner)
+    return {
+        "ok": True,
+        "action": "owner-set",
+        "incident_number": incident_number,
+        "owner": owner,
+    }
+
+
+@app.post("/api/sentinel/incidents/{incident_number}/status")
+async def api_incident_set_status(
+    incident_number: int,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Set an incident's Sentinel status. Body: {"status": "New" | "Active"}.
+
+    Setting "New" forces a fresh triage workflow (the orchestrator
+    will move it back to Active during the run; this is by design —
+    the user picks "New" to mean "re-triage this"). Setting "Active"
+    just writes the status. Setting "Closed" is intentionally
+    rejected — closure must happen in Sentinel itself.
+    """
+
+    _require_auth(req, x_pixelagents_token)
+    triggering_user = _session_user(req)
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    status = body.get("status")
+    if not isinstance(status, str) or not status.strip():
+        raise HTTPException(status_code=400, detail="Missing 'status' (string)")
+    status = status.strip().capitalize()  # "new" -> "New"
+
+    if status == "Closed":
+        raise HTTPException(
+            status_code=400,
+            detail="Closing an incident must happen in Microsoft Sentinel",
+        )
+
+    if status not in {"New", "Active"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Status '{status}' not supported (allowed: New, Active)",
+        )
+
+    if status == "New":
+        # Trigger a fresh triage. The run moves the status to Active
+        # as it kicks off — that's expected behaviour, the user's
+        # intent was "re-triage this" rather than "literally store
+        # 'New' in Sentinel."
+        result = await _trigger_triage_only(incident_number, triggering_user)
+        return {
+            "ok": True,
+            "action": "re-triage-triggered",
+            "incident_number": incident_number,
+            "orchestrator_result": result,
+        }
+
+    # status == "Active" — just write the status, no workflow.
+    await _orchestrator_set_owner_or_status(incident_number, status=status)
+    return {
+        "ok": True,
+        "action": "status-set",
+        "incident_number": incident_number,
+        "status": status,
+    }
 
 
 # ─── Cost tracking ────────────────────────────────────────────────────────
