@@ -769,7 +769,7 @@ def config_view(request: Request) -> Response:
         '  state PixelAgents Web has on file.'
         '</p>'
         '<div id="aisoc-auto-pickup-root"></div>'
-        '<div id="aisoc-auto-close-root"></div>'
+        '<div id="aisoc-agent-temperature-root"></div>'
         '<div id="aisoc-generic-instructions-root"></div>'
         '<div id="aisoc-config-root"></div>'
     )
@@ -1261,45 +1261,44 @@ def api_auto_pickup_get(
     return _auto_pickup_public_state()
 
 
-# ── Auto-close (let the reporter close incidents in Sentinel) ────────
-# When enabled, the orchestrator request body includes auto_close=True
-# and the reporter agent is permitted to close the Sentinel incident
-# directly when its analysis is conclusive. When disabled (the default),
-# every successful run hands back to the human analyst for review and
-# closure. Decoupled from auto-pickup: an analyst can run automation on
-# pickup without giving up final closure authority.
-AUTO_CLOSE: dict[str, Any] = {
-    "enabled": False,
+# ── Agent confidence temperature ─────────────────────────────────────
+# Slider 0–100 that influences how readily the investigator and
+# reporter agents request human input via ask_human. Low value = ask
+# often (cautious); high value = ask only when truly stuck (confident).
+# Threaded into the orchestrator's user_text for the relevant agents.
+# In-memory only (resets on container restart).
+AGENT_TEMPERATURE: dict[str, Any] = {
+    "value": 50,  # 0–100 percent
     "last_event": None,
     "last_event_ts": None,
 }
 
 
-def _auto_close_set_event(msg: str) -> None:
-    AUTO_CLOSE["last_event"] = msg
-    AUTO_CLOSE["last_event_ts"] = time.time()
-    print(f"[auto-close] {msg}", flush=True)
+def _agent_temperature_set_event(msg: str) -> None:
+    AGENT_TEMPERATURE["last_event"] = msg
+    AGENT_TEMPERATURE["last_event_ts"] = time.time()
+    print(f"[temperature] {msg}", flush=True)
 
 
-def _auto_close_public_state() -> dict[str, Any]:
+def _agent_temperature_public_state() -> dict[str, Any]:
     return {
-        "enabled": bool(AUTO_CLOSE.get("enabled")),
-        "last_event": AUTO_CLOSE.get("last_event"),
-        "last_event_ts": AUTO_CLOSE.get("last_event_ts"),
+        "value": int(AGENT_TEMPERATURE.get("value") or 0),
+        "last_event": AGENT_TEMPERATURE.get("last_event"),
+        "last_event_ts": AGENT_TEMPERATURE.get("last_event_ts"),
     }
 
 
-@app.get("/api/auto_close")
-def api_auto_close_get(
+@app.get("/api/agent_temperature")
+def api_agent_temperature_get(
     request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
     _require_auth(request, x_pixelagents_token)
-    return _auto_close_public_state()
+    return _agent_temperature_public_state()
 
 
-@app.post("/api/auto_close")
-async def api_auto_close_set(
+@app.post("/api/agent_temperature")
+async def api_agent_temperature_set(
     req: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
@@ -1310,14 +1309,21 @@ async def api_auto_close_set(
         body = {}
     if not isinstance(body, dict):
         body = {}
-    new_val = bool(body.get("enabled"))
-    prev = bool(AUTO_CLOSE.get("enabled"))
-    AUTO_CLOSE["enabled"] = new_val
-    if new_val and not prev:
-        _auto_close_set_event("Enabled — reporter may close confident incidents")
-    elif (not new_val) and prev:
-        _auto_close_set_event("Disabled — every run hands back to analyst")
-    return _auto_close_public_state()
+    raw = body.get("value")
+    try:
+        new_val = int(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="value must be an integer 0..100")
+    if new_val < 0 or new_val > 100:
+        raise HTTPException(status_code=400, detail="value must be between 0 and 100")
+    prev = int(AGENT_TEMPERATURE.get("value") or 0)
+    AGENT_TEMPERATURE["value"] = new_val
+    if new_val != prev:
+        _agent_temperature_set_event(
+            f"Confidence threshold set to {new_val}% "
+            f"({'cautious — ask humans often' if new_val < 34 else 'balanced' if new_val < 67 else 'confident — ask humans rarely'})"
+        )
+    return _agent_temperature_public_state()
 
 
 @app.post("/api/auto_pickup")
@@ -2590,10 +2596,11 @@ async def _orchestrate_one(
     (typically "manual" from the dashboard or "auto-pickup" from the
     background loop) — it doesn't affect orchestrator behavior.
 
-    The reporter's permission to close the Sentinel incident is driven
-    by AUTO_CLOSE["enabled"], which is forwarded as `auto_close` in the
-    orchestrator request body. The orchestrator/reporter side must
-    honor that flag.
+    The reporter is always allowed to close incidents directly when
+    confident; the old auto_close gate has been retired. The
+    confidence_threshold (0–100) tunes how readily the investigator +
+    reporter request human input via ask_human — lower = ask often,
+    higher = ask rarely.
     """
 
     orch_base = os.getenv("ORCHESTRATOR_URL", "")
@@ -2606,7 +2613,7 @@ async def _orchestrate_one(
     import asyncio
     import requests as _requests
 
-    auto_close_flag = bool(AUTO_CLOSE.get("enabled"))
+    confidence_threshold = int(AGENT_TEMPERATURE.get("value") or 50)
 
     CURRENT_INCIDENT["incident_number"] = incident_number
     CURRENT_INCIDENT["started_at"] = time.time()
@@ -2625,11 +2632,6 @@ async def _orchestrate_one(
                 "incidentNumber": incident_number,
                 "mode": mode,
                 "writeback": bool(writeback),
-                # Tell the reporter whether it's allowed to close the
-                # Sentinel incident on its own. The orchestrator must
-                # respect this — when False, every run hands back to
-                # the human analyst regardless of reporter confidence.
-                "auto_close": auto_close_flag,
                 # Identity of the human who kicked off this run (None
                 # for auto-pickup). The orchestrator uses this two
                 # ways: (a) injects it into the reporter's user_text
@@ -2638,6 +2640,11 @@ async def _orchestrate_one(
                 # the Sentinel incident's owner to this user instead
                 # of leaving it on the last agent.
                 "triggering_user": triggering_user or "",
+                # Confidence threshold (0–100). Lower = agents ask
+                # humans more often; higher = agents are more
+                # autonomous. Plumbed into the investigator + reporter
+                # prompts so the agents can self-pace ask_human calls.
+                "confidence_threshold": confidence_threshold,
             },
             timeout=600,
         )
@@ -2667,11 +2674,12 @@ async def _orchestrate_one(
     except Exception:
         result = {"raw": r.text[:4000]}
 
-    # On success, hand back to the human. If the reporter actually
-    # closed the Sentinel incident (only possible when auto_close was
-    # True), the next /api/sentinel/incidents poll will surface
-    # status="Closed" and the view pill flips to "Closed" — phase is
-    # ignored when Sentinel says Closed.
+    # On success, hand back to the human. If the reporter closed the
+    # Sentinel incident outright (which it's free to do whenever it's
+    # confident the case is a false positive), the next
+    # /api/sentinel/incidents poll will surface status="Closed" and the
+    # view pill flips to "Closed" — phase is ignored when Sentinel says
+    # Closed.
     _set_phase(incident_number, "human", reason="run-complete")
 
     # Invalidate the cached incidents list so the dashboard sees the
@@ -3242,6 +3250,10 @@ def _hitl_public(q: dict[str, Any]) -> dict[str, Any]:
         # open sees it). A specific email = targeted question; only
         # that user sees it in /api/hitl/pending.
         "target": q.get("target") or "",
+        # Optional binding to a Sentinel incident — when set, the UI
+        # groups this question under the relevant case in the
+        # "Incident Input Needed" sidebar section.
+        "incident_number": q.get("incident_number"),
     }
 
 
@@ -3277,6 +3289,18 @@ async def hitl_create_question(
     else:
         target = ""
 
+    # Optional incident binding — when set, the question is grouped
+    # under the relevant incident in the sidebar's "Incident Input
+    # Needed" section. Unset = floats free (used by chat-initiated
+    # ask_human calls outside any workflow).
+    raw_incident = body.get("incident_number")
+    incident_number_for_q: int | None = None
+    if raw_incident is not None:
+        try:
+            incident_number_for_q = int(raw_incident)
+        except (TypeError, ValueError):
+            incident_number_for_q = None
+
     qid = str(_uuid.uuid4())
     record = {
         "id": qid,
@@ -3289,6 +3313,7 @@ async def hitl_create_question(
         "answered_at": None,
         "target": target,
         "routed_method": ("explicit-target" if target else None),
+        "incident_number": incident_number_for_q,
     }
     HITL_QUESTIONS[qid] = record
 

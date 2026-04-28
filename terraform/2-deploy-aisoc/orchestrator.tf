@@ -59,8 +59,11 @@ resource "azurerm_linux_function_app" "orchestrator" {
     # Name of secret containing runner bearer
     "AISOC_RUNNER_BEARER_SECRET_NAME" = "AISOC-RUNNER-BEARER"
 
-    # Gating
-    "AISOC_AUTO_CLOSE" = "0"
+    # Default agent confidence threshold (0–100). Tunes how readily
+    # the investigator + reporter reach for ask_human mid-flow. The
+    # PixelAgents Web /config slider overrides this per-request; the
+    # env var is the fallback when no slider value has been set yet.
+    "AISOC_CONFIDENCE_THRESHOLD" = "50"
 
     # Per-incident cost accounting. PIXELAGENTS_URL + PIXELAGENTS_TOKEN
     # are set post-apply by scripts/configure_orchestrator_pixelagents_env.sh

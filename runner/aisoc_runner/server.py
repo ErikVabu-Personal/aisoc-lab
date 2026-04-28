@@ -433,6 +433,22 @@ def tools_execute(
                 target = ""
             target = target.strip().lower()
 
+            # Optional incident_number — agents pass this so the
+            # PixelAgents Web sidebar can group the question under the
+            # right case in the analyst's "Incident Input Needed"
+            # section. Unset = the question floats free (legacy
+            # behavior, only used by chat-initiated ask_human calls
+            # where there's no incident in scope).
+            raw_incident = args.get("incident_number")
+            if raw_incident is None:
+                raw_incident = args.get("incidentNumber")
+            incident_number_for_hitl: int | None = None
+            if raw_incident is not None:
+                try:
+                    incident_number_for_hitl = int(raw_incident)
+                except (TypeError, ValueError):
+                    incident_number_for_hitl = None
+
             # PIXELAGENTS_URL is the events endpoint (e.g.
             # https://<pixelagents>/events). Strip the trailing /events
             # to get the base so we can hit /api/hitl/... on the same host.
@@ -465,6 +481,7 @@ def tools_execute(
                     "agent": agent or "unknown",
                     "question": question.strip(),
                     "target": target,
+                    "incident_number": incident_number_for_hitl,
                 },
                 timeout=15,
             )

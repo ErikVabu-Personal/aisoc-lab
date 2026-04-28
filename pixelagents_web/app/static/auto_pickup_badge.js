@@ -1,9 +1,9 @@
 // auto_pickup_badge.js
 // ────────────────────────────────────────────────────────────────────
 // Read-only badges for the Live Agent View. Shows the current state of
-// the auto-pickup and auto-close features so the analyst can see at a
-// glance how the system is configured. The toggles themselves live on
-// /config — these are status indicators only.
+// the auto-pickup and agent-temperature settings so the analyst can
+// see at a glance how the system is configured. The actual controls
+// (toggle / slider) live on /config — these are status indicators only.
 
 (function () {
   'use strict';
@@ -40,6 +40,7 @@
     }
     #aisoc-auto-badges .ap-badge.on  { background: rgba(16, 185, 129, 0.92); }
     #aisoc-auto-badges .ap-badge.off { background: rgba(107, 114, 128, 0.85); }
+    #aisoc-auto-badges .ap-badge.info { background: rgba(0, 153, 204, 0.92); }
     #aisoc-auto-badges .ap-badge.unknown { background: rgba(31, 41, 55, 0.85); }
     #aisoc-auto-badges .ap-led {
       width: 7px; height: 7px;
@@ -78,10 +79,10 @@
       <span class="ap-led"></span>
       <span class="ap-text">Auto-pickup: …</span>
     </div>
-    <div class="ap-badge unknown" data-key="close">
+    <div class="ap-badge unknown" data-key="temperature">
       <span class="ap-led"></span>
-      <span class="ap-text">Auto-close: …</span>
-      <a class="ap-link" href="/config" title="Configure auto-pickup and auto-close">configure</a>
+      <span class="ap-text">Temperature: …</span>
+      <a class="ap-link" href="/config" title="Configure auto-pickup and agent temperature">configure</a>
     </div>
   `;
   document.body.appendChild(wrap);
@@ -89,7 +90,7 @@
   function setBadge(key, state, label, helpText) {
     const el = wrap.querySelector(`.ap-badge[data-key="${key}"]`);
     if (!el) return;
-    el.classList.remove('on', 'off', 'unknown');
+    el.classList.remove('on', 'off', 'info', 'unknown');
     el.classList.add(state);
     const txt = el.querySelector('.ap-text');
     if (txt) txt.textContent = label;
@@ -116,23 +117,28 @@
     }
   }
 
-  async function pollClose() {
+  async function pollTemperature() {
     try {
-      const s = await fetchJson('/api/auto_close');
-      const on = !!s.enabled;
-      setBadge('close', on ? 'on' : 'off',
-        on ? 'Auto-close: ON' : 'Auto-close: OFF',
-        on
-          ? (s.last_event || 'Reporter may close incidents in Sentinel when confident.')
-          : 'Auto-close is disabled. Every run hands back to the analyst.');
+      const s = await fetchJson('/api/agent_temperature');
+      const v = Math.max(0, Math.min(100, Number(s.value || 0)));
+      // Soft ranges so the analyst can tell the dial isn't all-or-nothing
+      // without having to read the slider.
+      let band;
+      if (v <= 30) band = 'cautious';
+      else if (v >= 70) band = 'confident';
+      else band = 'balanced';
+      setBadge('temperature', 'info',
+        `Temperature: ${v}% · ${band}`,
+        s.last_event
+          || `Investigator and reporter ask humans more readily at low values, less at high values.`);
     } catch (_) {
-      setBadge('close', 'unknown', 'Auto-close: ?', 'Could not load auto-close state.');
+      setBadge('temperature', 'unknown', 'Temperature: ?', 'Could not load agent-temperature state.');
     }
   }
 
   function pollAll() {
     pollPickup();
-    pollClose();
+    pollTemperature();
   }
 
   pollAll();

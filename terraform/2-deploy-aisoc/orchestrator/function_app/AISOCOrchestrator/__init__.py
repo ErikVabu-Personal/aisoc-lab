@@ -19,32 +19,11 @@ from shared.kv import get_kv_secret
 # to emit this.
 _REINVESTIGATION_RE = re.compile(r"NEEDS_REINVESTIGATION:\s*(.+?)(?:\n|$)")
 
-# Case-sensitive marker the reporter emits when (a) auto-close mode is
-# active for this run AND (b) the reporter is confident the case can be
-# closed without human review. The orchestrator gates the autonomous
-# Sentinel close call on the presence of this marker. See
-# agents/instructions/reporter.md for the prompt-side contract.
-_CLOSE_RECOMMENDED_RE = re.compile(r"CLOSE_RECOMMENDED:\s*(.+?)(?:\n|$)")
-
 
 def _extract_reinvestigation(text: str) -> str | None:
     if not isinstance(text, str):
         return None
     m = _REINVESTIGATION_RE.search(text)
-    return m.group(1).strip() if m else None
-
-
-def _extract_close_recommendation(text: str) -> str | None:
-    """Reporter's confidence signal for autonomous closure. Returns the
-    rationale string when the marker is present, else None.
-    Independent of NEEDS_REINVESTIGATION — they're mutually exclusive
-    by design (the reporter's prompt says so), but we don't enforce
-    that here; the close path will simply not fire if both somehow
-    appear, because we only look for CLOSE_RECOMMENDED *after*
-    confirming no reinvestigation was requested."""
-    if not isinstance(text, str):
-        return None
-    m = _CLOSE_RECOMMENDED_RE.search(text)
     return m.group(1).strip() if m else None
 
 
@@ -651,25 +630,31 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     mode = (body.get("mode") or "triage_only").lower()  # triage_only | full
     max_chars = int(body.get("max_chars") or 1800)
 
-    # Auto-close: when True, the reporter is permitted to recommend
-    # autonomous closure (see CLOSE_RECOMMENDED marker contract in
-    # agents/instructions/reporter.md). Body value takes precedence;
-    # AISOC_AUTO_CLOSE=1 in the environment is preserved as a fallback
-    # so older callers (and CI smoke tests) keep working.
-    if "auto_close" in body:
-        auto_close = bool(body.get("auto_close"))
-    else:
-        auto_close = os.environ.get("AISOC_AUTO_CLOSE", "0") == "1"
+    # Confidence threshold (0–100). Tunes how readily the investigator
+    # and reporter request human input. Lower = ask the human often
+    # (cautious); higher = ask only when really uncertain (confident).
+    # 50 is the neutral default. Body value takes precedence; the
+    # AISOC_CONFIDENCE_THRESHOLD env var is preserved as a fallback so
+    # older callers (and CI smoke tests) keep working.
+    try:
+        if "confidence_threshold" in body:
+            confidence_threshold = int(body.get("confidence_threshold") or 50)
+        else:
+            confidence_threshold = int(os.environ.get("AISOC_CONFIDENCE_THRESHOLD", "50"))
+    except (TypeError, ValueError):
+        confidence_threshold = 50
+    confidence_threshold = max(0, min(100, confidence_threshold))
 
     # Identity of the human who triggered this run (None / empty for
     # auto-pickup). Used two ways downstream:
-    #   1. Injected into the reporter's user_text as TRIGGERING_USER
-    #      so ask_human can target this analyst by email.
-    #   2. After the run, on handoff to a human (success without
-    #      auto-close OR failure), the Sentinel incident's owner is
-    #      reassigned to this user instead of staying on the last
-    #      agent. Auto-pickup runs leave the owner on whoever the
-    #      orchestrator last set it to (typically Reporter Agent).
+    #   1. Injected into the investigator's and reporter's user_text as
+    #      TRIGGERING_USER so ask_human can target this analyst by email.
+    #   2. After the run, on handoff to a human (any successful run
+    #      that didn't end in autonomous closure, OR failure), the
+    #      Sentinel incident's owner is reassigned to this user instead
+    #      of staying on the last agent. Auto-pickup runs leave the
+    #      owner on whoever the orchestrator last set it to (typically
+    #      Reporter Agent).
     triggering_user = (body.get("triggering_user") or "").strip()
 
     # A single identifier so cost records + future correlation can group
@@ -770,11 +755,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         if mode == "triage_only":
-            # Triage-only runs don't reach the reporter and never
-            # auto-close, so the workflow MUST end with the incident
-            # assigned to a human — leaving it on "Triage Agent"
-            # would strand it in agent-owned land. Apply the same
-            # Pass-4 handoff logic the full pipeline uses at the end.
+            # Triage-only runs don't reach the reporter (and so can't
+            # close the incident), so the workflow MUST end with the
+            # incident assigned to a human — leaving it on "Triage
+            # Agent" would strand it in agent-owned land. Apply the
+            # same Pass-4 handoff logic the full pipeline uses at the
+            # end.
             owner_handoff_to: str | None = None
             if triggering_user:
                 try:
@@ -807,6 +793,37 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             }
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
+        # Shared blocks injected into the investigator + reporter prompts.
+        # CONFIDENCE_THRESHOLD tunes how readily they reach for ask_human;
+        # TRIGGERING_USER lets ask_human target the right analyst.
+        confidence_block = (
+            f"CONFIDENCE_THRESHOLD: {confidence_threshold}%\n"
+            "This is a 0–100 dial set by the human operator that controls "
+            "how readily you should reach for `ask_human` mid-flow. Lower "
+            "values mean the operator wants you to be cautious and ask "
+            "often when something is ambiguous. Higher values mean the "
+            "operator trusts you to push through on your own and only "
+            "interrupt them when you're truly stuck. 50 is neutral. "
+            "Use this as a soft prior — never as license to make up "
+            "evidence you don't have, and never as a reason to skip a "
+            "writeback the case clearly needs.\n\n"
+        )
+
+        if triggering_user:
+            triggering_user_block = (
+                f"TRIGGERING_USER: {triggering_user}\n"
+                "This is the human analyst who triggered this run from the "
+                "dashboard. When you call `ask_human`, pass `target` with "
+                "this email so the question is routed to them specifically "
+                "rather than broadcast to every signed-in analyst.\n\n"
+            )
+        else:
+            triggering_user_block = (
+                "TRIGGERING_USER: (auto-pickup — no specific human triggered this run)\n"
+                "Use `ask_human` without a `target` argument so the question "
+                "is broadcast to every signed-in analyst.\n\n"
+            )
+
         _assign_incident_owner(runner_url, runner_bearer, incident_number, incident_id, "Investigator Agent")
         _t = _phase_start(
             phase="investigator",
@@ -818,9 +835,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             project_endpoint,
             "investigator",
             user_text=(
-                "You are the INVESTIGATOR agent. Use the AISOC Runner OpenAPI tool to fetch incident details and run relevant KQL queries. "
-                "Ground findings in evidence and produce a short timeline + verdict.\n\n"
-                + f"INCIDENT_REF:\n{incident_json}\n\nTRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}"
+                "You are the INVESTIGATOR agent. Use the AISOC Runner OpenAPI tool "
+                "to fetch incident details and run relevant KQL queries. Ground "
+                "findings in evidence and produce a short timeline + verdict. You "
+                "may call `ask_human` mid-investigation when you genuinely need a "
+                "human-in-the-loop steer (clarifying scope, picking between "
+                "competing hypotheses, confirming an assumption). Use the "
+                "CONFIDENCE_THRESHOLD below to decide how readily to do so — at "
+                "the same incident_number so the question shows up under the "
+                "right case in the human's queue.\n\n"
+                + confidence_block
+                + triggering_user_block
+                + f"INCIDENT_NUMBER: {incident_number}\n\n"
+                + f"INCIDENT_REF:\n{incident_json}\n\n"
+                + f"TRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}"
             ),
         )
         _phase_end(
@@ -839,49 +867,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         # Writeback is now controlled by the reporter's own prompt (it must
-        # gate on ask_human). The body flag is kept for backwards compat but
-        # no longer injected into the prompt text — the reporter decides.
+        # gate on ask_human / confidence). The body flag is kept for
+        # backwards compat but no longer injected into the prompt text —
+        # the reporter decides.
         _ = bool(body.get("writeback"))
-
-        # When auto-close is on, tell the reporter explicitly so it can
-        # take the autonomous-close branch in its instructions (skip
-        # ask_human and emit CLOSE_RECOMMENDED when confident). When
-        # off, the reporter MUST follow the ask_human flow regardless
-        # of confidence — this is the user's safety contract.
-        auto_close_block = (
-            f"AUTO_CLOSE_MODE: {'on' if auto_close else 'off'}\n"
-            + ("When AUTO_CLOSE_MODE is 'on' and the case is unambiguous "
-               "(clear benign explanation, low severity, no signs of "
-               "compromise), you MAY skip ask_human, write the case note "
-               "via add_incident_comment, and emit a single-line "
-               "`CLOSE_RECOMMENDED: <one-sentence rationale>` marker — "
-               "the orchestrator will perform the actual Sentinel close "
-               "call. When AUTO_CLOSE_MODE is 'off', follow the normal "
-               "ask_human flow regardless of your confidence."
-               if auto_close else
-               "AUTO_CLOSE_MODE is off — follow the normal ask_human "
-               "flow. Do NOT emit CLOSE_RECOMMENDED.")
-            + "\n\n"
-        )
-
-        # When a human kicked off this run (manual trigger from the
-        # dashboard), tell the reporter who it is so ask_human can
-        # target them by email. Auto-pickup runs leave this empty and
-        # the reporter falls back to broadcast (legacy behaviour).
-        if triggering_user:
-            triggering_user_block = (
-                f"TRIGGERING_USER: {triggering_user}\n"
-                "This is the human analyst who triggered this run from the "
-                "dashboard. When you call `ask_human`, pass `target` with "
-                "this email so the question is routed to them specifically "
-                "rather than broadcast to every signed-in analyst.\n\n"
-            )
-        else:
-            triggering_user_block = (
-                "TRIGGERING_USER: (auto-pickup — no specific human triggered this run)\n"
-                "Use `ask_human` without a `target` argument so the question "
-                "is broadcast to every signed-in analyst.\n\n"
-            )
 
         def _invoke_reporter(investigator_output: str) -> tuple[str, dict]:
             return _invoke_agent(
@@ -889,11 +878,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "reporter",
                 user_text=(
                     "You are the REPORTER agent. Produce an executive summary, draft "
-                    "a Sentinel-ready case note, and propose a status change. Per "
-                    "your instructions, call ask_human to validate before writing "
-                    "anything back via add_incident_comment / update_incident.\n\n"
-                    + auto_close_block
+                    "a Sentinel-ready case note, and decide what to do next. You "
+                    "are authorised to write back to Sentinel directly — including "
+                    "closing the incident outright via `update_incident` with "
+                    "`status: Closed` — when you are sufficiently confident the "
+                    "case is a false positive or otherwise resolved. When you are "
+                    "only reasonably sure, call `ask_human` for a free-text "
+                    "approval at the same incident_number, then write back. Use "
+                    "the CONFIDENCE_THRESHOLD below to calibrate how readily to "
+                    "ask vs. act.\n\n"
+                    + confidence_block
                     + triggering_user_block
+                    + f"INCIDENT_NUMBER: {incident_number}\n\n"
                     + f"INCIDENT_REF:\n{incident_json}\n\n"
                     + f"TRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}\n\n"
                     + f"INVESTIGATOR_OUTPUT:\n{_clip(investigator_output, 8000)}"
@@ -1015,49 +1011,26 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             {"count": len(write_hits), "calls": write_hits} if write_hits else False
         )
 
-        # Auto-close path. Two conditions must be true to fire:
-        #   1. auto_close was passed into this run (request body or
-        #      env-var fallback — resolved at function entry).
-        #   2. The reporter emitted CLOSE_RECOMMENDED, signalling that
-        #      the case is unambiguous enough to close without a human.
-        # Either condition false => no autonomous close. The case may
-        # still get closed via the reporter's own ask_human-approved
-        # update_incident tool call (which would show up in
-        # `wrote_comment.calls`), but that's a separate path.
-        close_rationale = _extract_close_recommendation(rep_out)
-        did_close = False
-        close_skip_reason: str | None = None
-        if not auto_close:
-            close_skip_reason = "auto_close=False"
-        elif not close_rationale:
-            close_skip_reason = "no CLOSE_RECOMMENDED marker"
-        else:
-            _runner_post(
-                runner_url,
-                runner_bearer,
-                {
-                    "tool_name": "update_incident",
-                    "arguments": {
-                        "incidentNumber": incident_number,
-                        "properties": {"status": "Closed"},
-                    },
-                },
-                agent="reporter",
-            )
-            did_close = True
-            print(
-                f"[orchestrator] auto-close fired "
-                f"workflow_run_id={workflow_run_id} "
-                f"incident_number={incident_number} "
-                f"rationale={close_rationale!r}",
-                flush=True,
-            )
+        # Did the reporter close the incident outright? With auto-close
+        # gone as a global setting, the reporter is always free to close
+        # via update_incident with status="Closed" when sufficiently
+        # confident. We surface that decision to the dashboard by
+        # inspecting the reporter's tool calls.
+        def _is_close_call(call: dict) -> bool:
+            args = call.get("arguments") or {}
+            if call.get("name") != "update_incident":
+                return False
+            props = args.get("properties") if isinstance(args, dict) else None
+            status = (props or {}).get("status") if isinstance(props, dict) else None
+            return isinstance(status, str) and status.strip().lower() == "closed"
+
+        did_close = any(_is_close_call(c) for c in write_hits)
 
         # Pass 4 — Sentinel owner attribution on handoff. If the run
-        # didn't auto-close AND a human triggered it, reassign the
-        # incident owner from "Reporter Agent" to that human's email.
-        # That puts the case in their queue in Sentinel, matching the
-        # UI's "Active · Human Analysis" state.
+        # didn't end in autonomous closure AND a human triggered it,
+        # reassign the incident owner from "Reporter Agent" to that
+        # human's email. That puts the case in their queue in Sentinel,
+        # matching the UI's "Active · Human Analysis" state.
         #
         # Auto-pickup runs (no triggering_user) leave the owner on
         # whoever the orchestrator last set it to (typically Reporter
@@ -1101,13 +1074,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             "triage": _maybe_json(triage_out),
             "investigation": _maybe_json(inv_out),
             "report": _maybe_json(rep_out),
+            # True iff the reporter chose to close the incident outright
+            # via update_incident(status="Closed"). The reporter is free
+            # to do that whenever it's confident the case is a false
+            # positive; the CONFIDENCE_THRESHOLD biases that decision.
             "did_close": did_close,
-            # Auto-close diagnostics — useful for the dashboard to
-            # explain "agents closed because X" or "agents could have
-            # closed but auto_close=False". One of these is None.
-            "close_rationale": close_rationale if did_close else None,
-            "close_skipped_reason": close_skip_reason,
-            "auto_close_mode": auto_close,
+            "confidence_threshold": confidence_threshold,
             "triggering_user": triggering_user or None,
             "owner_handoff_to": owner_handoff_to,
             "wrote_comment": wrote_comment,

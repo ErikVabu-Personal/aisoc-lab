@@ -882,16 +882,75 @@
     return rootEl;
   }
 
+  // Return true if the incident with this number is currently owned by
+  // a human analyst (anyone in the user roster). Used by the sidebar
+  // to decide whether incident-bound HITL questions belong in
+  // "Incident Input Needed" (= still agent-handled) or "Pending
+  // requests" (= human is already on the case).
+  function _incidentOwnedByHuman(num) {
+    if (num == null) return false;
+    const inc = STATE.incidents.find((i) => Number(i && i.number) === Number(num));
+    if (!inc) {
+      // No incident match yet — could be a stale snapshot. Be cautious
+      // and treat as not-owned-by-human so the question still surfaces
+      // in the "Incident Input Needed" section rather than vanishing.
+      return false;
+    }
+    const owner = String((inc && inc.owner) || '').trim();
+    if (!owner) return false;
+    const ownerLower = owner.toLowerCase();
+    // Agent-owned: display names always end with " Agent" (e.g.
+    // "Investigator Agent", "Reporter Agent", "Investigator Agent
+    // (re-review)") because that's how the orchestrator labels them.
+    if (ownerLower.includes(' agent')) return false;
+    // Otherwise we treat it as human-owned. Conservative — even if the
+    // owner string isn't recognised in the user roster, it's clearly
+    // not an agent label.
+    return true;
+  }
+
+  // Look up an incident's title for the group header in "Incident Input
+  // Needed". Returns null when we don't have it cached yet (sidebar
+  // will fall back to "(loading title…)").
+  function _incidentTitle(num) {
+    const inc = STATE.incidents.find((i) => Number(i && i.number) === Number(num));
+    return (inc && inc.title) ? String(inc.title) : null;
+  }
+
+  // Render a group of HITL questions bound to the same incident under
+  // the "Incident Input Needed" section. The header shows incident
+  // number + title and links to the dashboard; questions render with
+  // the same expand-and-reply UI as the standalone HITL items.
+  function renderIncidentInputGroup(num, questions) {
+    const title = _incidentTitle(num) || '(loading title…)';
+    let html = '';
+    html += `<div class="queue-item" style="border-color:#facc15;">`;
+    html += `<a href="/dashboard" title="Open #${num} on the dashboard">`;
+    html += `<span class="qnum">#${num}</span>`;
+    html += `<span class="qtitle">${escapeHtml(title)}</span>`;
+    html += `</a>`;
+    html += `</div>`;
+    for (const q of questions) html += renderHitlItem(q);
+    return html;
+  }
+
   function renderHitlItem(q) {
     const id = `hitl-${q.id}`;
     const expanded = STATE.expanded.has(id);
     const draft = STATE.drafts.hitl[q.id] || '';
     const sending = STATE.sending.has(id);
     const chev = expanded ? '▾' : '▸';
+    // Show the incident pill on the row head when this question is
+    // bound to a Sentinel case, so analysts can scan a row of HITL
+    // notifications and see at a glance which incident each maps to.
+    const incPill = (q.incident_number != null)
+      ? `<span class="owns-pill" title="Incident #${q.incident_number}">#${q.incident_number}</span>`
+      : '';
     const head = `
       <div class="head" data-toggle="${id}">
         <span class="badge">Question</span>
         <span class="name">${escapeHtml(q.agent || 'agent')}</span>
+        ${incPill}
         <span class="chev">${chev}</span>
       </div>`;
     if (!expanded) return `<div class="item notif ${sending ? '' : 'urgent'}">${head}</div>`;
@@ -899,10 +958,9 @@
       <div class="body-content">
         <p class="question">${escapeHtml(q.question || '')}</p>
         <div class="answer-form">
-          <textarea data-hitl-textarea="${q.id}" placeholder="Optional rationale (sent with Approve/Reject)…">${escapeHtml(draft)}</textarea>
+          <textarea data-hitl-textarea="${q.id}" placeholder="Type your reply for the agent — they read free text, so be specific…" ${sending ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
           <div class="actions">
-            <button class="approve" data-hitl-approve="${q.id}" ${sending ? 'disabled' : ''}>Approve</button>
-            <button class="reject"  data-hitl-reject="${q.id}"  ${sending ? 'disabled' : ''}>Reject</button>
+            <button class="approve" data-hitl-send="${q.id}" ${sending ? 'disabled' : ''}>${sending ? 'Sending…' : 'Send reply'}</button>
           </div>
         </div>
       </div>`;
@@ -1077,9 +1135,41 @@
         </a>`;
     }
 
-    if (STATE.hitl.length) {
+    // Split pending HITL questions into two groups:
+    //   1. Incident-bound questions where the incident isn't owned by
+    //      a human → "Incident Input Needed" (these are cases the
+    //      agents are still working on but need a human steer to make
+    //      progress).
+    //   2. Everything else (broadcast non-incident chat asks, plus
+    //      incident questions where a human already owns the case)
+    //      → "Pending requests".
+    const hitlByIncident = {};   // incident_number -> [questions]
+    const hitlOther = [];
+    for (const q of STATE.hitl) {
+      const incNum = q.incident_number;
+      if (incNum != null && !_incidentOwnedByHuman(incNum)) {
+        const key = String(incNum);
+        if (!hitlByIncident[key]) hitlByIncident[key] = [];
+        hitlByIncident[key].push(q);
+      } else {
+        hitlOther.push(q);
+      }
+    }
+
+    const incidentInputNums = Object.keys(hitlByIncident)
+      .map(Number)
+      .sort((a, b) => a - b);
+
+    if (incidentInputNums.length) {
+      html += '<h2 class="section">Incident input needed</h2>';
+      for (const num of incidentInputNums) {
+        html += renderIncidentInputGroup(num, hitlByIncident[String(num)]);
+      }
+    }
+
+    if (hitlOther.length) {
       html += '<h2 class="section">Pending requests</h2>';
-      for (const q of STATE.hitl) html += renderHitlItem(q);
+      for (const q of hitlOther) html += renderHitlItem(q);
     }
     html += '<h2 class="section">Agents</h2>';
     if (!STATE.agents.length) {
@@ -1097,14 +1187,14 @@
       for (const u of STATE.users) html += renderDmItem(u);
     }
     // My queue — splits into two sub-lists:
-    //   - Incidents: Sentinel-owned, filtered by owner == me.
-    //   - Changes:   pending agent proposals (Knowledge today,
-    //                detection-engineer rule proposals planned).
+    //   - My incidents:    Sentinel-owned, filtered by owner == me.
+    //   - Proposed changes: pending agent proposals (SOC Manager
+    //                preamble + agent-instructions + detection-rule).
     //                Broadcast — every logged-in human sees them
     //                until someone approves or rejects.
     html += '<h2 class="section">My queue</h2>';
 
-    html += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:8px 12px 4px;font-weight:700;">Incidents</div>';
+    html += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:8px 12px 4px;font-weight:700;">My incidents</div>';
     const myInc = myQueueIncidents();
     if (!myInc.length) {
       html += '<div class="empty-line">No incidents currently assigned to you.</div>';
@@ -1112,7 +1202,7 @@
       for (const inc of myInc) html += renderMyQueueItem(inc);
     }
 
-    html += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:14px 12px 4px;font-weight:700;">Changes</div>';
+    html += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:14px 12px 4px;font-weight:700;">Proposed changes</div>';
     if (!STATE.changes.length) {
       html += '<div class="empty-line">No pending changes.</div>';
     } else {
@@ -1170,11 +1260,8 @@
         STATE.drafts.hitl[ta.getAttribute('data-hitl-textarea')] = ta.value;
       });
     });
-    root.querySelectorAll('[data-hitl-approve]').forEach((btn) => {
-      btn.addEventListener('click', () => onHitlAnswer(btn.getAttribute('data-hitl-approve'), 'approve'));
-    });
-    root.querySelectorAll('[data-hitl-reject]').forEach((btn) => {
-      btn.addEventListener('click', () => onHitlAnswer(btn.getAttribute('data-hitl-reject'), 'reject'));
+    root.querySelectorAll('[data-hitl-send]').forEach((btn) => {
+      btn.addEventListener('click', () => onHitlAnswer(btn.getAttribute('data-hitl-send')));
     });
 
     // Open a chat popup window for an agent or human. Uses a
@@ -1302,16 +1389,24 @@
   }
 
   // ── HITL answer ─────────────────────────────────────────────────────
-  async function onHitlAnswer(qid, decision) {
+  // The agents read a free-text reply and decide what to do — there's
+  // no fixed approve/reject contract anymore. The textarea content is
+  // sent verbatim. Empty replies are rejected client-side because an
+  // empty answer carries no signal and would just waste an LLM round.
+  async function onHitlAnswer(qid) {
     const id = `hitl-${qid}`;
     if (STATE.sending.has(id)) return;
+    const answer = (STATE.drafts.hitl[qid] || '').trim();
+    if (!answer) {
+      // Soft prompt — not an alert(), keep it inline.
+      STATE.chatErrors[`hitl-${qid}`] = 'Please type a reply before sending.';
+      // Re-use the chat error channel for now; cheap.
+      render();
+      return;
+    }
     STATE.sending.add(id);
     render();
     try {
-      const rationale = STATE.drafts.hitl[qid] || '';
-      const answer = decision === 'approve'
-        ? (rationale ? `APPROVE: ${rationale}` : 'APPROVE')
-        : (rationale ? `REJECT: ${rationale}` : 'REJECT');
       const r = await fetch(`/api/hitl/answer/${encodeURIComponent(qid)}`, {
         method: 'POST',
         credentials: 'same-origin',

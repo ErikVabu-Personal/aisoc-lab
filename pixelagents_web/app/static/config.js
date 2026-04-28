@@ -556,12 +556,15 @@
   poll();
   setInterval(poll, POLL_MS);
 
-  // ── Toggle widgets (auto-pickup + auto-close) ─────────────────────
-  // Both render the same pill-switch card layout with their own polled
-  // state from /api/auto_pickup or /api/auto_close. The matching read-
-  // only badges on the Live Agent View are rendered by
+  // ── Toggle + slider widgets ───────────────────────────────────────
+  // Auto-pickup is a binary on/off toggle (state from /api/auto_pickup).
+  // Agent temperature is a 0–100 slider (state from
+  // /api/agent_temperature) that biases how readily the investigator
+  // and reporter reach for ask_human mid-flow. Both have matching
+  // read-only badges on the Live Agent View rendered by
   // auto_pickup_badge.js.
   injectToggleStyles();
+  injectSliderStyles();
 
   setupToggle({
     rootId: 'aisoc-auto-pickup-root',
@@ -584,16 +587,24 @@
     },
   });
 
-  setupToggle({
-    rootId: 'aisoc-auto-close-root',
-    apiPath: '/api/auto_close',
-    title: 'Automated incident closure',
+  setupSlider({
+    rootId: 'aisoc-agent-temperature-root',
+    apiPath: '/api/agent_temperature',
+    title: 'Agent temperature',
     desc:
-      'When enabled, the reporter agent is permitted to close Sentinel '
-      + 'incidents directly when its analysis is conclusive. When disabled '
-      + '(default), every workflow run hands back to the human analyst — '
-      + 'the agents <strong>cannot</strong> close incidents on their own.',
-    renderState: () => 'Reporter closes incidents when confident',
+      'How readily the investigator and reporter agents reach for '
+      + '<code>ask_human</code> mid-flow. <strong>Lower</strong> = ask '
+      + 'humans often (cautious — better for high-stakes / unfamiliar '
+      + 'environments). <strong>Higher</strong> = act autonomously '
+      + 'whenever reasonably confident (faster — better for trusted, '
+      + 'well-tuned setups). The reporter is always free to close an '
+      + 'incident outright when it reads as a clear false positive; '
+      + 'this slider just biases how often the agents pause to confirm.',
+    min: 0,
+    max: 100,
+    step: 5,
+    leftLabel: 'Ask often',
+    rightLabel: 'Act on its own',
   });
 
   // ── Generic instructions / context (read-only) ────────────────────
@@ -1221,6 +1232,209 @@
         try {
           const resp = await fetch(opts.apiPath, { credentials: 'same-origin' });
           if (resp.ok) state = await resp.json();
+        } catch (_) { /* ignore */ }
+        alert(`Failed to update ${opts.title}: ` + (e.message || String(e)));
+      } finally {
+        busy = false;
+        r();
+      }
+    }
+
+    poll();
+    setInterval(poll, 5000);
+  }
+
+  // ── Slider widget (agent temperature) ─────────────────────────────
+  // Renders a horizontal slider card backed by GET/POST {apiPath}
+  // returning at least { value: int (0..100), last_event?, last_event_ts? }.
+  // Saves on `change` (release) only — not `input` — so a drag doesn't
+  // generate a flurry of POSTs.
+  function injectSliderStyles() {
+    if (document.getElementById('aisoc-slider-styles')) return;
+    const css = `
+      .aisoc-slider-root { margin-bottom: 16px; }
+      .aisoc-slider-root .sl-card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 16px 20px;
+      }
+      .aisoc-slider-root .sl-head {
+        display: flex; align-items: baseline; gap: 12px;
+        margin-bottom: 4px;
+      }
+      .aisoc-slider-root .sl-title {
+        font-size: 15px; font-weight: 700; color: #1f2937;
+        flex: 1;
+      }
+      .aisoc-slider-root .sl-value {
+        font-size: 15px; font-weight: 700; color: #0099cc;
+        font-variant-numeric: tabular-nums;
+      }
+      .aisoc-slider-root .sl-desc {
+        font-size: 13px; color: #6b7280; line-height: 1.4;
+        margin-bottom: 14px;
+      }
+      .aisoc-slider-root .sl-desc code {
+        background: #f3f4f6;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-size: 12px;
+      }
+      .aisoc-slider-root .sl-track {
+        position: relative;
+        display: grid;
+        grid-template-columns: max-content 1fr max-content;
+        align-items: center;
+        gap: 12px;
+      }
+      .aisoc-slider-root .sl-end {
+        font-size: 12px; font-weight: 600;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .aisoc-slider-root .sl-input {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 6px;
+        border-radius: 999px;
+        background: linear-gradient(to right, #fbbf24 0%, #cbd5e1 50%, #10b981 100%);
+        outline: none;
+        cursor: pointer;
+      }
+      .aisoc-slider-root .sl-input:disabled { opacity: 0.5; cursor: wait; }
+      .aisoc-slider-root .sl-input::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 22px; height: 22px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #0099cc;
+        cursor: pointer;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+      }
+      .aisoc-slider-root .sl-input::-moz-range-thumb {
+        width: 22px; height: 22px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #0099cc;
+        cursor: pointer;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+      }
+      .aisoc-slider-root .sl-state {
+        margin-top: 10px;
+        font-size: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #6b7280;
+      }
+      .aisoc-slider-root .sl-state .ev { color: #1f2937; }
+    `;
+    const style = document.createElement('style');
+    style.id = 'aisoc-slider-styles';
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  function setupSlider(opts) {
+    const root = document.getElementById(opts.rootId);
+    if (!root) return;
+    root.classList.add('aisoc-slider-root');
+
+    const min = Number(opts.min != null ? opts.min : 0);
+    const max = Number(opts.max != null ? opts.max : 100);
+    const step = Number(opts.step != null ? opts.step : 1);
+
+    let state = { value: 50, last_event: null, last_event_ts: null };
+    let busy = false;
+    // The value the user is currently dragging towards. We render that
+    // immediately even while the POST is in-flight, so the thumb doesn't
+    // visually snap back to the old value during the round-trip.
+    let pendingValue = null;
+
+    function r() {
+      const shown = pendingValue != null ? pendingValue : Number(state.value || 0);
+      const evTxt = state.last_event
+        ? `<span class="ev">${escapeHtml(state.last_event)}</span>`
+            + (state.last_event_ts ? ` · ${escapeHtml(fmtAgoLocal(state.last_event_ts) || '')}` : '')
+        : 'no events yet';
+      const inputId = opts.rootId + '-input';
+      root.innerHTML = `
+        <div class="sl-card">
+          <div class="sl-head">
+            <span class="sl-title">${escapeHtml(opts.title)}</span>
+            <span class="sl-value">${escapeHtml(String(shown))}%</span>
+          </div>
+          <div class="sl-desc">${opts.desc}</div>
+          <div class="sl-track">
+            <span class="sl-end">${escapeHtml(opts.leftLabel || String(min))}</span>
+            <input type="range" class="sl-input" id="${escapeHtml(inputId)}"
+                   min="${min}" max="${max}" step="${step}" value="${shown}"
+                   ${busy ? 'disabled' : ''}>
+            <span class="sl-end">${escapeHtml(opts.rightLabel || String(max))}</span>
+          </div>
+          <div class="sl-state">Last event: ${evTxt}</div>
+        </div>
+      `;
+      const input = document.getElementById(inputId);
+      if (input) {
+        // Live-update the displayed value while dragging, but only
+        // commit (POST) on release.
+        input.addEventListener('input', () => {
+          pendingValue = Number(input.value);
+          const valEl = root.querySelector('.sl-value');
+          if (valEl) valEl.textContent = `${pendingValue}%`;
+        });
+        input.addEventListener('change', () => {
+          commit(Number(input.value));
+        });
+      }
+    }
+
+    async function poll() {
+      try {
+        const resp = await fetch(opts.apiPath, { credentials: 'same-origin' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const fresh = await resp.json();
+        // Don't clobber a value the user is currently dragging.
+        if (pendingValue != null && !busy) pendingValue = null;
+        state = fresh;
+        r();
+      } catch (e) {
+        root.innerHTML = `
+          <div class="sl-card">
+            <div class="sl-head"><span class="sl-title">${escapeHtml(opts.title)}</span></div>
+            <div class="sl-desc" style="color:#991b1b">
+              Failed to load: ${escapeHtml(e.message || String(e))}
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    async function commit(value) {
+      if (busy) return;
+      busy = true;
+      pendingValue = value;
+      r();
+      try {
+        const resp = await fetch(opts.apiPath, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        state = await resp.json();
+        pendingValue = null;
+      } catch (e) {
+        try {
+          const resp = await fetch(opts.apiPath, { credentials: 'same-origin' });
+          if (resp.ok) {
+            state = await resp.json();
+            pendingValue = null;
+          }
         } catch (_) { /* ignore */ }
         alert(`Failed to update ${opts.title}: ` + (e.message || String(e)));
       } finally {
