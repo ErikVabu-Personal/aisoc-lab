@@ -30,6 +30,7 @@ AGENTS = [
     "Investigator",
     "Reporter",
     "Detection Engineer",
+    "Knowledge",
 ]
 
 
@@ -55,6 +56,7 @@ ROLE_INSTRUCTIONS: Dict[str, str] = {
     "Investigator": "Incident investigator.",
     "Reporter": "Incident reporter.",
     "Detection Engineer": "Detection engineer.",
+    "Knowledge": "SOC knowledge curator.",
 }
 
 
@@ -81,6 +83,7 @@ def load_instructions(agent_display_name: str) -> str:
         "Investigator": "investigator.md",
         "Reporter": "reporter.md",
         "Detection Engineer": "detection-engineer.md",
+        "Knowledge": "knowledge.md",
     }
     role_file = role_map.get(agent_display_name)
     role = _read_text(os.path.join(base_dir, role_file)) if role_file else ""
@@ -149,6 +152,7 @@ def render_openapi(runner_url: str, agent_name: str) -> Dict[str, Any]:
                                                 "update_incident",
                                                 "ask_human",
                                                 "create_analytic_rule",
+                                                "propose_change_to_knowledge",
                                             ],
                                         },
                                         "arguments": {"type": "object"},

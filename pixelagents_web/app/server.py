@@ -43,6 +43,33 @@ EVENTS: Deque[dict[str, Any]] = deque(maxlen=2000)
 # of the container will drop any in-flight questions.
 HITL_QUESTIONS: Dict[str, Dict[str, Any]] = {}
 
+# Pending change proposals from agents (the Knowledge agent today;
+# detection-engineer rule proposals are a planned follow-up). Each
+# change requires explicit human Approve / Reject before it takes
+# effect. Apply-on-approve lives in _apply_change(); approval is
+# broadcast (any logged-in human can approve, first-wins).
+#
+# Shape of a record:
+#   {
+#     "id":          str,
+#     "kind":        "knowledge-preamble",
+#     "proposed_by": str (agent slug),
+#     "proposed_at": float,
+#     "title":       str (one-line summary for the queue row),
+#     "rationale":   str (why the change matters),
+#     "current":     str (snapshot at proposal time, for the diff view),
+#     "proposed":    str (the new content, in full),
+#     "status":      "pending" | "approved" | "rejected" | "applied" | "failed",
+#     "reviewer":    str | None (email of the human who acted),
+#     "reviewed_at": float | None,
+#     "review_note": str (analyst rationale on approve/reject),
+#     "applied_at":  float | None,
+#     "applied_result": dict | None (per-target outcome of the apply step),
+#     "apply_error": str | None,
+#   }
+CHANGES: Dict[str, Dict[str, Any]] = {}
+CHANGES_CAP = 200  # trim oldest when we exceed this
+
 # Per-user, per-agent ad-hoc chat history. Survives navigation + refresh
 # (in-memory; restart clears it — same lifetime as AGENTS/HITL_QUESTIONS).
 # Shape: CONVERSATIONS[user_key][agent_slug] -> list of message records.
@@ -1203,8 +1230,8 @@ def healthz() -> dict[str, str]:
 
 def _default_agent_roster() -> list[str]:
     # Comma-separated list of agents that should always exist in UI even before events.
-    # Defaults to the classic trio + detection engineer.
-    raw = os.getenv("PIXELAGENTS_AGENT_ROSTER", "triage,investigator,reporter,detection-engineer")
+    # Defaults to the classic trio + detection engineer + knowledge curator.
+    raw = os.getenv("PIXELAGENTS_AGENT_ROSTER", "triage,investigator,reporter,detection-engineer,knowledge")
     names = [x.strip() for x in raw.split(",") if x.strip()]
     # De-dupe while preserving order
     out: list[str] = []
@@ -3163,6 +3190,294 @@ async def hitl_wait(
         if time.time() >= deadline:
             return _hitl_public(q)
         await _asyncio.sleep(1.0)
+
+
+# ── Pending changes (Knowledge agent + future detection-engineer) ────
+
+
+def _change_public(c: dict[str, Any]) -> dict[str, Any]:
+    """Strip nothing for now — we WANT the analyst to see all the
+    fields so they can read the rationale, current snapshot, and
+    proposed content side-by-side."""
+    out = dict(c)
+    return out
+
+
+def _split_common_from_full(full_instructions: str, common_text: str) -> str:
+    """Given an agent's full instructions blob (common + role tail)
+    and the existing common text, return just the role tail. Falls
+    back to the full string if the prefix doesn't match — better to
+    keep the agent's role intact on a near-miss than wipe it."""
+    if common_text and full_instructions.startswith(common_text):
+        return full_instructions[len(common_text):].lstrip("\n")
+    return full_instructions
+
+
+def _apply_knowledge_preamble_change(record: dict[str, Any]) -> dict[str, Any]:
+    """Fan out the new common preamble to every roster agent on
+    Foundry. Each agent's new instructions = new_common + "\n\n" +
+    that agent's existing role tail. Reuses the read path
+    (_fetch_foundry_agent_instructions / _split_common_and_role) and
+    the write helper (_foundry_post_new_version) we already have.
+
+    Returns a per-agent outcome dict: {agent_slug: "ok" | error_str}.
+    Raises only on configuration-level failures; per-agent failures
+    are recorded and the function still returns (so the analyst sees
+    'X of N succeeded')."""
+
+    new_common = (record.get("proposed") or "").strip()
+    if not new_common:
+        raise HTTPException(status_code=400, detail="Proposed preamble is empty")
+
+    rich = _fetch_foundry_agent_instructions()
+    full_by_slug = {slug: (r.get("instructions") or "") for slug, r in rich.items()}
+    current_common, role_tails = _split_common_and_role(full_by_slug)
+
+    out: dict[str, str] = {}
+    for slug in _default_agent_roster():
+        if slug == "knowledge":
+            # Knowledge agent doesn't need the common preamble baked
+            # into its own instructions (its role IS preamble-
+            # awareness). Skip to avoid the recursive update.
+            out[slug] = "skipped (knowledge agent)"
+            continue
+        role_tail = role_tails.get(slug) or ""
+        new_full = f"{new_common}\n\n{role_tail}" if role_tail else new_common
+        try:
+            _foundry_post_new_version(slug, new_full)
+            out[slug] = "ok"
+        except HTTPException as e:
+            out[slug] = f"failed: {e.detail!s}"[:300]
+        except Exception as e:
+            out[slug] = f"failed: {e!r}"[:300]
+    return out
+
+
+@app.post("/api/changes")
+async def api_changes_create(
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Called by the runner when an agent proposes a change. Body:
+        {
+          "agent": str,            # who's proposing (slug)
+          "kind": str,             # "knowledge-preamble" (only kind in v1)
+          "title": str | None,
+          "rationale": str,
+          "proposed": str,         # the new content, in full
+        }
+    Server fetches the current state (so the queue can show a diff)
+    and stores the record in pending state."""
+
+    _require_token(x_pixelagents_token)
+
+    import uuid as _uuid
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    agent = _slug_agent(str(body.get("agent") or "unknown"))
+    kind = (body.get("kind") or "").strip()
+    title = (body.get("title") or "").strip()
+    rationale = (body.get("rationale") or "").strip()
+    proposed = body.get("proposed")
+
+    if kind not in ("knowledge-preamble",):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported change kind: {kind!r}",
+        )
+    if not isinstance(proposed, str) or not proposed.strip():
+        raise HTTPException(status_code=400, detail="Missing 'proposed' (string)")
+    if not rationale:
+        raise HTTPException(status_code=400, detail="Missing 'rationale' (string)")
+
+    # Snapshot the current state so the approving analyst can see
+    # exactly what will change. Tolerate read failures — we still
+    # capture the proposal even if the snapshot is empty.
+    current_snapshot = ""
+    if kind == "knowledge-preamble":
+        try:
+            rich = _fetch_foundry_agent_instructions()
+            full_by_slug = {slug: (r.get("instructions") or "") for slug, r in rich.items()}
+            current_snapshot, _ = _split_common_and_role(full_by_slug)
+        except Exception as e:
+            current_snapshot = f"(could not read current preamble: {e!r})"
+
+    cid = str(_uuid.uuid4())
+    record = {
+        "id": cid,
+        "kind": kind,
+        "proposed_by": agent,
+        "proposed_at": time.time(),
+        "title": title or "(untitled change)",
+        "rationale": rationale,
+        "current": current_snapshot,
+        "proposed": proposed,
+        "status": "pending",
+        "reviewer": None,
+        "reviewed_at": None,
+        "review_note": "",
+        "applied_at": None,
+        "applied_result": None,
+        "apply_error": None,
+    }
+    CHANGES[cid] = record
+
+    # Trim oldest if we're over the cap. Keep pending ones regardless
+    # of age — we don't want to drop something a human still owes a
+    # decision on.
+    if len(CHANGES) > CHANGES_CAP:
+        ordered = sorted(CHANGES.items(), key=lambda kv: kv[1].get("proposed_at") or 0)
+        for k, v in ordered:
+            if len(CHANGES) <= CHANGES_CAP:
+                break
+            if v.get("status") != "pending":
+                CHANGES.pop(k, None)
+
+    print(
+        f"[changes] proposed kind={kind} by={agent} id={cid} "
+        f"title={title!r}",
+        flush=True,
+    )
+    return _change_public(record)
+
+
+@app.get("/api/changes/pending")
+def api_changes_pending(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """List pending changes. Broadcast for now — every logged-in
+    human sees them; the first to approve / reject wins."""
+
+    _require_auth(request, x_pixelagents_token)
+    pending = [
+        _change_public(c) for c in CHANGES.values() if c.get("status") == "pending"
+    ]
+    pending.sort(key=lambda c: c.get("proposed_at") or 0)
+    return {"changes": pending, "ts": time.time()}
+
+
+@app.get("/api/changes/{change_id}")
+def api_changes_get(
+    change_id: str,
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
+    c = CHANGES.get(change_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Unknown change id")
+    return _change_public(c)
+
+
+@app.post("/api/changes/{change_id}/approve")
+async def api_changes_approve(
+    change_id: str,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Approve a pending change AND apply it. Apply outcome lives on
+    the record so the queue can show 'Applied to N of M agents' / a
+    failure cause if it didn't fully take."""
+
+    _require_auth(req, x_pixelagents_token)
+    me = _session_user(req) or ""
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    note = ""
+    if isinstance(body, dict):
+        n = body.get("note")
+        if isinstance(n, str):
+            note = n.strip()
+
+    record = CHANGES.get(change_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Unknown change id")
+    if record.get("status") != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Change is no longer pending (status={record.get('status')!r})",
+        )
+
+    # Mark approved BEFORE applying so a concurrent approve from
+    # another tab races to no-op rather than fanning out twice.
+    record["status"] = "approved"
+    record["reviewer"] = me
+    record["reviewed_at"] = time.time()
+    record["review_note"] = note
+
+    try:
+        if record["kind"] == "knowledge-preamble":
+            import asyncio as _asyncio
+            applied = await _asyncio.to_thread(_apply_knowledge_preamble_change, record)
+        else:
+            applied = {"_error": f"unsupported kind: {record['kind']}"}
+        record["applied_at"] = time.time()
+        record["applied_result"] = applied
+        any_failed = any(str(v).startswith("failed") for v in applied.values())
+        record["status"] = "failed" if any_failed else "applied"
+    except HTTPException as e:
+        record["status"] = "failed"
+        record["apply_error"] = str(e.detail)[:1000]
+    except Exception as e:
+        record["status"] = "failed"
+        record["apply_error"] = f"{type(e).__name__}: {e!r}"[:1000]
+
+    print(
+        f"[changes] {record['status']} change_id={change_id} kind={record['kind']} "
+        f"reviewer={me!r}",
+        flush=True,
+    )
+    return _change_public(record)
+
+
+@app.post("/api/changes/{change_id}/reject")
+async def api_changes_reject(
+    change_id: str,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(req, x_pixelagents_token)
+    me = _session_user(req) or ""
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    note = ""
+    if isinstance(body, dict):
+        n = body.get("note")
+        if isinstance(n, str):
+            note = n.strip()
+
+    record = CHANGES.get(change_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Unknown change id")
+    if record.get("status") != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Change is no longer pending (status={record.get('status')!r})",
+        )
+
+    record["status"] = "rejected"
+    record["reviewer"] = me
+    record["reviewed_at"] = time.time()
+    record["review_note"] = note
+    print(
+        f"[changes] rejected change_id={change_id} kind={record['kind']} "
+        f"reviewer={me!r}",
+        flush=True,
+    )
+    return _change_public(record)
 
 
 # ── Conversation persistence helpers ─────────────────────────────────

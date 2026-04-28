@@ -510,6 +510,63 @@ def tools_execute(
 
             return {"result": {"answer": answer_text, "question_id": qid}}
 
+        if tool_name == "propose_change_to_knowledge":
+            # The Knowledge agent's writeback path. Proposes an
+            # update to the shared common preamble; lands in the
+            # human analyst's queue with status=pending. Apply
+            # happens server-side on PixelAgents Web after a human
+            # approves — the runner just forwards the proposal.
+            proposed = args.get("proposed")
+            rationale = args.get("rationale")
+            title = args.get("title") or ""
+            if not isinstance(proposed, str) or not proposed.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.proposed (full new common preamble, string)",
+                )
+            if not isinstance(rationale, str) or not rationale.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.rationale (string)",
+                )
+
+            pa_events_url = os.getenv("PIXELAGENTS_URL", "").strip()
+            pa_token = os.getenv("PIXELAGENTS_TOKEN", "").strip()
+            if not pa_events_url or not pa_token:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Knowledge writeback not wired — PIXELAGENTS_URL / "
+                        "PIXELAGENTS_TOKEN are not set on the runner. Run "
+                        "terraform/3-deploy-pixelagents-web/scripts/configure_runner_pixelagents_env.sh."
+                    ),
+                )
+            pa_base = pa_events_url
+            for suffix in ("/events", "/events/"):
+                if pa_base.endswith(suffix):
+                    pa_base = pa_base[: -len(suffix)]
+                    break
+            pa_base = pa_base.rstrip("/")
+
+            r = requests.post(
+                f"{pa_base}/api/changes",
+                headers={
+                    "x-pixelagents-token": pa_token,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "agent": agent or "knowledge",
+                    "kind": "knowledge-preamble",
+                    "title": title.strip(),
+                    "rationale": rationale.strip(),
+                    "proposed": proposed,
+                },
+                timeout=30,
+            )
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=r.text)
+            return {"result": r.json()}
+
         if tool_name == "create_analytic_rule":
             # Inputs (all optional except displayName + query):
             #   displayName, description, severity (Low/Medium/High/Informational),

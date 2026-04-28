@@ -21,6 +21,7 @@
   const POLL_DM_MS = 3000; // refresh open DM threads
   const POLL_INCIDENT_MS = 1500; // current_incident — fast so the elapsed timer ticks
   const POLL_QUEUE_MS = 8000; // /api/sentinel/incidents — match dashboard cadence
+  const POLL_CHANGES_MS = 3000; // /api/changes/pending — quick so approvals feel live
   const STREAM_PATH = (agent) => `/api/agents/${encodeURIComponent(agent)}/message/stream`;
 
   // ── Styles ──────────────────────────────────────────────────────────
@@ -427,6 +428,153 @@
     #${ROOT_ID} .queue-item .qsev.medium        { color: #92400e; background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.4); }
     #${ROOT_ID} .queue-item .qsev.low           { color: #166534; background: rgba(34,197,94,0.12);  border-color: rgba(34,197,94,0.4); }
     #${ROOT_ID} .queue-item .qsev.informational { color: #1e40af; background: rgba(0,153,204,0.12);  border-color: rgba(0,153,204,0.4); }
+    /* Pending-change rows — proposals from agents (Knowledge today,
+       detection-engineer rule proposals coming) that need analyst
+       Approve / Reject before they take effect. Visually distinct
+       from incident queue rows so the "this needs my decision"
+       affordance is obvious. */
+    #${ROOT_ID} .change-item {
+      background: #ffffff;
+      border: 2px solid #facc15;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    #${ROOT_ID} .change-item .ch-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      background: rgba(250,204,21,0.10);
+      cursor: pointer;
+      user-select: none;
+    }
+    #${ROOT_ID} .change-item .ch-head:hover {
+      background: rgba(250,204,21,0.18);
+    }
+    #${ROOT_ID} .change-item .ch-kind {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(0,153,204,0.14);
+      color: #1e3a8a;
+    }
+    #${ROOT_ID} .change-item .ch-title {
+      flex: 1;
+      min-width: 0;
+      font-weight: 600;
+      font-size: 13px;
+      color: #1f2937;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #${ROOT_ID} .change-item .ch-by {
+      flex-shrink: 0;
+      font-size: 11px;
+      color: #6b7280;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    #${ROOT_ID} .change-item .ch-chev {
+      flex-shrink: 0;
+      color: #9ca3af;
+    }
+    #${ROOT_ID} .change-item .ch-body {
+      border-top: 1px solid rgba(250,204,21,0.4);
+      padding: 12px;
+      font-size: 12px;
+      color: #1f2937;
+    }
+    #${ROOT_ID} .change-item .ch-rationale {
+      margin: 0 0 12px;
+      line-height: 1.45;
+    }
+    #${ROOT_ID} .change-item .ch-section {
+      margin-top: 10px;
+    }
+    #${ROOT_ID} .change-item .ch-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+    #${ROOT_ID} .change-item .ch-content {
+      padding: 8px 10px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 220px;
+      overflow-y: auto;
+      color: #1f2937;
+    }
+    #${ROOT_ID} .change-item .ch-content.proposed {
+      background: rgba(34,197,94,0.06);
+      border-color: rgba(34,197,94,0.3);
+    }
+    #${ROOT_ID} .change-item .ch-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    #${ROOT_ID} .change-item .ch-actions textarea {
+      flex: 1 1 100%;
+      resize: vertical;
+      min-height: 40px;
+      max-height: 140px;
+      padding: 6px 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font: inherit;
+      font-size: 12px;
+      box-sizing: border-box;
+    }
+    #${ROOT_ID} .change-item .ch-actions textarea:focus {
+      outline: none;
+      border-color: #0099cc;
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+    }
+    #${ROOT_ID} .change-item .ch-actions button {
+      padding: 6px 14px;
+      border-radius: 4px;
+      font: inherit;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      border: 1px solid #cbd5e1;
+      background: #f9fafb;
+      color: #1f2937;
+    }
+    #${ROOT_ID} .change-item .ch-actions button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #${ROOT_ID} .change-item .ch-actions button.approve {
+      background: #facc15;
+      border-color: #ca8a04;
+      color: #1f2937;
+    }
+    #${ROOT_ID} .change-item .ch-actions button.approve:hover:not(:disabled) {
+      background: #eab308;
+    }
+    #${ROOT_ID} .change-item .ch-actions button.reject {
+      color: #991b1b;
+    }
+    #${ROOT_ID} .change-item .ch-actions button.reject:hover:not(:disabled) {
+      background: rgba(239,68,68,0.10);
+    }
     /* Online-presence pulse — green dot on each online human's row. */
     #${ROOT_ID} .item .head .dot.online {
       background: #10b981;
@@ -461,6 +609,10 @@
     incidents: [],               // [{number, title, severity, status, owner, view_status, ...}] — full Sentinel listing
     editingQueueOwner: null,     // string incident number whose owner-edit dropdown is open
     savingQueueOwner: null,      // string incident number whose reassign POST is in flight
+    changes: [],                 // [{id, kind, proposed_by, title, rationale, current, proposed, ...}]
+    expandedChanges: new Set(),  // change ids whose detail panel is open
+    changeNotes: {},             // change_id -> draft note for approve/reject
+    sendingChange: new Set(),    // change ids whose approve/reject POST is in flight
     expanded: new Set(),         // ids 'hitl-{qid}' or 'chat-{agent}' or 'dm-{email}'
     conversations: {},           // agent -> [{role, text, toolCalls?, streaming?, error?}]
     dmThreads: {},               // peer_email -> [{id, from, to, text, ts}]
@@ -563,6 +715,64 @@
   function sentinelPortalUrl(inc) {
     if (!inc || !inc.arm_id) return null;
     return `https://portal.azure.com/#asset/Microsoft_Azure_Security_Insights/Incident${inc.arm_id}`;
+  }
+
+  // Friendly label for the kind badge on each change row.
+  function changeKindLabel(kind) {
+    if (kind === 'knowledge-preamble') return 'Knowledge';
+    if (kind === 'agent-instructions') return 'Agent prompt';
+    if (kind === 'detection-rule')     return 'Detection rule';
+    return kind || 'Change';
+  }
+
+  function renderChangeItem(c) {
+    const id = c.id;
+    const kindLabel = changeKindLabel(c.kind);
+    const proposedBy = c.proposed_by || 'unknown';
+    const title = c.title || '(untitled change)';
+    const isOpen = STATE.expandedChanges.has(id);
+    const sending = STATE.sendingChange.has(id);
+    const note = STATE.changeNotes[id] || '';
+    const chev = isOpen ? '▾' : '▸';
+
+    let html = `<div class="change-item">`;
+    html += `<div class="ch-head" data-change-toggle="${escapeHtml(id)}">`;
+    html += `<span class="ch-kind">${escapeHtml(kindLabel)}</span>`;
+    html += `<span class="ch-title">${escapeHtml(title)}</span>`;
+    html += `<span class="ch-by">${escapeHtml(proposedBy)}</span>`;
+    html += `<span class="ch-chev">${chev}</span>`;
+    html += `</div>`;
+
+    if (isOpen) {
+      html += `<div class="ch-body">`;
+      if (c.rationale) {
+        html += `<p class="ch-rationale">${escapeHtml(c.rationale)}</p>`;
+      }
+      // Proposed content first (the thing the analyst is acting on),
+      // then current for comparison. Both are scrollable so a long
+      // preamble doesn't dominate the sidebar.
+      html += `<div class="ch-section">`;
+      html += `<div class="ch-label">Proposed</div>`;
+      html += `<div class="ch-content proposed">${escapeHtml(c.proposed || '')}</div>`;
+      html += `</div>`;
+      if (c.current) {
+        html += `<div class="ch-section">`;
+        html += `<div class="ch-label">Current (for comparison)</div>`;
+        html += `<div class="ch-content">${escapeHtml(c.current)}</div>`;
+        html += `</div>`;
+      }
+      html += `<div class="ch-actions">`;
+      html += `<textarea data-change-note="${escapeHtml(id)}" `
+            + `placeholder="Optional note (sent with Approve / Reject)…" `
+            + `${sending ? 'disabled' : ''}>${escapeHtml(note)}</textarea>`;
+      html += `<button class="approve" data-change-approve="${escapeHtml(id)}" ${sending ? 'disabled' : ''}>Approve</button>`;
+      html += `<button class="reject"  data-change-reject="${escapeHtml(id)}" ${sending ? 'disabled' : ''}>Reject</button>`;
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+    return html;
   }
 
   function renderMyQueueItem(inc) {
@@ -822,9 +1032,11 @@
       const hk = active.getAttribute('data-hitl-textarea');
       const ck = active.getAttribute('data-chat-textarea');
       const dk = active.getAttribute('data-dm-textarea');
+      const nk = active.getAttribute('data-change-note');
       if (hk) { focusKind = 'hitl'; focusKey = hk; }
       else if (ck) { focusKind = 'chat'; focusKey = ck; }
       else if (dk) { focusKind = 'dm'; focusKey = dk; }
+      else if (nk) { focusKind = 'change'; focusKey = nk; }
       try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
     }
 
@@ -904,16 +1116,29 @@
     } else {
       for (const u of STATE.users) html += renderDmItem(u);
     }
-    // My queue — non-Closed Sentinel incidents whose owner is the
-    // signed-in user. Click → /dashboard (where the row's "Run
-    // workflow" / runs-history live).
+    // My queue — splits into two sub-lists:
+    //   - Incidents: Sentinel-owned, filtered by owner == me.
+    //   - Changes:   pending agent proposals (Knowledge today,
+    //                detection-engineer rule proposals planned).
+    //                Broadcast — every logged-in human sees them
+    //                until someone approves or rejects.
     html += '<h2 class="section">My queue</h2>';
+
+    html += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:8px 12px 4px;font-weight:700;">Incidents</div>';
     const myInc = myQueueIncidents();
     if (!myInc.length) {
       html += '<div class="empty-line">No incidents currently assigned to you.</div>';
     } else {
       for (const inc of myInc) html += renderMyQueueItem(inc);
     }
+
+    html += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:14px 12px 4px;font-weight:700;">Changes</div>';
+    if (!STATE.changes.length) {
+      html += '<div class="empty-line">No pending changes.</div>';
+    } else {
+      for (const c of STATE.changes) html += renderChangeItem(c);
+    }
+
     html += '</div>';
     root.innerHTML = html;
 
@@ -940,7 +1165,9 @@
         ? `[data-hitl-textarea="${CSS.escape(focusKey)}"]`
         : focusKind === 'dm'
           ? `[data-dm-textarea="${CSS.escape(focusKey)}"]`
-          : `[data-chat-textarea="${CSS.escape(focusKey)}"]`;
+          : focusKind === 'change'
+            ? `[data-change-note="${CSS.escape(focusKey)}"]`
+            : `[data-chat-textarea="${CSS.escape(focusKey)}"]`;
       const el = root.querySelector(sel);
       if (el) {
         try { el.focus(); el.setSelectionRange(selStart, selEnd); } catch (_) {}
@@ -1038,6 +1265,31 @@
         hydrateDmThread(peer);
       }
     }
+
+    // ── Pending change handlers ────────────────────────────────────────
+    root.querySelectorAll('[data-change-toggle]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = el.getAttribute('data-change-toggle');
+        if (STATE.expandedChanges.has(id)) STATE.expandedChanges.delete(id);
+        else STATE.expandedChanges.add(id);
+        render();
+      });
+    });
+    root.querySelectorAll('[data-change-note]').forEach((ta) => {
+      ta.addEventListener('input', () => {
+        STATE.changeNotes[ta.getAttribute('data-change-note')] = ta.value;
+      });
+    });
+    root.querySelectorAll('[data-change-approve]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        onChangeDecision(btn.getAttribute('data-change-approve'), 'approve');
+      });
+    });
+    root.querySelectorAll('[data-change-reject]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        onChangeDecision(btn.getAttribute('data-change-reject'), 'reject');
+      });
+    });
   }
 
   // POST handler for queue reassignment. Same endpoint the dashboard
@@ -1289,6 +1541,57 @@
     } catch (_) { /* ignore — next render keeps showing what we have */ }
   }
 
+  // ── Pending changes polling + decision handler ────────────────────
+  async function pollChanges() {
+    try {
+      const r = await fetch('/api/changes/pending',
+                            { credentials: 'same-origin', headers: authHeaders() });
+      if (!r.ok) return;
+      const data = await r.json();
+      STATE.changes = (data && data.changes) || [];
+      render();
+    } catch (_) { /* ignore */ }
+  }
+
+  async function onChangeDecision(changeId, decision) {
+    if (STATE.sendingChange.has(changeId)) return;
+    STATE.sendingChange.add(changeId);
+    const note = STATE.changeNotes[changeId] || '';
+    render();
+    try {
+      const path = decision === 'approve'
+        ? `/api/changes/${encodeURIComponent(changeId)}/approve`
+        : `/api/changes/${encodeURIComponent(changeId)}/reject`;
+      const r = await fetch(path, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ note }),
+      });
+      const text = await r.text().catch(() => '');
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try {
+          const j = JSON.parse(text);
+          if (j && j.detail) msg = `${msg}: ${typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)}`;
+        } catch (_) { msg = `${msg}: ${text.slice(0, 300)}`; }
+        throw new Error(msg);
+      }
+      // Drop from local pending list — server poll will reconcile.
+      STATE.changes = STATE.changes.filter((c) => c.id !== changeId);
+      STATE.expandedChanges.delete(changeId);
+      delete STATE.changeNotes[changeId];
+    } catch (e) {
+      // Surface in console; the change record stays visible so the
+      // user can retry. We could put an inline error too — keeping
+      // it minimal for v1.
+      console.error(`[changes] ${decision} failed for ${changeId}:`, e);
+    } finally {
+      STATE.sendingChange.delete(changeId);
+      render();
+    }
+  }
+
   // ── Sentinel incidents polling ─────────────────────────────────────
   // Drives the "My queue" section. Same endpoint the dashboard
   // already polls — same 8s cadence.
@@ -1427,11 +1730,12 @@
 
   ensureRoot();
   render();
-  pollHitl(); pollAgents(); pollOnline(); pollCurrentIncident(); pollIncidents();
+  pollHitl(); pollAgents(); pollOnline(); pollCurrentIncident(); pollIncidents(); pollChanges();
   setInterval(pollHitl, POLL_HITL_MS);
   setInterval(pollAgents, POLL_AGENTS_MS);
   setInterval(pollOnline, POLL_ONLINE_MS);
   setInterval(pollOpenDms, POLL_DM_MS);
   setInterval(pollCurrentIncident, POLL_INCIDENT_MS);
   setInterval(pollIncidents, POLL_QUEUE_MS);
+  setInterval(pollChanges, POLL_CHANGES_MS);
 })();
