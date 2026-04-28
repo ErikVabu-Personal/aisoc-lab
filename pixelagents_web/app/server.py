@@ -1230,8 +1230,8 @@ def healthz() -> dict[str, str]:
 
 def _default_agent_roster() -> list[str]:
     # Comma-separated list of agents that should always exist in UI even before events.
-    # Defaults to the classic trio + detection engineer + knowledge curator.
-    raw = os.getenv("PIXELAGENTS_AGENT_ROSTER", "triage,investigator,reporter,detection-engineer,knowledge")
+    # Defaults to the classic trio + detection engineer + SOC manager.
+    raw = os.getenv("PIXELAGENTS_AGENT_ROSTER", "triage,investigator,reporter,detection-engineer,soc-manager")
     names = [x.strip() for x in raw.split(",") if x.strip()]
     # De-dupe while preserving order
     out: list[str] = []
@@ -3213,6 +3213,80 @@ def _split_common_from_full(full_instructions: str, common_text: str) -> str:
     return full_instructions
 
 
+def _apply_agent_instructions_change(record: dict[str, Any]) -> dict[str, Any]:
+    """Update one specific agent's role-specific tail. The Foundry
+    agent's full instructions are common-preamble + role-tail; we
+    fetch the current preamble + the new tail and write the
+    combined blob via the existing _foundry_post_new_version helper.
+    """
+    target = (record.get("target") or "").strip()
+    new_role_tail = record.get("proposed") or ""
+    if not target:
+        raise HTTPException(status_code=400, detail="agent-instructions change has no target")
+    if not isinstance(new_role_tail, str) or not new_role_tail.strip():
+        raise HTTPException(status_code=400, detail="agent-instructions 'proposed' is empty")
+
+    rich = _fetch_foundry_agent_instructions()
+    full_by_slug = {s: (r.get("instructions") or "") for s, r in rich.items()}
+    common, _ = _split_common_and_role(full_by_slug)
+
+    new_full = f"{common}\n\n{new_role_tail}" if common else new_role_tail
+    try:
+        _foundry_post_new_version(target, new_full)
+        return {target: "ok"}
+    except HTTPException as e:
+        return {target: f"failed: {e.detail!s}"[:300]}
+    except Exception as e:
+        return {target: f"failed: {e!r}"[:300]}
+
+
+def _apply_detection_rule_change(record: dict[str, Any]) -> dict[str, Any]:
+    """Create a Sentinel analytic rule via the orchestrator's new
+    /sentinel/create-rule route. Same pattern owner/status edits use
+    — pixelagents_web doesn't have its own runner credentials, so we
+    proxy through the orchestrator (which already has them in KV)."""
+    proposed = record.get("proposed") or {}
+    if not isinstance(proposed, dict):
+        raise HTTPException(status_code=400, detail="detection-rule proposed is not a dict")
+
+    orch_base = os.getenv("ORCHESTRATOR_URL", "").strip()
+    orch_key = os.getenv("ORCHESTRATOR_FUNCTION_KEY", "").strip()
+    if not orch_base or not orch_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Orchestrator not configured (ORCHESTRATOR_URL / ORCHESTRATOR_FUNCTION_KEY missing)",
+        )
+
+    import requests as _requests
+
+    url = f"{orch_base.rstrip('/')}/sentinel/create-rule?code={orch_key}"
+    try:
+        r = _requests.post(url, json=proposed, timeout=60)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"create_rule call failed: {e!r}") from e
+    if r.status_code >= 400:
+        try:
+            body = r.json()
+        except Exception:
+            body = r.text[:1000]
+        raise HTTPException(
+            status_code=502,
+            detail={"orchestrator_status": r.status_code, "body": body},
+        )
+
+    try:
+        body = r.json()
+    except Exception:
+        body = {"raw": r.text[:1000]}
+
+    rule_id = (
+        (body.get("runner_result") or {}).get("ruleId")
+        or proposed.get("displayName")
+        or "(unknown)"
+    )
+    return {str(rule_id): "ok"}
+
+
 def _apply_knowledge_preamble_change(record: dict[str, Any]) -> dict[str, Any]:
     """Fan out the new common preamble to every roster agent on
     Foundry. Each agent's new instructions = new_common + "\n\n" +
@@ -3235,11 +3309,11 @@ def _apply_knowledge_preamble_change(record: dict[str, Any]) -> dict[str, Any]:
 
     out: dict[str, str] = {}
     for slug in _default_agent_roster():
-        if slug == "knowledge":
-            # Knowledge agent doesn't need the common preamble baked
-            # into its own instructions (its role IS preamble-
-            # awareness). Skip to avoid the recursive update.
-            out[slug] = "skipped (knowledge agent)"
+        if slug == "soc-manager":
+            # SOC Manager doesn't need the common preamble baked
+            # into its own instructions — its role IS preamble +
+            # role-tail curation. Skip to avoid recursive updates.
+            out[slug] = "skipped (soc-manager)"
             continue
         role_tail = role_tails.get(slug) or ""
         new_full = f"{new_common}\n\n{role_tail}" if role_tail else new_common
@@ -3282,42 +3356,105 @@ async def api_changes_create(
 
     agent = _slug_agent(str(body.get("agent") or "unknown"))
     kind = (body.get("kind") or "").strip()
+    target = (body.get("target") or "").strip()
     title = (body.get("title") or "").strip()
     rationale = (body.get("rationale") or "").strip()
     proposed = body.get("proposed")
 
-    if kind not in ("knowledge-preamble",):
+    if kind not in ("knowledge-preamble", "agent-instructions", "detection-rule"):
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported change kind: {kind!r}",
         )
-    if not isinstance(proposed, str) or not proposed.strip():
-        raise HTTPException(status_code=400, detail="Missing 'proposed' (string)")
+    if proposed is None:
+        raise HTTPException(status_code=400, detail="Missing 'proposed'")
+    if isinstance(proposed, str) and not proposed.strip():
+        raise HTTPException(status_code=400, detail="'proposed' is empty")
     if not rationale:
         raise HTTPException(status_code=400, detail="Missing 'rationale' (string)")
 
-    # Snapshot the current state so the approving analyst can see
-    # exactly what will change. Tolerate read failures — we still
-    # capture the proposal even if the snapshot is empty.
-    current_snapshot = ""
+    # Per-kind validation + current-state snapshot for the diff view.
+    current_snapshot: Any = ""
+    proposed_normalized: Any = proposed
+
     if kind == "knowledge-preamble":
+        if not isinstance(proposed, str):
+            raise HTTPException(status_code=400, detail="'proposed' must be a string for knowledge-preamble")
         try:
             rich = _fetch_foundry_agent_instructions()
-            full_by_slug = {slug: (r.get("instructions") or "") for slug, r in rich.items()}
+            full_by_slug = {s: (r.get("instructions") or "") for s, r in rich.items()}
             current_snapshot, _ = _split_common_and_role(full_by_slug)
         except Exception as e:
             current_snapshot = f"(could not read current preamble: {e!r})"
+
+    elif kind == "agent-instructions":
+        if not isinstance(proposed, str):
+            raise HTTPException(status_code=400, detail="'proposed' must be a string for agent-instructions")
+        # Target must be a configured agent (and not the SOC Manager
+        # itself — soc-manager.md is operator-managed, not agent-
+        # editable).
+        if not target:
+            raise HTTPException(status_code=400, detail="Missing 'target' (agent slug) for agent-instructions")
+        if target == "soc-manager":
+            raise HTTPException(
+                status_code=400,
+                detail="The SOC Manager's instructions are operator-managed; not agent-editable.",
+            )
+        if target not in set(_default_agent_roster()):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Target agent {target!r} is not in the configured roster",
+            )
+        try:
+            rich = _fetch_foundry_agent_instructions()
+            full_by_slug = {s: (r.get("instructions") or "") for s, r in rich.items()}
+            _, role_tails = _split_common_and_role(full_by_slug)
+            current_snapshot = role_tails.get(target, "")
+        except Exception as e:
+            current_snapshot = f"(could not read current role tail: {e!r})"
+
+    elif kind == "detection-rule":
+        # `proposed` is the full rule definition. Accept either a
+        # JSON object (preferred — typed) or a JSON-formatted string
+        # (when the agent stringified it). Normalise to dict for
+        # storage; we'll re-serialise on apply.
+        if isinstance(proposed, str):
+            try:
+                proposed_normalized = json.loads(proposed)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"detection-rule 'proposed' string is not valid JSON: {e!s}",
+                )
+        elif isinstance(proposed, dict):
+            proposed_normalized = proposed
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="'proposed' must be a JSON object (or JSON string) for detection-rule",
+            )
+        if not isinstance(proposed_normalized.get("displayName"), str) \
+           or not isinstance(proposed_normalized.get("query"), str):
+            raise HTTPException(
+                status_code=400,
+                detail="detection-rule must include displayName and query (KQL)",
+            )
+        # New rules don't have a "current" — they're net-new.
+        current_snapshot = ""
+        if not target:
+            target = proposed_normalized.get("displayName") or ""
 
     cid = str(_uuid.uuid4())
     record = {
         "id": cid,
         "kind": kind,
+        "target": target,
         "proposed_by": agent,
         "proposed_at": time.time(),
         "title": title or "(untitled change)",
         "rationale": rationale,
         "current": current_snapshot,
-        "proposed": proposed,
+        "proposed": proposed_normalized,
         "status": "pending",
         "reviewer": None,
         "reviewed_at": None,
@@ -3416,9 +3553,13 @@ async def api_changes_approve(
     record["review_note"] = note
 
     try:
+        import asyncio as _asyncio
         if record["kind"] == "knowledge-preamble":
-            import asyncio as _asyncio
             applied = await _asyncio.to_thread(_apply_knowledge_preamble_change, record)
+        elif record["kind"] == "agent-instructions":
+            applied = await _asyncio.to_thread(_apply_agent_instructions_change, record)
+        elif record["kind"] == "detection-rule":
+            applied = await _asyncio.to_thread(_apply_detection_rule_change, record)
         else:
             applied = {"_error": f"unsupported kind: {record['kind']}"}
         record["applied_at"] = time.time()

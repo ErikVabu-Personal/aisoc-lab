@@ -522,6 +522,10 @@
       background: rgba(34,197,94,0.06);
       border-color: rgba(34,197,94,0.3);
     }
+    #${ROOT_ID} .change-item .ch-content.mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px;
+    }
     #${ROOT_ID} .change-item .ch-actions {
       margin-top: 12px;
       display: flex;
@@ -717,18 +721,46 @@
     return `https://portal.azure.com/#asset/Microsoft_Azure_Security_Insights/Incident${inc.arm_id}`;
   }
 
-  // Friendly label for the kind badge on each change row.
+  // Friendly label for the kind badge on each change row. Falls
+  // through to the raw kind string when the server adds a new one
+  // before the UI catches up.
   function changeKindLabel(kind) {
-    if (kind === 'knowledge-preamble') return 'Knowledge';
+    if (kind === 'knowledge-preamble') return 'Preamble';
     if (kind === 'agent-instructions') return 'Agent prompt';
     if (kind === 'detection-rule')     return 'Detection rule';
     return kind || 'Change';
+  }
+
+  // Stringify the change's `proposed` for display. For knowledge-
+  // preamble + agent-instructions it's already a string. For
+  // detection-rule it arrives as an object (rule definition); pretty-
+  // print as JSON so the analyst can read the KQL + tactics + etc.
+  function changeProposedAsText(c) {
+    const p = c.proposed;
+    if (typeof p === 'string') return p;
+    if (p == null) return '';
+    try {
+      return JSON.stringify(p, null, 2);
+    } catch (_) {
+      return String(p);
+    }
+  }
+  function changeCurrentAsText(c) {
+    const cur = c.current;
+    if (typeof cur === 'string') return cur;
+    if (cur == null) return '';
+    try {
+      return JSON.stringify(cur, null, 2);
+    } catch (_) {
+      return String(cur);
+    }
   }
 
   function renderChangeItem(c) {
     const id = c.id;
     const kindLabel = changeKindLabel(c.kind);
     const proposedBy = c.proposed_by || 'unknown';
+    const target = c.target || '';
     const title = c.title || '(untitled change)';
     const isOpen = STATE.expandedChanges.has(id);
     const sending = STATE.sendingChange.has(id);
@@ -738,6 +770,12 @@
     let html = `<div class="change-item">`;
     html += `<div class="ch-head" data-change-toggle="${escapeHtml(id)}">`;
     html += `<span class="ch-kind">${escapeHtml(kindLabel)}</span>`;
+    if (target && c.kind !== 'knowledge-preamble') {
+      // For agent-instructions show the agent slug; for detection-
+      // rule the rule's display name (server populates target with
+      // displayName when proposing).
+      html += `<span class="ch-by" style="color:#1e3a8a;">${escapeHtml(target)}</span>`;
+    }
     html += `<span class="ch-title">${escapeHtml(title)}</span>`;
     html += `<span class="ch-by">${escapeHtml(proposedBy)}</span>`;
     html += `<span class="ch-chev">${chev}</span>`;
@@ -749,17 +787,24 @@
         html += `<p class="ch-rationale">${escapeHtml(c.rationale)}</p>`;
       }
       // Proposed content first (the thing the analyst is acting on),
-      // then current for comparison. Both are scrollable so a long
-      // preamble doesn't dominate the sidebar.
+      // then current for comparison.
+      const proposedText = changeProposedAsText(c);
+      const currentText = changeCurrentAsText(c);
+      // Detection rules render as JSON — show with monospace.
+      const monoCls = c.kind === 'detection-rule' ? ' mono' : '';
       html += `<div class="ch-section">`;
       html += `<div class="ch-label">Proposed</div>`;
-      html += `<div class="ch-content proposed">${escapeHtml(c.proposed || '')}</div>`;
+      html += `<div class="ch-content proposed${monoCls}">${escapeHtml(proposedText)}</div>`;
       html += `</div>`;
-      if (c.current) {
+      if (currentText) {
         html += `<div class="ch-section">`;
         html += `<div class="ch-label">Current (for comparison)</div>`;
-        html += `<div class="ch-content">${escapeHtml(c.current)}</div>`;
+        html += `<div class="ch-content${monoCls}">${escapeHtml(currentText)}</div>`;
         html += `</div>`;
+      } else if (c.kind === 'detection-rule') {
+        html += `<div class="ch-section" style="color:#6b7280;font-size:11px;">`
+              + `(net-new rule — no current state to compare against)`
+              + `</div>`;
       }
       html += `<div class="ch-actions">`;
       html += `<textarea data-change-note="${escapeHtml(id)}" `

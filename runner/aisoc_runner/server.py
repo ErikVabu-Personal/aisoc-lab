@@ -510,33 +510,23 @@ def tools_execute(
 
             return {"result": {"answer": answer_text, "question_id": qid}}
 
-        if tool_name == "propose_change_to_knowledge":
-            # The Knowledge agent's writeback path. Proposes an
-            # update to the shared common preamble; lands in the
-            # human analyst's queue with status=pending. Apply
-            # happens server-side on PixelAgents Web after a human
-            # approves — the runner just forwards the proposal.
-            proposed = args.get("proposed")
-            rationale = args.get("rationale")
-            title = args.get("title") or ""
-            if not isinstance(proposed, str) or not proposed.strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail="Missing arguments.proposed (full new common preamble, string)",
-                )
-            if not isinstance(rationale, str) or not rationale.strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail="Missing arguments.rationale (string)",
-                )
-
+        # ── SOC Manager tools (read + propose, all approve-gated) ────
+        # These all forward through PixelAgents Web because that's
+        # where the Foundry agents-API + the CHANGES store live. The
+        # runner just brokers the call from a Foundry agent to PA-Web.
+        if tool_name in (
+            "get_agent_role_instructions",
+            "propose_change_to_preamble",
+            "propose_change_to_agent_instructions",
+            "propose_change_to_detection_rule",
+        ):
             pa_events_url = os.getenv("PIXELAGENTS_URL", "").strip()
             pa_token = os.getenv("PIXELAGENTS_TOKEN", "").strip()
             if not pa_events_url or not pa_token:
                 raise HTTPException(
                     status_code=503,
                     detail=(
-                        "Knowledge writeback not wired — PIXELAGENTS_URL / "
+                        "SOC Manager writeback not wired — PIXELAGENTS_URL / "
                         "PIXELAGENTS_TOKEN are not set on the runner. Run "
                         "terraform/3-deploy-pixelagents-web/scripts/configure_runner_pixelagents_env.sh."
                     ),
@@ -547,20 +537,117 @@ def tools_execute(
                     pa_base = pa_base[: -len(suffix)]
                     break
             pa_base = pa_base.rstrip("/")
+            pa_headers = {
+                "x-pixelagents-token": pa_token,
+                "Content-Type": "application/json",
+            }
 
-            r = requests.post(
-                f"{pa_base}/api/changes",
-                headers={
-                    "x-pixelagents-token": pa_token,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "agent": agent or "knowledge",
+            if tool_name == "get_agent_role_instructions":
+                target = args.get("agent")
+                if not isinstance(target, str) or not target.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Missing arguments.agent (one of: triage, investigator, reporter, detection-engineer)",
+                    )
+                target = target.strip().lower()
+                r = requests.get(
+                    f"{pa_base}/api/foundry/agents/instructions",
+                    headers={"x-pixelagents-token": pa_token},
+                    timeout=30,
+                )
+                if r.status_code >= 400:
+                    raise HTTPException(status_code=r.status_code, detail=r.text)
+                data = r.json()
+                # Find the matching agent in the response.
+                for entry in (data.get("agents") or []):
+                    if entry.get("slug") == target:
+                        return {
+                            "result": {
+                                "agent": target,
+                                "role_instructions": entry.get("instructions") or "",
+                            },
+                        }
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Agent {target!r} not found in roster",
+                )
+
+            # Common validation for the propose_* tools.
+            rationale = args.get("rationale")
+            title = args.get("title") or ""
+            if not isinstance(rationale, str) or not rationale.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.rationale (string)",
+                )
+
+            if tool_name == "propose_change_to_preamble":
+                proposed = args.get("proposed")
+                if not isinstance(proposed, str) or not proposed.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Missing arguments.proposed (full new preamble, string)",
+                    )
+                body = {
+                    "agent": agent or "soc-manager",
                     "kind": "knowledge-preamble",
                     "title": title.strip(),
                     "rationale": rationale.strip(),
                     "proposed": proposed,
-                },
+                }
+
+            elif tool_name == "propose_change_to_agent_instructions":
+                target_agent = args.get("agent")
+                if not isinstance(target_agent, str) or not target_agent.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Missing arguments.agent (one of: triage, investigator, reporter, detection-engineer)",
+                    )
+                proposed = args.get("proposed")
+                if not isinstance(proposed, str) or not proposed.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Missing arguments.proposed (full new role-specific instructions, string)",
+                    )
+                body = {
+                    "agent": agent or "soc-manager",
+                    "kind": "agent-instructions",
+                    "target": target_agent.strip().lower(),
+                    "title": title.strip(),
+                    "rationale": rationale.strip(),
+                    "proposed": proposed,
+                }
+
+            else:  # propose_change_to_detection_rule
+                # The agent passes the rule definition as a flat
+                # set of fields (displayName, description, severity,
+                # query, ...). We assemble them into a single
+                # `proposed` JSON object that the server validates.
+                rule_fields = ("displayName", "description", "severity",
+                               "query", "queryFrequency", "queryPeriod",
+                               "triggerOperator", "triggerThreshold",
+                               "tactics", "techniques", "enabled",
+                               "suppressionDuration", "suppressionEnabled")
+                proposed = {k: args[k] for k in rule_fields if k in args}
+                if not isinstance(proposed.get("displayName"), str) \
+                   or not isinstance(proposed.get("query"), str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="detection-rule needs displayName + query (KQL)",
+                    )
+                body = {
+                    "agent": agent or "soc-manager",
+                    "kind": "detection-rule",
+                    "target": proposed.get("displayName") or "",
+                    "title": title.strip() or proposed.get("displayName") or "",
+                    "rationale": rationale.strip(),
+                    "proposed": proposed,
+                }
+
+            r = requests.post(
+                f"{pa_base}/api/changes",
+                headers=pa_headers,
+                json=body,
                 timeout=30,
             )
             if r.status_code >= 400:
