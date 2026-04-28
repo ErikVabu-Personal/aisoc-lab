@@ -20,6 +20,7 @@
   const POLL_ONLINE_MS = 4000;
   const POLL_DM_MS = 3000; // refresh open DM threads
   const POLL_INCIDENT_MS = 1500; // current_incident — fast so the elapsed timer ticks
+  const POLL_QUEUE_MS = 8000; // /api/sentinel/incidents — match dashboard cadence
   const STREAM_PATH = (agent) => `/api/agents/${encodeURIComponent(agent)}/message/stream`;
 
   // ── Styles ──────────────────────────────────────────────────────────
@@ -320,6 +321,57 @@
     #${ROOT_ID} .item.owns-active {
       box-shadow: 0 0 0 2px rgba(0,153,204,0.45) inset;
     }
+    /* "My queue" rows — incidents currently owned by the signed-in
+       user. Each row is a clickable navigation link to the
+       dashboard, NOT a collapsible thread, so it gets its own
+       look — flatter than .item, no chev, severity pill on the
+       right. */
+    #${ROOT_ID} .queue-item {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    #${ROOT_ID} .queue-item a {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      text-decoration: none !important;
+      color: inherit;
+    }
+    #${ROOT_ID} .queue-item a:hover {
+      background: #f9fafb;
+    }
+    #${ROOT_ID} .queue-item .qnum {
+      font-weight: 700;
+      color: #0e2a47;
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+    #${ROOT_ID} .queue-item .qtitle {
+      flex: 1;
+      font-size: 13px;
+      color: #1f2937;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #${ROOT_ID} .queue-item .qsev {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 999px;
+      flex-shrink: 0;
+      border: 1px solid transparent;
+    }
+    #${ROOT_ID} .queue-item .qsev.high          { color: #991b1b; background: rgba(239,68,68,0.12);  border-color: rgba(239,68,68,0.4); }
+    #${ROOT_ID} .queue-item .qsev.medium        { color: #92400e; background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.4); }
+    #${ROOT_ID} .queue-item .qsev.low           { color: #166534; background: rgba(34,197,94,0.12);  border-color: rgba(34,197,94,0.4); }
+    #${ROOT_ID} .queue-item .qsev.informational { color: #1e40af; background: rgba(0,153,204,0.12);  border-color: rgba(0,153,204,0.4); }
     /* Online-presence pulse — green dot on each online human's row. */
     #${ROOT_ID} .item .head .dot.online {
       background: #10b981;
@@ -351,6 +403,7 @@
     users: [],                   // [{email, online, last_seen, ago_sec}] — full roster minus me
     me: '',                      // my email (from /api/sessions/online)
     currentIncident: null,       // {incident_number, started_at, title?, view_status?, phase?} or null
+    incidents: [],               // [{number, title, severity, status, owner, view_status, ...}] — full Sentinel listing
     expanded: new Set(),         // ids 'hitl-{qid}' or 'chat-{agent}' or 'dm-{email}'
     conversations: {},           // agent -> [{role, text, toolCalls?, streaming?, error?}]
     dmThreads: {},               // peer_email -> [{id, from, to, text, ts}]
@@ -422,6 +475,41 @@
     if (s < 60) return `${s}s`;
     const m = Math.floor(s / 60), r = s % 60;
     return `${m}m${String(r).padStart(2, '0')}s`;
+  }
+
+  // ── My queue: incidents owned by the signed-in user ───────────────
+  // Filter the full Sentinel incidents listing on owner == me, drop
+  // anything closed (closed incidents aren't actionable). Sort by
+  // last_modified so the most recent one bubbles up.
+  function myQueueIncidents() {
+    const me = (STATE.me || '').toLowerCase();
+    if (!me || !STATE.incidents.length) return [];
+    return STATE.incidents
+      .filter((inc) => {
+        const owner = String((inc && inc.owner) || '').toLowerCase();
+        const status = String((inc && inc.status) || '').toLowerCase();
+        return owner === me && status !== 'closed';
+      })
+      .slice()
+      .sort((a, b) => {
+        const ta = a.last_modified ? Date.parse(a.last_modified) : 0;
+        const tb = b.last_modified ? Date.parse(b.last_modified) : 0;
+        return tb - ta;
+      });
+  }
+
+  function renderMyQueueItem(inc) {
+    const num = inc.number;
+    const title = (inc.title || '').toString();
+    const sev = String(inc.severity || '').toLowerCase();
+    return `
+      <div class="queue-item">
+        <a href="/dashboard" title="Open ${escapeHtml(`#${num}`)} on the dashboard">
+          <span class="qnum">#${num}</span>
+          <span class="qtitle">${escapeHtml(title || '(no title)')}</span>
+          ${sev ? `<span class="qsev ${escapeHtml(sev)}">${escapeHtml(inc.severity)}</span>` : ''}
+        </a>
+      </div>`;
   }
 
   // ── Rendering ───────────────────────────────────────────────────────
@@ -654,7 +742,7 @@
       if (id && content) itemScrolls[id] = snapshotScroll(content);
     });
 
-    let html = '<header>Communication<div class="sub">Talk to agents and humans · respond to their requests</div></header>';
+    let html = '<header>Control Panel<div class="sub">Agents, humans, and the incidents on your plate</div></header>';
     html += '<div class="body">';
 
     // Active incident banner — sits at the very top so the user
@@ -703,6 +791,16 @@
       html += '<div class="empty-line">No other humans configured.</div>';
     } else {
       for (const u of STATE.users) html += renderDmItem(u);
+    }
+    // My queue — non-Closed Sentinel incidents whose owner is the
+    // signed-in user. Click → /dashboard (where the row's "Run
+    // workflow" / runs-history live).
+    html += '<h2 class="section">My queue</h2>';
+    const myInc = myQueueIncidents();
+    if (!myInc.length) {
+      html += '<div class="empty-line">No incidents currently assigned to you.</div>';
+    } else {
+      for (const inc of myInc) html += renderMyQueueItem(inc);
     }
     html += '</div>';
     root.innerHTML = html;
@@ -1015,6 +1113,20 @@
     } catch (_) { /* ignore — next render keeps showing what we have */ }
   }
 
+  // ── Sentinel incidents polling ─────────────────────────────────────
+  // Drives the "My queue" section. Same endpoint the dashboard
+  // already polls — same 8s cadence.
+  async function pollIncidents() {
+    try {
+      const r = await fetch('/api/sentinel/incidents',
+                            { credentials: 'same-origin', headers: authHeaders() });
+      if (!r.ok) return;
+      const data = await r.json();
+      STATE.incidents = (data && data.incidents) || [];
+      render();
+    } catch (_) { /* ignore */ }
+  }
+
   // ── Active-incident polling ────────────────────────────────────────
   // Drives the banner at the top of the sidebar and the "owns #N"
   // pill on the agent currently working it. Faster than the agent
@@ -1139,10 +1251,11 @@
 
   ensureRoot();
   render();
-  pollHitl(); pollAgents(); pollOnline(); pollCurrentIncident();
+  pollHitl(); pollAgents(); pollOnline(); pollCurrentIncident(); pollIncidents();
   setInterval(pollHitl, POLL_HITL_MS);
   setInterval(pollAgents, POLL_AGENTS_MS);
   setInterval(pollOnline, POLL_ONLINE_MS);
   setInterval(pollOpenDms, POLL_DM_MS);
   setInterval(pollCurrentIncident, POLL_INCIDENT_MS);
+  setInterval(pollIncidents, POLL_QUEUE_MS);
 })();
