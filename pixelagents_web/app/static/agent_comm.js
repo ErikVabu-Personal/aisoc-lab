@@ -322,11 +322,11 @@
       box-shadow: 0 0 0 2px rgba(0,153,204,0.45) inset;
     }
     /* "My queue" rows — incidents currently owned by the signed-in
-       user. Each row is a clickable navigation link to the
-       dashboard, NOT a collapsible thread, so it gets its own
-       look — flatter than .item, no chev, severity pill on the
-       right. */
+       user. Each row has a clickable link area (opens Sentinel) and
+       a reassign button / dropdown on the right. */
     #${ROOT_ID} .queue-item {
+      display: flex;
+      align-items: stretch;
       background: #ffffff;
       border: 1px solid #e5e7eb;
       border-radius: 6px;
@@ -334,15 +334,56 @@
       overflow: hidden;
     }
     #${ROOT_ID} .queue-item a {
+      flex: 1;
       display: flex;
       align-items: center;
       gap: 8px;
       padding: 10px 12px;
       text-decoration: none !important;
       color: inherit;
+      min-width: 0;  /* let qtitle ellipsis kick in */
     }
     #${ROOT_ID} .queue-item a:hover {
       background: #f9fafb;
+    }
+    /* Reassign button at the right end of the row. Click → swaps
+       to a <select> (rendered in place of this button). */
+    #${ROOT_ID} .queue-item .qreassign-btn {
+      flex-shrink: 0;
+      margin: 6px 8px 6px 0;
+      padding: 4px 10px;
+      background: transparent;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      color: #0099cc;
+      font: 600 11px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    #${ROOT_ID} .queue-item .qreassign-btn:hover {
+      background: #f0f9ff;
+      border-color: #0099cc;
+    }
+    #${ROOT_ID} .queue-item .qreassign-btn:disabled {
+      opacity: 0.55;
+      cursor: wait;
+    }
+    #${ROOT_ID} .queue-item select.qreassign {
+      flex-shrink: 0;
+      margin: 6px 8px 6px 0;
+      padding: 3px 6px;
+      border: 1px solid #0099cc;
+      border-radius: 4px;
+      background: #ffffff;
+      font: 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      color: #1f2937;
+      cursor: pointer;
+      max-width: 220px;
+    }
+    #${ROOT_ID} .queue-item select.qreassign:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
     }
     #${ROOT_ID} .queue-item .qnum {
       font-weight: 700;
@@ -404,6 +445,8 @@
     me: '',                      // my email (from /api/sessions/online)
     currentIncident: null,       // {incident_number, started_at, title?, view_status?, phase?} or null
     incidents: [],               // [{number, title, severity, status, owner, view_status, ...}] — full Sentinel listing
+    editingQueueOwner: null,     // string incident number whose owner-edit dropdown is open
+    savingQueueOwner: null,      // string incident number whose reassign POST is in flight
     expanded: new Set(),         // ids 'hitl-{qid}' or 'chat-{agent}' or 'dm-{email}'
     conversations: {},           // agent -> [{role, text, toolCalls?, streaming?, error?}]
     dmThreads: {},               // peer_email -> [{id, from, to, text, ts}]
@@ -510,6 +553,7 @@
 
   function renderMyQueueItem(inc) {
     const num = inc.number;
+    const numStr = String(num);
     const title = (inc.title || '').toString();
     const sev = String(inc.severity || '').toLowerCase();
     const portal = sentinelPortalUrl(inc);
@@ -518,6 +562,34 @@
     const tooltip = portal
       ? `Open #${num} in Microsoft Sentinel`
       : `Open #${num} on the dashboard`;
+    const isEditing = STATE.editingQueueOwner === numStr;
+    const isSaving = STATE.savingQueueOwner === numStr;
+
+    let trailing = '';
+    if (isEditing) {
+      // Build the reassign options. STATE.users excludes self; add
+      // self at the top of the human list (with a "(you)" badge)
+      // since reassigning to yourself is a valid action.
+      const allHumans = [];
+      if (STATE.me) allHumans.push({ email: STATE.me, is_self: true });
+      for (const u of STATE.users) allHumans.push(u);
+      const userOpts = allHumans
+        .map((u) => `<option value="${escapeHtml(u.email)}"`
+                  + `${(inc.owner || '').toLowerCase() === u.email.toLowerCase() ? ' disabled' : ''}>`
+                  + `${escapeHtml(u.email)}${u.is_self ? ' (you)' : ''}</option>`)
+        .join('');
+      trailing = `
+        <select class="qreassign" data-queue-reassign="${numStr}" autofocus>
+          <option value="">Cancel…</option>
+          <option value="Triage Agent">⚡ Triage Agent (re-triage)</option>
+          ${userOpts}
+        </select>`;
+    } else {
+      trailing = `<button class="qreassign-btn" data-queue-open-reassign="${numStr}" `
+               + `${isSaving ? 'disabled' : ''} title="Reassign incident">`
+               + `${isSaving ? 'Saving…' : 'Reassign'}</button>`;
+    }
+
     return `
       <div class="queue-item">
         <a href="${escapeHtml(href)}"${targetAttr} title="${escapeHtml(tooltip)}">
@@ -525,6 +597,7 @@
           <span class="qtitle">${escapeHtml(title || '(no title)')}</span>
           ${sev ? `<span class="qsev ${escapeHtml(sev)}">${escapeHtml(inc.severity)}</span>` : ''}
         </a>
+        ${trailing}
       </div>`;
   }
 
@@ -718,6 +791,16 @@
   function render() {
     const root = ensureRoot();
 
+    // Defer renders while a queue-reassign <select> is focused. The
+    // poll-driven innerHTML wipe would otherwise destroy the dropdown
+    // mid-interaction, closing the OS-level options menu and yanking
+    // the user's focus. The change/blur handlers will trigger a fresh
+    // render once the user picks an option or cancels.
+    const ae = document.activeElement;
+    if (ae && ae.tagName === 'SELECT' && ae.hasAttribute('data-queue-reassign')) {
+      return;
+    }
+
     // ── Preserve focus + selection across re-renders ──
     const active = document.activeElement;
     let focusKind = null, focusKey = null, selStart = 0, selEnd = 0;
@@ -904,6 +987,34 @@
       btn.addEventListener('click', () => onDmSend(btn.getAttribute('data-dm-send')));
     });
 
+    // ── My queue reassignment ─────────────────────────────────────────
+    // Click "Reassign" → swap the button for a <select>; pick from
+    // the dropdown → POST /api/sentinel/incidents/{n}/owner; blur
+    // (or pick the cancel option) → revert without saving.
+    root.querySelectorAll('[data-queue-open-reassign]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        STATE.editingQueueOwner = btn.getAttribute('data-queue-open-reassign');
+        render();
+      });
+    });
+    root.querySelectorAll('[data-queue-reassign]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const num = sel.getAttribute('data-queue-reassign');
+        const value = sel.value;
+        if (!value) {
+          // "Cancel…" picked — close the dropdown without saving.
+          STATE.editingQueueOwner = null;
+          render();
+          return;
+        }
+        onQueueReassign(num, value);
+      });
+      sel.addEventListener('blur', () => {
+        STATE.editingQueueOwner = null;
+        render();
+      });
+    });
+
     // Lazy-hydrate any DM thread that's currently expanded but not
     // yet loaded (e.g. user just clicked a head for the first time).
     for (const id of STATE.expanded) {
@@ -913,6 +1024,42 @@
         STATE.dmThreadsLoaded.add(peer);
         hydrateDmThread(peer);
       }
+    }
+  }
+
+  // POST handler for queue reassignment. Same endpoint the dashboard
+  // uses, so the server-side validation (must be a roster user, or
+  // "Triage Agent") applies here too.
+  async function onQueueReassign(numStr, value) {
+    STATE.editingQueueOwner = null;
+    STATE.savingQueueOwner = numStr;
+    render();
+    try {
+      const r = await fetch(
+        `/api/sentinel/incidents/${encodeURIComponent(numStr)}/owner`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ owner: value }),
+        },
+      );
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        throw new Error(`HTTP ${r.status}: ${text.slice(0, 300)}`);
+      }
+      // Pull fresh incidents so the queue reflects the change. If the
+      // new owner is someone else, the row drops out of "My queue"
+      // entirely on the next render.
+      try { await fetch('/api/sentinel/incidents', { credentials: 'same-origin' }); } catch (_) {}
+    } catch (e) {
+      // No notice surface in the sidebar; log to console so the
+      // analyst can troubleshoot. The next poll will reflect the
+      // unchanged state.
+      console.error(`[queue-reassign] failed for #${numStr}:`, e);
+    } finally {
+      STATE.savingQueueOwner = null;
+      render();
     }
   }
 

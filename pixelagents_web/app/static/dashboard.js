@@ -489,6 +489,20 @@
 
   // ── Render ─────────────────────────────────────────────────────────
   function render() {
+    // Defer renders while any of our <select> elements is focused.
+    // The poll-driven innerHTML wipe would otherwise destroy the
+    // <select> element mid-interaction, which closes the OS-level
+    // dropdown menu and yanks the user's focus. The next poll cycle
+    // will catch up after the user picks an option or blurs.
+    const ae = document.activeElement;
+    if (ae && ae.tagName === 'SELECT' && (
+      ae.hasAttribute('data-filter')
+      || ae.hasAttribute('data-edit-owner')
+      || ae.hasAttribute('data-edit-status')
+    )) {
+      return;
+    }
+
     const incidentCount = incidents.length;
     const total = totalEur();
     const active = activeWorkflowSummary();
