@@ -17,6 +17,8 @@
   const SIDEBAR_WIDTH = 380; // keep in sync with the index handler's CSS
   const POLL_HITL_MS = 2000;
   const POLL_AGENTS_MS = 4000;
+  const POLL_ONLINE_MS = 4000;
+  const POLL_DM_MS = 3000; // refresh open DM threads
   const STREAM_PATH = (agent) => `/api/agents/${encodeURIComponent(agent)}/message/stream`;
 
   // ── Styles ──────────────────────────────────────────────────────────
@@ -239,6 +241,25 @@
       color: #6b7280;
       margin: 12px 12px 6px;
     }
+    /* Online-presence pulse — green dot on each online human's row. */
+    #${ROOT_ID} .item .head .dot.online {
+      background: #10b981;
+      box-shadow: 0 0 0 0 rgba(16,185,129,0.5);
+      animation: aisoc-comm-online-pulse 2.4s ease-out infinite;
+    }
+    @keyframes aisoc-comm-online-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(16,185,129,0.55); }
+      70%  { box-shadow: 0 0 0 6px rgba(16,185,129,0);  }
+      100% { box-shadow: 0 0 0 0 rgba(16,185,129,0);  }
+    }
+    #${ROOT_ID} .item .head .name.email {
+      /* Don't title-case email addresses, and let them ellipsis when
+         the display name is too long for the row. */
+      text-transform: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   `;
   const style = document.createElement('style');
   style.textContent = css;
@@ -248,11 +269,16 @@
   const STATE = {
     hitl: [],                    // [{id, agent, question, asked_at}]
     agents: [],                  // [{agent, state, ...}]
-    expanded: new Set(),         // ids 'hitl-{qid}' or 'chat-{agent}'
+    online: [],                  // [{email, last_seen, ago_sec}] — peers, NOT me
+    me: '',                      // my email (from /api/sessions/online)
+    expanded: new Set(),         // ids 'hitl-{qid}' or 'chat-{agent}' or 'dm-{email}'
     conversations: {},           // agent -> [{role, text, toolCalls?, streaming?, error?}]
-    drafts: { hitl: {}, chat: {} },
+    dmThreads: {},               // peer_email -> [{id, from, to, text, ts}]
+    dmThreadsLoaded: new Set(),  // peers whose history we've fetched at least once
+    drafts: { hitl: {}, chat: {}, dm: {} },
     sending: new Set(),          // ids currently sending
     chatErrors: {},              // agent -> string
+    dmErrors: {},                // peer_email -> string
     historyLoaded: new Set(),    // agents whose history we've fetched at least once
     historyPolling: new Set(),   // agents we're actively re-polling (in-flight on server)
   };
@@ -381,6 +407,61 @@
     return `<div class="item">${head}${body}</div>`;
   }
 
+  // ── DM thread item (one per online human) ──────────────────────────
+  function dmPreviewFor(peer) {
+    const thread = STATE.dmThreads[peer] || [];
+    const last = thread[thread.length - 1];
+    if (!last) return 'Click to start a conversation';
+    const prefix = last.from === STATE.me ? 'You: ' : '';
+    return prefix + (last.text || '').replace(/\s+/g, ' ').slice(0, 80);
+  }
+
+  function renderDmItem(peer) {
+    if (!peer) return '';
+    const id = `dm-${peer}`;
+    const expanded = STATE.expanded.has(id);
+    const draft = STATE.drafts.dm[peer] || '';
+    const sending = STATE.sending.has(id);
+    const chev = expanded ? '▾' : '▸';
+    const head = `
+      <div class="head" data-toggle="${id}">
+        <span class="dot online" title="Online"></span>
+        <span class="name email" title="${escapeHtml(peer)}">${escapeHtml(peer)}</span>
+        ${expanded ? '' : `<span class="preview">${escapeHtml(dmPreviewFor(peer))}</span>`}
+        <span class="chev">${chev}</span>
+      </div>`;
+    if (!expanded) return `<div class="item">${head}</div>`;
+
+    const thread = STATE.dmThreads[peer] || [];
+    const me = STATE.me;
+    const msgsHtml = thread.length
+      ? thread.map((m) => {
+          // Reuse the agent-chat bubble look: own messages on the
+          // right (user-bubble), peer messages on the left (assistant
+          // bubble — neutral grey).
+          const cls = m.from === me ? 'msg user' : 'msg assistant';
+          const ts = m.ts ? new Date(m.ts * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
+          const tsLine = ts
+            ? `<div style="margin-top:4px;font-size:10px;opacity:0.6;">${escapeHtml(ts)}</div>`
+            : '';
+          return `<div class="${cls}">${escapeHtml(m.text || '')}${tsLine}</div>`;
+        }).join('')
+      : '<div class="empty-line" style="padding:8px; font-size:12px;">No messages yet — say hi.</div>';
+    const errLine = STATE.dmErrors[peer]
+      ? `<div class="err-line">${escapeHtml(STATE.dmErrors[peer])}</div>`
+      : '';
+    const body = `
+      <div class="body-content">
+        <div class="messages">${msgsHtml}</div>
+        <div class="compose">
+          <textarea data-dm-textarea="${escapeHtml(peer)}" placeholder="Message ${escapeHtml(peer)}…" ${sending ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+          <button data-dm-send="${escapeHtml(peer)}" ${sending ? 'disabled' : ''}>Send</button>
+        </div>
+        ${errLine}
+      </div>`;
+    return `<div class="item">${head}${body}</div>`;
+  }
+
   function render() {
     const root = ensureRoot();
 
@@ -390,8 +471,10 @@
     if (active && active.tagName === 'TEXTAREA') {
       const hk = active.getAttribute('data-hitl-textarea');
       const ck = active.getAttribute('data-chat-textarea');
+      const dk = active.getAttribute('data-dm-textarea');
       if (hk) { focusKind = 'hitl'; focusKey = hk; }
       else if (ck) { focusKind = 'chat'; focusKey = ck; }
+      else if (dk) { focusKind = 'dm'; focusKey = dk; }
       try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
     }
 
@@ -428,6 +511,15 @@
       html += '<h2 class="section">Pending requests</h2>';
       for (const q of STATE.hitl) html += renderHitlItem(q);
     }
+    // Online humans — always show the section header so the user
+    // knows the feature exists; if nobody else is online, show a
+    // muted placeholder rather than an empty section.
+    html += '<h2 class="section">Online humans</h2>';
+    if (!STATE.online.length) {
+      html += '<div class="empty-line">No other humans online right now.</div>';
+    } else {
+      for (const u of STATE.online) html += renderDmItem(u.email);
+    }
     html += '<h2 class="section">Agents</h2>';
     if (!STATE.agents.length) {
       html += '<div class="empty-line">No agents reporting yet.</div>';
@@ -458,7 +550,9 @@
     if (focusKind && focusKey) {
       const sel = focusKind === 'hitl'
         ? `[data-hitl-textarea="${CSS.escape(focusKey)}"]`
-        : `[data-chat-textarea="${CSS.escape(focusKey)}"]`;
+        : focusKind === 'dm'
+          ? `[data-dm-textarea="${CSS.escape(focusKey)}"]`
+          : `[data-chat-textarea="${CSS.escape(focusKey)}"]`;
       const el = root.querySelector(sel);
       if (el) {
         try { el.focus(); el.setSelectionRange(selStart, selEnd); } catch (_) {}
@@ -502,6 +596,32 @@
     root.querySelectorAll('[data-chat-send]').forEach((btn) => {
       btn.addEventListener('click', () => onChatSend(btn.getAttribute('data-chat-send')));
     });
+
+    // DM textarea drafts + send + Enter-to-send.
+    root.querySelectorAll('[data-dm-textarea]').forEach((ta) => {
+      const peer = ta.getAttribute('data-dm-textarea');
+      ta.addEventListener('input', () => { STATE.drafts.dm[peer] = ta.value; });
+      ta.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' && !ev.shiftKey) {
+          ev.preventDefault();
+          onDmSend(peer);
+        }
+      });
+    });
+    root.querySelectorAll('[data-dm-send]').forEach((btn) => {
+      btn.addEventListener('click', () => onDmSend(btn.getAttribute('data-dm-send')));
+    });
+
+    // Lazy-hydrate any DM thread that's currently expanded but not
+    // yet loaded (e.g. user just clicked a head for the first time).
+    for (const id of STATE.expanded) {
+      if (!id.startsWith('dm-')) continue;
+      const peer = id.slice(3);
+      if (!STATE.dmThreadsLoaded.has(peer)) {
+        STATE.dmThreadsLoaded.add(peer);
+        hydrateDmThread(peer);
+      }
+    }
   }
 
   // ── HITL answer ─────────────────────────────────────────────────────
@@ -717,9 +837,109 @@
     } catch (_) { /* ignore — next render keeps showing what we have */ }
   }
 
+  // ── Online presence + DM polling ───────────────────────────────────
+  async function pollOnline() {
+    try {
+      const r = await fetch('/api/sessions/online',
+                            { credentials: 'same-origin', headers: authHeaders() });
+      if (!r.ok) return;
+      const data = await r.json();
+      STATE.online = (data && data.online) || [];
+      STATE.me = (data && data.me) || STATE.me;
+      render();
+    } catch (_) { /* ignore */ }
+  }
+
+  // Refresh every open DM thread on a steady tick, so messages from
+  // peers appear without the user having to close + re-open the
+  // panel. Only refreshes threads whose head is currently expanded —
+  // collapsed threads stay cached and refresh on next expand.
+  async function pollOpenDms() {
+    for (const id of STATE.expanded) {
+      if (!id.startsWith('dm-')) continue;
+      const peer = id.slice(3);
+      // No-await fan-out: hydrateDmThread updates state and triggers
+      // its own render when the response lands.
+      hydrateDmThread(peer);
+    }
+  }
+
+  async function hydrateDmThread(peer) {
+    try {
+      const r = await fetch(
+        `/api/messages/${encodeURIComponent(peer)}`,
+        { credentials: 'same-origin', headers: authHeaders() },
+      );
+      if (!r.ok) return;
+      const data = await r.json();
+      const msgs = (data && data.messages) || [];
+      // Replace wholesale — server is the source of truth.
+      STATE.dmThreads[peer] = msgs;
+      // Clear any prior error if we successfully refreshed.
+      if (STATE.dmErrors[peer]) delete STATE.dmErrors[peer];
+      render();
+    } catch (_) { /* ignore — next tick will retry */ }
+  }
+
+  async function onDmSend(peer) {
+    const id = `dm-${peer}`;
+    if (STATE.sending.has(id)) return;
+    const text = (STATE.drafts.dm[peer] || '').trim();
+    if (!text) return;
+
+    // Optimistic local append so the user's own message lands
+    // immediately without waiting on the round trip.
+    const localMsg = {
+      id: `local-${Date.now()}`,
+      from: STATE.me,
+      to: peer,
+      text,
+      ts: Date.now() / 1000,
+    };
+    if (!STATE.dmThreads[peer]) STATE.dmThreads[peer] = [];
+    STATE.dmThreads[peer].push(localMsg);
+    STATE.drafts.dm[peer] = '';
+    STATE.sending.add(id);
+    delete STATE.dmErrors[peer];
+    render();
+
+    try {
+      const r = await fetch(
+        `/api/messages/${encodeURIComponent(peer)}`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ text }),
+        },
+      );
+      if (!r.ok) {
+        const errText = await r.text().catch(() => '');
+        throw new Error(`HTTP ${r.status}: ${errText.slice(0, 200)}`);
+      }
+      // Re-hydrate from server so the local-temp id is replaced with
+      // the real persisted record (matters if the user sends multiple
+      // in a row before a poll tick lands).
+      hydrateDmThread(peer);
+    } catch (e) {
+      // Roll back the optimistic append.
+      STATE.dmThreads[peer] = (STATE.dmThreads[peer] || []).filter(
+        (m) => m.id !== localMsg.id,
+      );
+      // Put the draft back so the user doesn't have to retype.
+      STATE.drafts.dm[peer] = text;
+      STATE.dmErrors[peer] = String(e.message || e);
+    } finally {
+      STATE.sending.delete(id);
+      render();
+    }
+  }
+
   ensureRoot();
   render();
-  pollHitl(); pollAgents();
+  pollHitl(); pollAgents(); pollOnline();
   setInterval(pollHitl, POLL_HITL_MS);
   setInterval(pollAgents, POLL_AGENTS_MS);
+  setInterval(pollOnline, POLL_ONLINE_MS);
+  setInterval(pollOpenDms, POLL_DM_MS);
 })();

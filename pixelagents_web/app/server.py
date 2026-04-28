@@ -238,13 +238,65 @@ def _session_user(request: Request) -> str | None:
     return s["user"]
 
 
+# ── Online-presence + human-to-human DM state ───────────────────────
+# PRESENCE is bumped on every authenticated request that carries a
+# real session cookie (so we know who's actively poking the UI).
+# DM_MESSAGES stores per-pair conversation history. Both are in-memory
+# and reset on container restart — same lifetime as the rest of the
+# demo state.
+PRESENCE: Dict[str, float] = {}  # email -> last_seen unix sec
+ONLINE_WINDOW_SEC = 60.0          # last_seen within this = "online"
+
+# Thread store keyed by a sorted tuple of the two participants' emails
+# so the same thread is shared regardless of who initiated. Each
+# message: {id, from, to, text, ts}.
+DM_MESSAGES: Dict[tuple[str, str], list[Dict[str, Any]]] = defaultdict(list)
+DM_MESSAGES_CAP = 200  # per pair
+
+
+def _dm_key(a: str, b: str) -> tuple[str, str]:
+    return tuple(sorted((a, b)))  # type: ignore[return-value]
+
+
+def _dm_append(from_user: str, to_user: str, text: str) -> Dict[str, Any]:
+    msg = {
+        "id": secrets.token_urlsafe(8),
+        "from": from_user,
+        "to": to_user,
+        "text": text,
+        "ts": time.time(),
+    }
+    bucket = DM_MESSAGES[_dm_key(from_user, to_user)]
+    bucket.append(msg)
+    if len(bucket) > DM_MESSAGES_CAP:
+        del bucket[: len(bucket) - DM_MESSAGES_CAP]
+    return msg
+
+
+def _dm_get(a: str, b: str) -> list[Dict[str, Any]]:
+    return list(DM_MESSAGES.get(_dm_key(a, b), []))
+
+
+def _bump_presence(email: str) -> None:
+    """Mark `email` as last-seen=now. Cheap; called on every
+    authenticated cookie-backed request."""
+    if email:
+        PRESENCE[email] = time.time()
+
+
 def _require_auth(request: Request, x_pixelagents_token: str | None) -> None:
     """Browser session cookie OR x-pixelagents-token header — either works.
 
     Used by endpoints called from both the logged-in UI (cookie) and from
     server-to-server callers like the runner / orchestrator (token).
+
+    Side-effect: if cookie auth resolves to a real user, bump that
+    user's PRESENCE timestamp. Token-only callers (runner / orchestrator)
+    don't have a user identity and don't appear in the online list.
     """
-    if _session_user(request) is not None:
+    user = _session_user(request)
+    if user is not None:
+        _bump_presence(user)
         return
     expected = os.getenv(TOKEN_ENV, "")
     if expected and x_pixelagents_token == expected:
@@ -2866,6 +2918,144 @@ def _run_chat_blocking(
             _emit_agent_end(agent_name, "adhoc_chat")
         except Exception:
             pass
+
+
+# ── Online presence + DMs ────────────────────────────────────────────
+
+
+def _require_real_user(request: Request) -> str:
+    """Variant of _require_auth that demands a cookie-backed identity
+    (token-only callers can't participate in DMs / presence)."""
+    user = _session_user(request)
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="DM / presence endpoints require a logged-in browser session",
+        )
+    _bump_presence(user)
+    return user
+
+
+@app.get("/api/sessions/online")
+def api_sessions_online(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> Dict[str, Any]:
+    """Return the list of currently-active humans (last_seen within the
+    online window). The caller themselves are NOT in the list — UI uses
+    `me` separately."""
+
+    _require_auth(request, x_pixelagents_token)
+    me = _session_user(request) or ""
+    now = time.time()
+    online: list[Dict[str, Any]] = []
+    for email, last_seen in list(PRESENCE.items()):
+        if email == me:
+            continue
+        ago = now - last_seen
+        if ago > ONLINE_WINDOW_SEC:
+            continue
+        online.append({
+            "email": email,
+            "last_seen": last_seen,
+            "ago_sec": int(ago),
+        })
+    online.sort(key=lambda u: u["email"])
+    return {
+        "online": online,
+        "me": me,
+        "window_sec": ONLINE_WINDOW_SEC,
+        "ts": now,
+    }
+
+
+@app.get("/api/messages/threads")
+def api_messages_threads(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> Dict[str, Any]:
+    """List DM threads involving the calling user, with last-message
+    preview so the UI can show "X said: ..." next to each peer."""
+
+    me = _require_real_user(request)
+    _ = x_pixelagents_token  # cookie-only path; token unused
+    threads: list[Dict[str, Any]] = []
+    for (a, b), msgs in DM_MESSAGES.items():
+        if me not in (a, b) or not msgs:
+            continue
+        peer = b if a == me else a
+        last = msgs[-1]
+        threads.append({
+            "peer": peer,
+            "message_count": len(msgs),
+            "last_message": {
+                "from": last.get("from"),
+                "text": last.get("text"),
+                "ts": last.get("ts"),
+            },
+        })
+    # Sort newest-first by last_message.ts so the list is naturally
+    # ordered by "most-recent activity at the top".
+    threads.sort(key=lambda t: t.get("last_message", {}).get("ts") or 0, reverse=True)
+    return {"threads": threads, "me": me, "ts": time.time()}
+
+
+@app.get("/api/messages/{peer_email}")
+def api_messages_get(
+    peer_email: str,
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> Dict[str, Any]:
+    """Return the full conversation between the calling user and `peer_email`."""
+
+    me = _require_real_user(request)
+    _ = x_pixelagents_token
+    peer = (peer_email or "").strip().lower()
+    if not peer:
+        raise HTTPException(status_code=400, detail="Missing peer email")
+    return {
+        "me": me,
+        "peer": peer,
+        "messages": _dm_get(me, peer),
+        "ts": time.time(),
+    }
+
+
+@app.post("/api/messages/{peer_email}")
+async def api_messages_post(
+    peer_email: str,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> Dict[str, Any]:
+    """Send a DM from the calling user to `peer_email`. Returns the
+    persisted message record (id, ts, ...).
+
+    Demo-grade: doesn't validate that `peer_email` is a known user —
+    sending a message to a typo'd address just creates a thread that
+    nobody can read on the receiving side. The UI only ever lets the
+    user click an existing online human, so this is fine in practice.
+    """
+
+    me = _require_real_user(req)
+    _ = x_pixelagents_token
+    peer = (peer_email or "").strip().lower()
+    if not peer:
+        raise HTTPException(status_code=400, detail="Missing peer email")
+    if peer == me:
+        raise HTTPException(status_code=400, detail="Cannot DM yourself")
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise HTTPException(status_code=400, detail="Missing 'text' (non-empty string)")
+
+    msg = _dm_append(me, peer, text.strip())
+    return {"ok": True, "message": msg}
 
 
 @app.get("/api/agents/{agent_id}/messages")
