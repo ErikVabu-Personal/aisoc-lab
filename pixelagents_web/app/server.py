@@ -782,6 +782,73 @@ def config_view(request: Request) -> Response:
     ))
 
 
+@app.get("/chat-popup", response_class=HTMLResponse)
+def chat_popup_view(request: Request, kind: str = "", id: str = "") -> Response:
+    """Standalone chat window. Opened by the Live Agent View sidebar
+    via window.open() so analysts can keep multiple chats docked
+    independently of the main page. Keeps the markup minimal — no
+    nav, no canvas, just a chat surface — and ships chat_popup.js
+    which mirrors the existing chat plumbing (SSE streaming for
+    agents, regular POST for human DMs)."""
+
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+
+    kind = (kind or "").strip().lower()
+    target_id = (id or "").strip()
+    if kind not in ("agent", "human") or not target_id:
+        return HTMLResponse(
+            "<h1>Bad chat-popup request</h1>"
+            "<p>Open this from the Live Agent View sidebar — direct visits aren't supported.</p>",
+            status_code=400,
+        )
+
+    if kind == "agent":
+        target_id = _slug_agent(target_id)
+        title = f"{target_id.title()} · NVISO Cruises"
+        header = target_id.title()
+    else:
+        target_id = target_id.lower()
+        title = f"DM · {target_id} · NVISO Cruises"
+        header = target_id
+
+    token = os.getenv(TOKEN_ENV, "")
+    cfg = json.dumps({
+        "kind": kind,
+        "id": target_id,
+        "me": user,
+        "token": token,
+        "header": header,
+    })
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{title}</title>
+  <link rel="icon" href="data:,">
+  <style>
+    html, body {{ height: 100%; margin: 0; padding: 0; }}
+    body {{
+      display: flex; flex-direction: column;
+      font: 15px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      color: #1f2937;
+      background: #ffffff;
+      overflow: hidden;
+    }}
+  </style>
+</head>
+<body>
+  <script>window.__CHAT_POPUP_CONFIG = {cfg};</script>
+  <script src="/static/chat_popup.js"></script>
+</body>
+</html>
+"""
+    return HTMLResponse(html)
+
+
 # ── Current incident tracking ────────────────────────────────────────
 # Set by the orchestrate proxy when a workflow run starts; cleared when
 # it finishes (or errors). Lets the Live Agent View show "we're working

@@ -18,10 +18,11 @@
   const POLL_HITL_MS = 2000;
   const POLL_AGENTS_MS = 4000;
   const POLL_ONLINE_MS = 4000;
-  const POLL_DM_MS = 3000; // refresh open DM threads
+  const POLL_DM_MS = 15000; // refresh ALL DM threads — drives row previews; sends happen in popups now
   const POLL_INCIDENT_MS = 1500; // current_incident — fast so the elapsed timer ticks
   const POLL_QUEUE_MS = 8000; // /api/sentinel/incidents — match dashboard cadence
   const POLL_CHANGES_MS = 3000; // /api/changes/pending — quick so approvals feel live
+  const POLL_AGENT_HIST_MS = 15000; // refresh agent chat history for row previews
   const STREAM_PATH = (agent) => `/api/agents/${encodeURIComponent(agent)}/message/stream`;
 
   // ── Styles ──────────────────────────────────────────────────────────
@@ -911,11 +912,6 @@
   function renderChatItem(a) {
     const agent = agentName(a);
     if (!agent) return '';
-    const id = `chat-${agent}`;
-    const expanded = STATE.expanded.has(id);
-    const draft = STATE.drafts.chat[agent] || '';
-    const sending = STATE.sending.has(id);
-    const chev = expanded ? '▾' : '▸';
     const status = agentStatus(a);
 
     // "owns #N" badge + highlight ring when this agent currently
@@ -930,47 +926,18 @@
       : '';
     const itemCls = ownsActive ? 'item owns-active' : 'item';
 
-    const head = `
-      <div class="head" data-toggle="${id}">
-        <span class="dot ${status}"></span>
-        <span class="name">${escapeHtml(capitalize(agent))}</span>
-        ${ownsPill}
-        ${expanded ? '' : `<span class="preview">${escapeHtml(lastMessagePreview(agent))}</span>`}
-        <span class="chev">${chev}</span>
-      </div>`;
-    if (!expanded) return `<div class="${itemCls}">${head}</div>`;
-    const conv = STATE.conversations[agent] || [];
-    const msgsHtml = conv.length
-      ? conv.map((m) => {
-          const tools = (m.toolCalls && m.toolCalls.length)
-            ? `<div style="margin-top:4px; font-size:11px; opacity:0.7; font-family:ui-monospace,Menlo,monospace;">🔧 ${m.toolCalls.map((t) => escapeHtml(t.name || '')).join(', ')}</div>`
-            : '';
-          // While we're awaiting the first delta from the model, the
-          // bubble has no text yet — show a three-dot typing indicator
-          // instead of an empty rectangle. Once any text arrives we
-          // switch to normal rendering even if streaming continues.
-          if (m.streaming && !(m.text || '').length && !m.error) {
-            return `<div class="msg assistant typing" aria-label="Agent is typing">`
-                 + `<span class="dot"></span><span class="dot"></span><span class="dot"></span>`
-                 + `${tools}</div>`;
-          }
-          const cls = m.error ? 'msg error' : `msg ${m.role}`;
-          return `<div class="${cls}">${escapeHtml(m.text || '')}${tools}</div>`;
-        }).join('')
-      : '<div class="empty-line" style="padding:8px; font-size:12px;">No messages yet — say hi.</div>';
-    const errLine = STATE.chatErrors[agent]
-      ? `<div class="err-line">${escapeHtml(STATE.chatErrors[agent])}</div>`
-      : '';
-    const body = `
-      <div class="body-content">
-        <div class="messages">${msgsHtml}</div>
-        <div class="compose">
-          <textarea data-chat-textarea="${escapeHtml(agent)}" placeholder="Message ${escapeHtml(capitalize(agent))}…" ${sending ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
-          <button data-chat-send="${escapeHtml(agent)}" ${sending ? 'disabled' : ''}>Send</button>
+    // Click on the row opens a chat popup window for this agent.
+    // Inline expand was retired — analysts found it cramped the
+    // sidebar; popups let them keep multiple chats docked.
+    return `
+      <div class="${itemCls}">
+        <div class="head" data-popup-agent="${escapeHtml(agent)}">
+          <span class="dot ${status}"></span>
+          <span class="name">${escapeHtml(capitalize(agent))}</span>
+          ${ownsPill}
+          <span class="preview">${escapeHtml(lastMessagePreview(agent))}</span>
         </div>
-        ${errLine}
       </div>`;
-    return `<div class="${itemCls}">${head}${body}</div>`;
   }
 
   // ── DM thread item (one per online human) ──────────────────────────
@@ -1007,54 +974,22 @@
         </div>`;
     }
 
-    const id = `dm-${peer}`;
-    const expanded = STATE.expanded.has(id);
-    const draft = STATE.drafts.dm[peer] || '';
-    const sending = STATE.sending.has(id);
-    const chev = expanded ? '▾' : '▸';
     const dotCls = isOnline ? 'dot online' : 'dot';
     const dotTitle = isOnline
       ? 'Online'
       : (userRec && userRec.ago_sec != null
           ? `Offline (last seen ${userRec.ago_sec}s ago)`
           : 'Offline');
-    const head = `
-      <div class="head" data-toggle="${id}">
-        <span class="${dotCls}" title="${escapeHtml(dotTitle)}"></span>
-        <span class="name email" title="${escapeHtml(peer)}">${escapeHtml(peer)}</span>
-        ${expanded ? '' : `<span class="preview">${escapeHtml(dmPreviewFor(peer))}</span>`}
-        <span class="chev">${chev}</span>
-      </div>`;
-    if (!expanded) return `<div class="item">${head}</div>`;
 
-    const thread = STATE.dmThreads[peer] || [];
-    const me = STATE.me;
-    const msgsHtml = thread.length
-      ? thread.map((m) => {
-          // Reuse the agent-chat bubble look: own messages on the
-          // right (user-bubble), peer messages on the left (assistant
-          // bubble — neutral grey).
-          const cls = m.from === me ? 'msg user' : 'msg assistant';
-          const ts = m.ts ? new Date(m.ts * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
-          const tsLine = ts
-            ? `<div style="margin-top:4px;font-size:10px;opacity:0.6;">${escapeHtml(ts)}</div>`
-            : '';
-          return `<div class="${cls}">${escapeHtml(m.text || '')}${tsLine}</div>`;
-        }).join('')
-      : '<div class="empty-line" style="padding:8px; font-size:12px;">No messages yet — say hi.</div>';
-    const errLine = STATE.dmErrors[peer]
-      ? `<div class="err-line">${escapeHtml(STATE.dmErrors[peer])}</div>`
-      : '';
-    const body = `
-      <div class="body-content">
-        <div class="messages">${msgsHtml}</div>
-        <div class="compose">
-          <textarea data-dm-textarea="${escapeHtml(peer)}" placeholder="Message ${escapeHtml(peer)}…" ${sending ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
-          <button data-dm-send="${escapeHtml(peer)}" ${sending ? 'disabled' : ''}>Send</button>
+    // Click on the row opens a chat popup window for this human.
+    return `
+      <div class="item">
+        <div class="head" data-popup-human="${escapeHtml(peer)}">
+          <span class="${dotCls}" title="${escapeHtml(dotTitle)}"></span>
+          <span class="name email" title="${escapeHtml(peer)}">${escapeHtml(peer)}</span>
+          <span class="preview">${escapeHtml(dmPreviewFor(peer))}</span>
         </div>
-        ${errLine}
       </div>`;
-    return `<div class="item">${head}${body}</div>`;
   }
 
   function render() {
@@ -1242,34 +1177,27 @@
       btn.addEventListener('click', () => onHitlAnswer(btn.getAttribute('data-hitl-reject'), 'reject'));
     });
 
-    // Chat textarea drafts + send.
-    root.querySelectorAll('[data-chat-textarea]').forEach((ta) => {
-      const agent = ta.getAttribute('data-chat-textarea');
-      ta.addEventListener('input', () => { STATE.drafts.chat[agent] = ta.value; });
-      ta.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter' && !ev.shiftKey) {
-          ev.preventDefault();
-          onChatSend(agent);
-        }
+    // Open a chat popup window for an agent or human. Uses a
+    // deterministic window name (kind + id) so re-clicking the same
+    // row brings the existing popup to focus rather than spawning
+    // duplicates.
+    function openChatPopup(kind, id) {
+      const params = new URLSearchParams({ kind, id });
+      const url = `/chat-popup?${params.toString()}`;
+      const winName = `aisoc-chat-${kind}-${id}`;
+      const features = 'width=440,height=640,resizable=yes,scrollbars=yes';
+      const w = window.open(url, winName, features);
+      if (w) w.focus();
+    }
+    root.querySelectorAll('[data-popup-agent]').forEach((el) => {
+      el.addEventListener('click', () => {
+        openChatPopup('agent', el.getAttribute('data-popup-agent'));
       });
     });
-    root.querySelectorAll('[data-chat-send]').forEach((btn) => {
-      btn.addEventListener('click', () => onChatSend(btn.getAttribute('data-chat-send')));
-    });
-
-    // DM textarea drafts + send + Enter-to-send.
-    root.querySelectorAll('[data-dm-textarea]').forEach((ta) => {
-      const peer = ta.getAttribute('data-dm-textarea');
-      ta.addEventListener('input', () => { STATE.drafts.dm[peer] = ta.value; });
-      ta.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter' && !ev.shiftKey) {
-          ev.preventDefault();
-          onDmSend(peer);
-        }
+    root.querySelectorAll('[data-popup-human]').forEach((el) => {
+      el.addEventListener('click', () => {
+        openChatPopup('human', el.getAttribute('data-popup-human'));
       });
-    });
-    root.querySelectorAll('[data-dm-send]').forEach((btn) => {
-      btn.addEventListener('click', () => onDmSend(btn.getAttribute('data-dm-send')));
     });
 
     // ── My queue reassignment ─────────────────────────────────────────
@@ -1688,17 +1616,26 @@
     } catch (_) { /* ignore */ }
   }
 
-  // Refresh every open DM thread on a steady tick, so messages from
-  // peers appear without the user having to close + re-open the
-  // panel. Only refreshes threads whose head is currently expanded —
-  // collapsed threads stay cached and refresh on next expand.
-  async function pollOpenDms() {
-    for (const id of STATE.expanded) {
-      if (!id.startsWith('dm-')) continue;
-      const peer = id.slice(3);
-      // No-await fan-out: hydrateDmThread updates state and triggers
-      // its own render when the response lands.
-      hydrateDmThread(peer);
+  // Refresh every configured human's DM thread so the preview line
+  // in the sidebar reflects messages received via popup windows.
+  // Inline DM expand was retired in favour of popup chats, so polling
+  // open threads only is no longer the right scope.
+  async function pollAllDmThreads() {
+    if (!STATE.users || !STATE.users.length) return;
+    for (const u of STATE.users) {
+      if (u && u.email && !u.is_self) hydrateDmThread(u.email);
+    }
+  }
+
+  // Same idea for agent chat history — pop-up sends update server
+  // state but the sidebar's STATE.conversations needs a periodic
+  // re-pull so each agent row's preview line reflects recent
+  // activity.
+  async function pollAgentChatHistories() {
+    if (!STATE.agents || !STATE.agents.length) return;
+    for (const a of STATE.agents) {
+      const slug = agentName(a);
+      if (slug) hydrateAgentHistory(slug);
     }
   }
 
@@ -1779,8 +1716,9 @@
   setInterval(pollHitl, POLL_HITL_MS);
   setInterval(pollAgents, POLL_AGENTS_MS);
   setInterval(pollOnline, POLL_ONLINE_MS);
-  setInterval(pollOpenDms, POLL_DM_MS);
+  setInterval(pollAllDmThreads, POLL_DM_MS);
   setInterval(pollCurrentIncident, POLL_INCIDENT_MS);
   setInterval(pollIncidents, POLL_QUEUE_MS);
   setInterval(pollChanges, POLL_CHANGES_MS);
+  setInterval(pollAgentChatHistories, POLL_AGENT_HIST_MS);
 })();
