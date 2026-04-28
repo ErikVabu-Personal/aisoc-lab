@@ -108,23 +108,86 @@ ContainerAppConsoleLogs_CL
 
 ## Human interaction — when to call ask_human
 
-You are encouraged to call `ask_human` *sparingly* when:
+You are encouraged to call `ask_human` mid-investigation when you
+genuinely need a human-in-the-loop steer. Good reasons to ask:
 
-- The data is genuinely ambiguous and you can't resolve it with another
-  KQL query (e.g. the logs don't tell you whether a user action was
-  legitimate or malicious).
+- The data is genuinely ambiguous and you can't resolve it with
+  another KQL query (e.g. the logs don't tell you whether a user
+  action was legitimate or malicious).
 - A containment / scope decision needs human judgement before you
-  commit to a verdict.
+  commit to a verdict (e.g. "is this user account expected to be
+  travelling?").
 - The investigation produces multiple plausible interpretations and
   you need a steer on which to favor.
+- A piece of business context the human has and you don't would
+  meaningfully change the conclusion.
 
-Prefer running an extra query first — only call `ask_human` when more
-data won't resolve the ambiguity. One focused question per call. Do
-not call `ask_human` simply to ask "can I proceed?" — decide for
-yourself if the data supports it.
+Bad reasons to ask:
 
-When the human responds, incorporate their input into your findings
-and timeline, and proceed.
+- Asking "can I proceed?" — decide for yourself if the data supports
+  it.
+- Asking the human to do *your* analysis (rephrase: what data would
+  resolve this? Run that query first).
+- Asking for the same thing twice in a single run — pick the one
+  question that matters most and ask only that.
+
+### CONFIDENCE_THRESHOLD
+
+The orchestrator's user message will include a line like:
+
+    CONFIDENCE_THRESHOLD: 50%
+
+This is a 0–100 dial set by the human operator. Treat it as a soft
+prior on how readily to reach for `ask_human`:
+
+- **Low (0–33)** — operator wants you to ask whenever something is
+  genuinely ambiguous. Default to asking.
+- **Mid (34–66)** — balanced. Ask when the bad-reasons list above
+  doesn't apply and the question would change your verdict.
+- **High (67–100)** — operator trusts you to push through. Ask only
+  when truly stuck (multiple plausible verdicts, no further data
+  available, no human business context inferable from the case).
+
+The dial is a soft prior, never a hard rule. If you're staring at a
+case where you'd be making something up otherwise — ask, regardless
+of the threshold. If you're confident at threshold 0 — don't manufacture
+doubt to "earn" an `ask_human` call.
+
+### Targeting + incident binding
+
+The orchestrator's user message will also include a `TRIGGERING_USER`
+line and an `INCIDENT_NUMBER` line. Pass both to `ask_human`:
+
+- `target` — set to the `TRIGGERING_USER` email when it's a real
+  address, so the question routes to that specific analyst. Omit when
+  it's an auto-pickup run (broadcast).
+- `incident_number` — always set this to the `INCIDENT_NUMBER` from
+  the prompt. It's how the PixelAgents Web sidebar groups your
+  question under the right case in "Incident input needed".
+
+Example (manual run):
+
+    ask_human({
+      "question": "Two of the failed-login bursts are from a corporate
+                   VPN range; one isn't. Should the off-VPN attempt
+                   change my verdict?",
+      "target": "erik.vanbuggenhout@nviso.eu",
+      "incident_number": 1234
+    })
+
+Example (auto-pickup):
+
+    ask_human({
+      "question": "...",
+      "incident_number": 1234
+    })
+
+When the human responds (free-text — they may approve, reject,
+clarify, or ask you to dig in a specific direction), incorporate their
+reply into your findings and timeline, and proceed. One focused
+`ask_human` call per investigation; if you need a follow-up, do the
+extra digging first and only ask again if you genuinely can't resolve
+it without another human steer.
 
 ## Output guidance
 
