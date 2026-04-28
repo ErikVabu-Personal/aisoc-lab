@@ -262,7 +262,9 @@
     }
     /* Active-incident banner at the very top of the sidebar body.
        Shown only when /api/current_incident reports a non-null
-       incident_number. Click → /dashboard. */
+       incident_number. Click → /dashboard. The whole card pulses
+       a subtle blue while a workflow is in flight so it's
+       impossible to miss from across the room. */
     #${ROOT_ID} .active-banner {
       display: block;
       margin: 8px 8px 12px;
@@ -274,32 +276,44 @@
       text-decoration: none !important;  /* it's an <a>, kill default underline */
       color: inherit;
       transition: background 0.15s ease;
+      animation: aisoc-banner-pulse 2.2s ease-in-out infinite;
+    }
+    @keyframes aisoc-banner-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0,153,204,0.0); }
+      50%      { box-shadow: 0 0 0 4px rgba(0,153,204,0.25); }
     }
     #${ROOT_ID} .active-banner:hover {
       background: rgba(0,153,204,0.16);
     }
-    #${ROOT_ID} .active-banner .ab-line1 {
+    /* Top line: incident number + title together. Blue, bold, with
+       a pulsing dot to anchor the "alive" feeling. Title is allowed
+       to ellipsis when long. */
+    #${ROOT_ID} .active-banner .ab-title {
       display: flex; align-items: center; gap: 8px;
       font-weight: 700;
       font-size: 13px;
       color: #1e3a8a;
     }
-    #${ROOT_ID} .active-banner .ab-line1 .num {
+    #${ROOT_ID} .active-banner .ab-title .num {
       font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
     }
-    #${ROOT_ID} .active-banner .ab-line2 {
-      font-size: 12px;
-      color: #1f2937;
-      margin-top: 4px;
+    #${ROOT_ID} .active-banner .ab-title .ab-titleText {
+      flex: 1; min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      font-weight: 600;
+      color: #1f2937;
     }
-    #${ROOT_ID} .active-banner .ab-line3 {
+    /* Subtext: status · agent · elapsed. Muted grey, mono so the
+       elapsed timer doesn't jitter as digits change width. */
+    #${ROOT_ID} .active-banner .ab-meta {
       font-size: 11px;
       color: #6b7280;
-      margin-top: 4px;
+      margin-top: 6px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.02em;
     }
     /* Per-agent / per-human "owns #N" pill — blue ribbon next to the
        row name to mark who's currently holding the incident. */
@@ -853,21 +867,20 @@
       const phase = ci.phase || 'agentic';
       const ownerSlug = activeOwnerAgent();
       const ownerLabel = ownerSlug
-        ? capitalize(ownerSlug)
+        ? `${capitalize(ownerSlug)} agent`
         : (phase === 'human' ? 'Human analyst' : '—');
       const elapsed = ci.started_at
         ? fmtElapsed(Date.now() / 1000 - ci.started_at)
         : '—';
       html += `
         <a href="/dashboard" class="active-banner" title="Open in dashboard">
-          <div class="ab-line1">
+          <div class="ab-title">
             <span class="dot reading"></span>
-            <span class="num">Incident #${num}</span>
-            <span style="opacity:0.7;font-weight:500;">in flight</span>
+            <span class="num">#${num}</span>
+            <span class="ab-titleText" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
           </div>
-          <div class="ab-line2">${escapeHtml(title)}</div>
-          <div class="ab-line3">
-            ${escapeHtml(ownerLabel)} · ${escapeHtml(elapsed)} elapsed
+          <div class="ab-meta">
+            Analysis ongoing · ${escapeHtml(ownerLabel)} · ${escapeHtml(elapsed)} elapsed
           </div>
         </a>`;
     }

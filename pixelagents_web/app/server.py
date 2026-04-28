@@ -3952,7 +3952,10 @@ def index(request: Request) -> Response:
         # chat drawer + HITL pop-up with one panel.
         f'<script src="/static/agent_comm.js" defer></script>'
         f'<script src="/static/agent_activity.js" defer></script>'
-        f'<script src="/static/live_incident_banner.js" defer></script>'
+        # The standalone live_incident_banner above the office canvas
+        # was retired — the same information lives in the Control
+        # Panel sidebar's "Incident in flight" card on the right, and
+        # showing it twice was just visual noise.
         f'<script src="/static/default_zoom.js" defer></script>'
         f'<script src="/static/bottom_bar_layout.js" defer></script>'
         f'<script src="/static/auto_pickup_badge.js" defer></script>'
