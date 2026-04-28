@@ -269,7 +269,7 @@
   const STATE = {
     hitl: [],                    // [{id, agent, question, asked_at}]
     agents: [],                  // [{agent, state, ...}]
-    online: [],                  // [{email, last_seen, ago_sec}] — peers, NOT me
+    users: [],                   // [{email, online, last_seen, ago_sec}] — full roster minus me
     me: '',                      // my email (from /api/sessions/online)
     expanded: new Set(),         // ids 'hitl-{qid}' or 'chat-{agent}' or 'dm-{email}'
     conversations: {},           // agent -> [{role, text, toolCalls?, streaming?, error?}]
@@ -416,16 +416,26 @@
     return prefix + (last.text || '').replace(/\s+/g, ' ').slice(0, 80);
   }
 
-  function renderDmItem(peer) {
+  function renderDmItem(userRec) {
+    // Accept either a full {email, online, ...} record (preferred)
+    // or a bare email string (legacy callers that just had a peer).
+    const peer = (userRec && typeof userRec === 'object') ? userRec.email : userRec;
+    const isOnline = !!(userRec && userRec.online);
     if (!peer) return '';
     const id = `dm-${peer}`;
     const expanded = STATE.expanded.has(id);
     const draft = STATE.drafts.dm[peer] || '';
     const sending = STATE.sending.has(id);
     const chev = expanded ? '▾' : '▸';
+    const dotCls = isOnline ? 'dot online' : 'dot';
+    const dotTitle = isOnline
+      ? 'Online'
+      : (userRec && userRec.ago_sec != null
+          ? `Offline (last seen ${userRec.ago_sec}s ago)`
+          : 'Offline');
     const head = `
       <div class="head" data-toggle="${id}">
-        <span class="dot online" title="Online"></span>
+        <span class="${dotCls}" title="${escapeHtml(dotTitle)}"></span>
         <span class="name email" title="${escapeHtml(peer)}">${escapeHtml(peer)}</span>
         ${expanded ? '' : `<span class="preview">${escapeHtml(dmPreviewFor(peer))}</span>`}
         <span class="chev">${chev}</span>
@@ -505,26 +515,26 @@
       if (id && content) itemScrolls[id] = snapshotScroll(content);
     });
 
-    let html = '<header>Agent Communication<div class="sub">Talk to the agents · respond to their requests</div></header>';
+    let html = '<header>Communication<div class="sub">Talk to agents and humans · respond to their requests</div></header>';
     html += '<div class="body">';
     if (STATE.hitl.length) {
       html += '<h2 class="section">Pending requests</h2>';
       for (const q of STATE.hitl) html += renderHitlItem(q);
-    }
-    // Online humans — always show the section header so the user
-    // knows the feature exists; if nobody else is online, show a
-    // muted placeholder rather than an empty section.
-    html += '<h2 class="section">Online humans</h2>';
-    if (!STATE.online.length) {
-      html += '<div class="empty-line">No other humans online right now.</div>';
-    } else {
-      for (const u of STATE.online) html += renderDmItem(u.email);
     }
     html += '<h2 class="section">Agents</h2>';
     if (!STATE.agents.length) {
       html += '<div class="empty-line">No agents reporting yet.</div>';
     } else {
       for (const a of STATE.agents) html += renderChatItem(a);
+    }
+    // Humans — full configured roster (online sorted first, then
+    // offline). Status dot reflects online/offline, same affordance
+    // as the agents above.
+    html += '<h2 class="section">Humans</h2>';
+    if (!STATE.users.length) {
+      html += '<div class="empty-line">No other humans configured.</div>';
+    } else {
+      for (const u of STATE.users) html += renderDmItem(u);
     }
     html += '</div>';
     root.innerHTML = html;
@@ -844,7 +854,10 @@
                             { credentials: 'same-origin', headers: authHeaders() });
       if (!r.ok) return;
       const data = await r.json();
-      STATE.online = (data && data.online) || [];
+      // Endpoint now returns the full configured roster minus self,
+      // each with an `online` boolean. Render every entry; the row's
+      // dot reflects status the same way agent rows do.
+      STATE.users = (data && data.users) || [];
       STATE.me = (data && data.me) || STATE.me;
       render();
     } catch (_) { /* ignore */ }

@@ -2941,28 +2941,45 @@ def api_sessions_online(
     request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> Dict[str, Any]:
-    """Return the list of currently-active humans (last_seen within the
-    online window). The caller themselves are NOT in the list — UI uses
-    `me` separately."""
+    """Return every CONFIGURED human (from the AISOC_USERS_JSON roster
+    / USERS dict) with their current online status. The caller's own
+    email is NOT in the list — UI uses `me` separately.
+
+    Each user record:
+      {
+        "email":     str,
+        "online":    bool,           # last_seen within ONLINE_WINDOW_SEC
+        "last_seen": float | None,   # unix sec, or None if never seen
+        "ago_sec":   int  | None,    # seconds since last_seen
+      }
+    """
 
     _require_auth(request, x_pixelagents_token)
     me = _session_user(request) or ""
     now = time.time()
-    online: list[Dict[str, Any]] = []
-    for email, last_seen in list(PRESENCE.items()):
+    users: list[Dict[str, Any]] = []
+    for email in USERS.keys():
         if email == me:
             continue
-        ago = now - last_seen
-        if ago > ONLINE_WINDOW_SEC:
+        last_seen = PRESENCE.get(email)
+        if last_seen is None:
+            users.append({
+                "email": email,
+                "online": False,
+                "last_seen": None,
+                "ago_sec": None,
+            })
             continue
-        online.append({
+        ago = now - last_seen
+        users.append({
             "email": email,
+            "online": ago <= ONLINE_WINDOW_SEC,
             "last_seen": last_seen,
             "ago_sec": int(ago),
         })
-    online.sort(key=lambda u: u["email"])
+    users.sort(key=lambda u: (not u["online"], u["email"]))  # online first, then alpha
     return {
-        "online": online,
+        "users": users,
         "me": me,
         "window_sec": ONLINE_WINDOW_SEC,
         "ts": now,
