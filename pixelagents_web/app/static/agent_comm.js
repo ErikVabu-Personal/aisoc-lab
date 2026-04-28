@@ -498,13 +498,29 @@
       });
   }
 
+  // Same deep-link shape the dashboard uses for the incident-#
+  // column. Returns null when arm_id is missing — fall back to the
+  // dashboard so the row is still clickable (rare; only an issue
+  // for incidents that lack the ARM id, which shouldn't happen in
+  // practice).
+  function sentinelPortalUrl(inc) {
+    if (!inc || !inc.arm_id) return null;
+    return `https://portal.azure.com/#asset/Microsoft_Azure_Security_Insights/Incident${inc.arm_id}`;
+  }
+
   function renderMyQueueItem(inc) {
     const num = inc.number;
     const title = (inc.title || '').toString();
     const sev = String(inc.severity || '').toLowerCase();
+    const portal = sentinelPortalUrl(inc);
+    const href = portal || '/dashboard';
+    const targetAttr = portal ? ' target="_blank" rel="noopener"' : '';
+    const tooltip = portal
+      ? `Open #${num} in Microsoft Sentinel`
+      : `Open #${num} on the dashboard`;
     return `
       <div class="queue-item">
-        <a href="/dashboard" title="Open ${escapeHtml(`#${num}`)} on the dashboard">
+        <a href="${escapeHtml(href)}"${targetAttr} title="${escapeHtml(tooltip)}">
           <span class="qnum">#${num}</span>
           <span class="qtitle">${escapeHtml(title || '(no title)')}</span>
           ${sev ? `<span class="qsev ${escapeHtml(sev)}">${escapeHtml(inc.severity)}</span>` : ''}
