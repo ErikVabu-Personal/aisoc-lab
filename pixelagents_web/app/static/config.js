@@ -37,9 +37,22 @@
       background: #9ca3af;
       flex-shrink: 0;
     }
+    /* Coherent agent palette across config + sidebar:
+         .idle    = online, not working   -> solid green
+         .reading = actively working      -> pulsing blue
+         .error   = something went wrong  -> red                        */
+    #${ROOT_ID} .card .dot.idle {
+      background: #10b981;
+    }
     #${ROOT_ID} .card .dot.reading {
-      background: #34d399;
-      box-shadow: 0 0 0 4px rgba(52,211,153,0.18);
+      background: #0099cc;
+      box-shadow: 0 0 0 0 rgba(0,153,204,0.55);
+      animation: aisoc-config-active-pulse 1.6s ease-out infinite;
+    }
+    @keyframes aisoc-config-active-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(0,153,204,0.55); }
+      70%  { box-shadow: 0 0 0 8px rgba(0,153,204,0);  }
+      100% { box-shadow: 0 0 0 0 rgba(0,153,204,0);  }
     }
     #${ROOT_ID} .card .dot.error  { background: #ef4444; }
     #${ROOT_ID} .card .pill {
@@ -51,7 +64,9 @@
       color: #6b7280;
       background: #f3f4f6;
     }
-    #${ROOT_ID} .card .pill.reading { color: #065f46; background: rgba(34,197,94,0.16); }
+    /* Pills mirror the dot palette: idle=green, reading=blue, error=red. */
+    #${ROOT_ID} .card .pill.idle    { color: #065f46; background: rgba(16,185,129,0.16); }
+    #${ROOT_ID} .card .pill.reading { color: #1e3a8a; background: rgba(0,153,204,0.16); }
     #${ROOT_ID} .card .pill.error   { color: #991b1b; background: rgba(239,68,68,0.16); }
 
     #${ROOT_ID} .card dl {

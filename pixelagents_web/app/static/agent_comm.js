@@ -108,7 +108,24 @@
       width: 8px; height: 8px; border-radius: 50%; background: #9ca3af;
       flex-shrink: 0;
     }
-    #${ROOT_ID} .item .head .dot.reading { background: #34d399; }
+    /* Agent status dots — coherent with the human dots:
+         .idle    = online but not actively working   -> solid green
+         .reading = actively working / tool call open -> pulsing blue
+         .error   = something went wrong              -> red (steady)
+       Humans use .dot.online (pulsing green) for online and bare
+       .dot (steady grey) for offline. Errors stay red across the
+       board. */
+    #${ROOT_ID} .item .head .dot.idle    { background: #10b981; }
+    #${ROOT_ID} .item .head .dot.reading {
+      background: #0099cc;
+      box-shadow: 0 0 0 0 rgba(0,153,204,0.55);
+      animation: aisoc-comm-active-pulse 1.6s ease-out infinite;
+    }
+    @keyframes aisoc-comm-active-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(0,153,204,0.55); }
+      70%  { box-shadow: 0 0 0 6px rgba(0,153,204,0);  }
+      100% { box-shadow: 0 0 0 0 rgba(0,153,204,0);  }
+    }
     #${ROOT_ID} .item .head .dot.error   { background: #ef4444; }
 
     #${ROOT_ID} .item .body-content {
