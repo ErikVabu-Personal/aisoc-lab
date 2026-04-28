@@ -2589,6 +2589,140 @@ def get_all_incident_costs(
 # /api/hitl/questions below, gets back a UUID, and long-polls
 # /api/hitl/wait/{id} until a human answers (or a short timeout). The UI
 # reads /api/hitl/pending and submits via /api/hitl/answer/{id}.
+#
+# Auto-routing: when a question arrives without an explicit target
+# (typically auto-pickup runs where no specific human kicked off the
+# workflow), we route it to an "available" human — online AND not
+# currently the owner of any non-Closed Sentinel incident. If the pool
+# is empty, the question is appended to HITL_QUEUE and drained as
+# humans become available.
+
+# Ordered list of question ids waiting for an available human. Drained
+# by the background _hitl_queue_drain_loop on a 5s tick.
+HITL_QUEUE: list[str] = []
+_HITL_QUEUE_DRAIN_INTERVAL_SEC = 5.0
+
+
+def _hitl_busy_users() -> set[str]:
+    """Configured users who currently own at least one non-Closed
+    Sentinel incident. Source: the cached incidents listing the
+    dashboard already keeps fresh — we don't add another ARM call.
+    Owner string matching is case-insensitive against USERS keys, so
+    Sentinel storing the email in mixed case doesn't break the
+    lookup."""
+    busy: set[str] = set()
+    cached = _INCIDENTS_CACHE.get("payload")
+    if not isinstance(cached, dict):
+        return busy
+    user_emails = {e.lower() for e in USERS.keys()}
+    for inc in (cached.get("incidents") or []):
+        sentinel_status = (inc.get("status") or "").strip().lower()
+        if sentinel_status == "closed":
+            continue
+        owner = (inc.get("owner") or "").strip().lower()
+        if owner in user_emails:
+            busy.add(owner)
+    return busy
+
+
+def _hitl_online_users() -> set[str]:
+    """Configured users with last_seen inside ONLINE_WINDOW_SEC."""
+    now = time.time()
+    cfg = {e.lower() for e in USERS.keys()}
+    return {
+        email for email, last_seen in PRESENCE.items()
+        if email in cfg and (now - last_seen) <= ONLINE_WINDOW_SEC
+    }
+
+
+def _hitl_pick_available() -> str | None:
+    """Pick one available human (online AND not busy). Sorted alpha
+    so the choice is deterministic across calls — fairness can be
+    refined later (e.g., least-recently-routed) but for the demo
+    deterministic > random."""
+    pool = sorted(_hitl_online_users() - _hitl_busy_users())
+    return pool[0] if pool else None
+
+
+def _hitl_route_or_queue(qid: str) -> None:
+    """Try to assign the question to an available human; queue if
+    nobody fits the bill right now. Mutates HITL_QUESTIONS[qid] to
+    record the routing decision."""
+    rec = HITL_QUESTIONS.get(qid)
+    if rec is None:
+        return
+    target = _hitl_pick_available()
+    if target:
+        rec["target"] = target
+        rec["routed_at"] = time.time()
+        rec["routed_method"] = "auto"
+        print(
+            f"[hitl] auto-routed qid={qid} -> {target}",
+            flush=True,
+        )
+        return
+    HITL_QUEUE.append(qid)
+    rec["routed_method"] = "queued"
+    print(
+        f"[hitl] queued qid={qid} (no available humans; queue size={len(HITL_QUEUE)})",
+        flush=True,
+    )
+
+
+async def _hitl_queue_drain_tick() -> None:
+    """Pop entries from HITL_QUEUE and assign them to available
+    humans. Each available human gets at most one question per tick
+    so we don't pile six questions on one analyst the second they
+    come online."""
+    if not HITL_QUEUE:
+        return
+    available = sorted(_hitl_online_users() - _hitl_busy_users())
+    if not available:
+        return
+
+    drained: list[tuple[str, str]] = []
+    keep: list[str] = []
+    while HITL_QUEUE:
+        qid = HITL_QUEUE.pop(0)
+        rec = HITL_QUESTIONS.get(qid)
+        if rec is None:
+            continue  # vanished — drop from queue silently
+        if rec.get("status") != "pending":
+            # Question was answered or cancelled while it sat in the
+            # queue — drop it.
+            continue
+        if not available:
+            # Out of available humans this tick — re-queue this and
+            # any remaining ids for the next pass.
+            keep.append(qid)
+            continue
+        target = available.pop(0)
+        rec["target"] = target
+        rec["routed_at"] = time.time()
+        rec["routed_method"] = "auto-drain"
+        drained.append((qid, target))
+    # Re-queue anything we couldn't place this tick (preserves order).
+    HITL_QUEUE[:0] = keep
+    for qid, t in drained:
+        print(f"[hitl] drained queue: qid={qid} -> {t}", flush=True)
+
+
+async def _hitl_queue_drain_loop() -> None:
+    import asyncio
+
+    while True:
+        try:
+            await _hitl_queue_drain_tick()
+        except Exception as e:
+            print(f"[hitl] drain loop error: {e!r}", flush=True)
+        await asyncio.sleep(_HITL_QUEUE_DRAIN_INTERVAL_SEC)
+
+
+@app.on_event("startup")
+async def _start_hitl_queue_drain() -> None:
+    import asyncio
+
+    asyncio.create_task(_hitl_queue_drain_loop())
 
 
 def _hitl_public(q: dict[str, Any]) -> dict[str, Any]:
@@ -2653,8 +2787,18 @@ async def hitl_create_question(
         "answer": None,
         "answered_at": None,
         "target": target,
+        "routed_method": ("explicit-target" if target else None),
     }
     HITL_QUESTIONS[qid] = record
+
+    # If the agent didn't pick a specific human (auto-pickup runs),
+    # route to the first available analyst — online AND not currently
+    # the owner of any non-Closed Sentinel incident. If none fit, the
+    # question lands in HITL_QUEUE and gets assigned by the drain
+    # loop as humans free up.
+    if not target:
+        _hitl_route_or_queue(qid)
+
     return _hitl_public(record)
 
 
