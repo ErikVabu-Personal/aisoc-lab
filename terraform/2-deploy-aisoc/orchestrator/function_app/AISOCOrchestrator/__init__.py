@@ -708,11 +708,40 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         if mode == "triage_only":
+            # Triage-only runs don't reach the reporter and never
+            # auto-close, so the workflow MUST end with the incident
+            # assigned to a human — leaving it on "Triage Agent"
+            # would strand it in agent-owned land. Apply the same
+            # Pass-4 handoff logic the full pipeline uses at the end.
+            owner_handoff_to: str | None = None
+            if triggering_user:
+                try:
+                    _assign_incident_owner(
+                        runner_url, runner_bearer,
+                        incident_number, incident_id,
+                        triggering_user,
+                    )
+                    owner_handoff_to = triggering_user
+                    print(
+                        f"[orchestrator] triage_only handoff: "
+                        f"incident_number={incident_number} "
+                        f"owner -> {triggering_user!r}",
+                        flush=True,
+                    )
+                except Exception as e:
+                    print(
+                        f"[orchestrator] triage_only handoff to "
+                        f"{triggering_user!r} raised: {e!r}",
+                        flush=True,
+                    )
+
             out = {
                 "ok": True,
                 "mode": mode,
                 "incident_ref": {"incidentNumber": incident_number, "incidentId": incident_id},
                 "triage": {"raw": _clip(triage_out, max_chars)},
+                "triggering_user": triggering_user or None,
+                "owner_handoff_to": owner_handoff_to,
             }
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
