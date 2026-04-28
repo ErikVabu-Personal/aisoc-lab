@@ -104,9 +104,9 @@
     #${ROOT_ID} .sev.low            { color: #166534; background: rgba(34,197,94,0.12);  border: 1px solid rgba(34,197,94,0.4); }
     #${ROOT_ID} .sev.informational  { color: #1e40af; background: rgba(0,153,204,0.12);  border: 1px solid rgba(0,153,204,0.4); }
 
-    /* View-level status pill — combines Sentinel.status with our
-       agentic/human phase tracking. Four classes:
-       new | active-agentic | active-human | closed. */
+    /* Status pill — simple 1:1 with Sentinel statuses
+       (new / active / closed). Owner-aware nuance moved to its own
+       column. */
     #${ROOT_ID} .status {
       display: inline-flex;
       align-items: center;
@@ -127,18 +127,7 @@
     #${ROOT_ID} .status.new {
       color: #991b1b; background: rgba(239,68,68,0.10); border-color: rgba(239,68,68,0.35);
     }
-    #${ROOT_ID} .status.active-agentic {
-      color: #1e40af; background: rgba(0,153,204,0.12); border-color: rgba(0,153,204,0.4);
-    }
-    #${ROOT_ID} .status.active-agentic .dot {
-      animation: aisoc-status-pulse 1.4s ease-out infinite;
-    }
-    @keyframes aisoc-status-pulse {
-      0%   { box-shadow: 0 0 0 0 rgba(0,153,204,0.55); }
-      70%  { box-shadow: 0 0 0 6px rgba(0,153,204,0);    }
-      100% { box-shadow: 0 0 0 0 rgba(0,153,204,0);    }
-    }
-    #${ROOT_ID} .status.active-human {
+    #${ROOT_ID} .status.active {
       color: #92400e; background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.4);
     }
     #${ROOT_ID} .status.closed {
@@ -146,6 +135,50 @@
     }
     #${ROOT_ID} .status.unknown {
       color: #6b7280; background: #f9fafb; border-color: #e5e7eb;
+    }
+
+    /* Owner column — shows the current owner.assignedTo. Visually
+       distinguishes agents (Triage Agent, Reporter Agent, ...) from
+       humans (email-shaped) so the agent-vs-human story is clear at
+       a glance. */
+    #${ROOT_ID} .owner {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #${ROOT_ID} .owner.agent {
+      color: #1e40af;
+    }
+    #${ROOT_ID} .owner.human {
+      color: #1f2937;
+    }
+    #${ROOT_ID} .owner.unassigned {
+      color: #9ca3af;
+      font-style: italic;
+    }
+    #${ROOT_ID} .owner .who-icon {
+      flex-shrink: 0;
+      width: 14px; height: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 4px;
+      letter-spacing: -0.05em;
+    }
+    #${ROOT_ID} .owner.agent .who-icon {
+      color: #1e40af;
+      background: rgba(0,153,204,0.16);
+    }
+    #${ROOT_ID} .owner.human .who-icon {
+      color: #065f46;
+      background: rgba(16,185,129,0.16);
     }
 
     #${ROOT_ID} button.run {
@@ -300,21 +333,35 @@
     return String(sev || '').toLowerCase();
   }
 
-  // Map our 4-way view_status to a readable label. Falls back to the
-  // raw string for any unexpected value (so a server-side label change
-  // doesn't break rendering, just looks slightly less polished).
-  function viewStatusLabel(s) {
-    switch (s) {
-      case 'new':              return 'New';
-      case 'active-agentic':   return 'Active · Agentic Analysis';
-      case 'active-human':     return 'Active · Human Analysis';
-      case 'closed':           return 'Closed';
-      default:                 return s ? s.replace(/-/g, ' ') : 'Unknown';
-    }
+  // Sentinel statuses, 1:1. Status is just one of New / Active /
+  // Closed; the agent-vs-human distinction now lives in the Owner
+  // column (rendered separately).
+  function statusLabel(s) {
+    const k = String(s || '').toLowerCase();
+    if (k === 'new')    return 'New';
+    if (k === 'active') return 'Active';
+    if (k === 'closed') return 'Closed';
+    return s || 'Unknown';
   }
-  function viewStatusClass(s) {
-    return ['new','active-agentic','active-human','closed'].includes(s)
-      ? s : 'unknown';
+  function statusClass(s) {
+    const k = String(s || '').toLowerCase();
+    return ['new', 'active', 'closed'].includes(k) ? k : 'unknown';
+  }
+
+  // Classify the owner string returned by /api/sentinel/incidents
+  // (Sentinel's owner.assignedTo). Heuristic: emails are humans,
+  // strings ending in " Agent" are agents, the rest is unassigned /
+  // unknown.
+  function ownerKind(ownerRaw) {
+    const s = String(ownerRaw || '').trim();
+    if (!s) return 'unassigned';
+    if (s.includes('@')) return 'human';
+    if (/agent\b/i.test(s)) return 'agent';
+    return 'human';  // safest bet — show as human-attributable text
+  }
+  function ownerLabel(ownerRaw) {
+    const s = String(ownerRaw || '').trim();
+    return s || 'Unassigned';
   }
 
   function isRunning(incidentNumber) {
@@ -396,7 +443,8 @@
         + '<th style="width:60px;">#</th>'
         + '<th>Title</th>'
         + '<th style="width:110px;">Severity</th>'
-        + '<th style="width:170px;">Status</th>'
+        + '<th style="width:90px;">Status</th>'
+        + '<th style="width:200px;">Owner</th>'
         + '<th class="cost" style="width:120px;">Cost</th>'
         + '<th style="width:90px;">Runs</th>'
         + '<th style="width:130px;"></th>'
@@ -423,24 +471,29 @@
         body += `</td>`;
         body += `<td class="title">${escapeHtml(inc.title || '')}</td>`;
         body += `<td><span class="sev ${severityClass(inc.severity)}">${escapeHtml(inc.severity || '?')}</span></td>`;
-        // Prefer the server-provided view_status (combines Sentinel
-        // status with our agentic/human phase tracking). Fall back to
-        // a sensible default derived from the raw Sentinel status if
-        // the field isn't present (e.g. running against an older
-        // server build).
+        // Status pill — straight Sentinel status (New / Active /
+        // Closed). Agent-vs-human nuance lives in the Owner column
+        // below.
         {
-          let vs = inc.view_status;
-          if (!vs) {
-            const raw = String(inc.status || '').toLowerCase();
-            vs = raw === 'new' ? 'new'
-               : raw === 'closed' ? 'closed'
-               : raw === 'active' ? 'active-human'
-               : 'unknown';
-          }
-          const cls = viewStatusClass(vs);
-          const label = viewStatusLabel(vs);
-          body += `<td><span class="status ${cls}">`
-                + `<span class="dot"></span>${escapeHtml(label)}`
+          const sCls = statusClass(inc.status);
+          const sLabel = statusLabel(inc.status);
+          body += `<td><span class="status ${sCls}">`
+                + `<span class="dot"></span>${escapeHtml(sLabel)}`
+                + `</span></td>`;
+        }
+        // Owner column — colour + glyph distinguishes humans from
+        // agents at a glance. Empty owner shows as muted "Unassigned".
+        {
+          const kind = ownerKind(inc.owner);
+          const label = ownerLabel(inc.owner);
+          const icon = kind === 'agent' ? 'AI'
+                     : kind === 'human' ? '👤'
+                     : '';
+          const iconHtml = icon
+            ? `<span class="who-icon">${escapeHtml(icon)}</span>`
+            : '';
+          body += `<td><span class="owner ${kind}" title="${escapeHtml(label)}">`
+                + `${iconHtml}${escapeHtml(label)}`
                 + `</span></td>`;
         }
         body += `<td class="cost">${eur > 0 ? fmtEur(eur) : '—'}</td>`;
@@ -472,7 +525,7 @@
         // Expanded sub-row: list of runs with click-to-show details.
         if (isExpanded) {
           const list = runsDetail[String(num)] || [];
-          body += '<tr class="runs-row"><td colspan="7">';
+          body += '<tr class="runs-row"><td colspan="8">';
           if (!list.length) {
             body += '<div class="runs-empty">No runs yet.</div>';
           } else {
