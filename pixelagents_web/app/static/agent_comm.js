@@ -421,7 +421,26 @@
     // or a bare email string (legacy callers that just had a peer).
     const peer = (userRec && typeof userRec === 'object') ? userRec.email : userRec;
     const isOnline = !!(userRec && userRec.online);
+    const isSelf = !!(userRec && userRec.is_self);
     if (!peer) return '';
+
+    // Self gets a flat, non-clickable row — no toggle, no thread,
+    // no compose. The pulsing green dot makes it visually
+    // consistent with the other online users; the "(you)" suffix
+    // avoids any "wait, can I DM myself?" confusion.
+    if (isSelf) {
+      return `
+        <div class="item">
+          <div class="head" style="cursor: default;">
+            <span class="dot online" title="You"></span>
+            <span class="name email" title="${escapeHtml(peer)}">`
+            + `${escapeHtml(peer)} `
+            + `<em style="font-style:italic;opacity:0.6;font-weight:500;">(you)</em>`
+            + `</span>
+          </div>
+        </div>`;
+    }
+
     const id = `dm-${peer}`;
     const expanded = STATE.expanded.has(id);
     const draft = STATE.drafts.dm[peer] || '';

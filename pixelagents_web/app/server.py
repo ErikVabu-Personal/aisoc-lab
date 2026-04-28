@@ -2959,13 +2959,25 @@ def api_sessions_online(
     now = time.time()
     users: list[Dict[str, Any]] = []
     for email in USERS.keys():
-        if email == me:
-            continue
+        is_self = (email == me)
         last_seen = PRESENCE.get(email)
+        if is_self:
+            # Caller is by definition online (their request just got
+            # us here). Show them at the top of the list with a
+            # marker so the UI can render the row distinctively.
+            users.append({
+                "email": email,
+                "online": True,
+                "is_self": True,
+                "last_seen": now,
+                "ago_sec": 0,
+            })
+            continue
         if last_seen is None:
             users.append({
                 "email": email,
                 "online": False,
+                "is_self": False,
                 "last_seen": None,
                 "ago_sec": None,
             })
@@ -2974,10 +2986,15 @@ def api_sessions_online(
         users.append({
             "email": email,
             "online": ago <= ONLINE_WINDOW_SEC,
+            "is_self": False,
             "last_seen": last_seen,
             "ago_sec": int(ago),
         })
-    users.sort(key=lambda u: (not u["online"], u["email"]))  # online first, then alpha
+    # Sort: self first, then online, then offline; alpha within each.
+    users.sort(key=lambda u: (
+        0 if u.get("is_self") else (1 if u["online"] else 2),
+        u["email"],
+    ))
     return {
         "users": users,
         "me": me,
