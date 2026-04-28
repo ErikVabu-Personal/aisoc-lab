@@ -1032,6 +1032,147 @@ async def _start_auto_pickup() -> None:
     asyncio.create_task(_auto_pickup_loop())
 
 
+# ── SOC Manager periodic review ──────────────────────────────────────
+# Default interval: 1 hour. Set SOC_MANAGER_REVIEW_INTERVAL_SEC to 0
+# to disable the loop entirely (manual /api/soc_manager/review still
+# works). Keep this conservative — every tick spends Foundry tokens.
+SOC_MANAGER_REVIEW_INTERVAL_SEC = float(os.getenv("SOC_MANAGER_REVIEW_INTERVAL_SEC", "3600"))
+# Skip the review when there are fewer than this many runs to look at.
+# A periodic review needs SOMETHING to look at, otherwise the SOC
+# Manager has nothing useful to say.
+SOC_MANAGER_REVIEW_MIN_RUNS = int(os.getenv("SOC_MANAGER_REVIEW_MIN_RUNS", "3"))
+
+
+def _build_soc_manager_review_summary(max_runs: int = 20) -> str:
+    """Build a text summary of recent workflow runs for the SOC
+    Manager to review. Returns empty string when there's nothing
+    meaningful to chew on (no runs yet, or all runs are too thin to
+    learn anything from)."""
+
+    flat: list[tuple[float, str, dict[str, Any]]] = []
+    for inc_num_str, runs in WORKFLOW_RUNS.items():
+        for r in runs or []:
+            ts = r.get("started_at") or 0
+            flat.append((ts, str(inc_num_str), r))
+    if len(flat) < SOC_MANAGER_REVIEW_MIN_RUNS:
+        return ""
+    flat.sort(key=lambda t: t[0], reverse=True)
+
+    lines: list[str] = []
+    for _, inc_num, r in flat[:max_runs]:
+        line = f"- Incident #{inc_num}: {r.get('status')} (mode={r.get('mode')!r}"
+        dur = None
+        if r.get("started_at") and r.get("ended_at"):
+            dur = max(0, int(r["ended_at"] - r["started_at"]))
+        if dur is not None:
+            line += f", duration={dur}s"
+        if r.get("error"):
+            line += f", error={str(r['error'])[:200]!r}"
+        if r.get("summary"):
+            line += f", summary={str(r['summary'])[:200]!r}"
+        line += ")"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def _soc_manager_review_tick_blocking() -> dict[str, Any]:
+    """One review tick. Sync because requests.post is sync; called
+    from the async loop via asyncio.to_thread."""
+
+    summary = _build_soc_manager_review_summary()
+    if not summary:
+        return {"skipped": "not enough runs to review"}
+
+    project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
+    if not project_endpoint:
+        return {"error": "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT not set"}
+
+    try:
+        from azure.identity import DefaultAzureCredential
+        token = DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
+    except Exception as e:
+        return {"error": f"could not get bearer: {e!r}"}
+
+    user_text = (
+        "You are doing a periodic SOC review. Below are the most recent "
+        "incident triage / investigation / reporting outcomes from this "
+        "lab. Look for patterns: false positives, missed nuances, "
+        "recurring confusion. If you spot something the common preamble "
+        "or a specific agent's instructions could fix, propose the change "
+        "via your tools. Do NOT propose for the sake of proposing — if "
+        "everything looks fine, output a single line saying so and stop.\n\n"
+        f"RECENT_RUNS:\n{summary}\n"
+    )
+
+    import requests as _requests
+
+    url = project_endpoint.rstrip("/") + "/openai/v1/responses"
+    payload = {
+        "input": user_text,
+        "agent_reference": {"name": "soc-manager", "type": "agent_reference"},
+    }
+    try:
+        r = _requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=240,
+        )
+    except Exception as e:
+        print(f"[soc-manager] review invoke raised: {e!r}", flush=True)
+        return {"error": f"invoke raised: {e!r}"}
+
+    if r.status_code >= 400:
+        print(
+            f"[soc-manager] review invoke failed: {r.status_code} {r.text[:500]}",
+            flush=True,
+        )
+        return {"error": f"{r.status_code}: {r.text[:500]}"}
+
+    print(f"[soc-manager] review tick completed; runs_summarized={summary.count(chr(10))+1}", flush=True)
+    return {"ok": True, "runs_summarized": summary.count("\n") + 1}
+
+
+async def _soc_manager_review_loop() -> None:
+    import asyncio as _asyncio
+
+    while True:
+        try:
+            await _asyncio.to_thread(_soc_manager_review_tick_blocking)
+        except Exception as e:
+            print(f"[soc-manager] review loop error: {e!r}", flush=True)
+        await _asyncio.sleep(SOC_MANAGER_REVIEW_INTERVAL_SEC)
+
+
+@app.on_event("startup")
+async def _start_soc_manager_review() -> None:
+    import asyncio as _asyncio
+
+    if SOC_MANAGER_REVIEW_INTERVAL_SEC <= 0:
+        print("[soc-manager] periodic review disabled (interval <= 0)", flush=True)
+        return
+    _asyncio.create_task(_soc_manager_review_loop())
+
+
+@app.post("/api/soc_manager/review")
+async def api_soc_manager_review(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Manually trigger a SOC Manager review tick. Useful for the
+    demo (the periodic interval defaults to an hour) and for
+    operators who want to nudge the agent after a notable incident
+    without waiting for the next scheduled tick."""
+    _require_auth(request, x_pixelagents_token)
+    import asyncio as _asyncio
+    result = await _asyncio.to_thread(_soc_manager_review_tick_blocking)
+    return {"ok": True, "result": result}
+
+
 def _auto_pickup_public_state() -> dict[str, Any]:
     """Snapshot suitable for the JSON API (sets aren't JSON-serializable)."""
     return {

@@ -572,11 +572,73 @@ def _handle_incident_assign(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
 
+def _handle_create_rule(req: func.HttpRequest) -> func.HttpResponse:
+    """Create a Sentinel analytic rule via the runner. Called by
+    pixelagents_web's _apply_detection_rule_change after a human
+    approves a detection-rule proposal in the Changes queue.
+
+    Body is the rule definition (displayName, query, severity,
+    tactics, techniques, ...). We just thread it through the
+    runner's existing create_analytic_rule tool — same path the
+    detection-engineer agent used to take directly before rules
+    moved behind the approval queue."""
+
+    body = _json(req)
+    if not isinstance(body, dict) or not body.get("displayName") or not body.get("query"):
+        return func.HttpResponse(
+            "Body must be a rule definition with at least displayName + query",
+            status_code=400,
+        )
+
+    runner_url = os.environ.get("AISOC_RUNNER_URL", "")
+    bearer_secret = os.environ.get("AISOC_RUNNER_BEARER_SECRET_NAME", "aisoc-runner-key")
+    kv_uri = os.environ.get("KEYVAULT_URI", "")
+    if not runner_url:
+        return func.HttpResponse("Missing RUNNER_URL", status_code=500)
+    if not kv_uri:
+        return func.HttpResponse("Missing KEYVAULT_URI", status_code=500)
+
+    try:
+        runner_bearer = get_kv_secret(kv_uri, bearer_secret)
+    except Exception as e:
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": f"runner bearer fetch failed: {e!r}"}),
+            status_code=500,
+            mimetype="application/json",
+        )
+
+    try:
+        result = _runner_post(
+            runner_url,
+            runner_bearer,
+            {"tool_name": "create_analytic_rule", "arguments": body},
+            agent="detection-engineer",
+        )
+    except Exception as e:
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": f"runner create_analytic_rule raised: {e!r}"}),
+            status_code=502,
+            mimetype="application/json",
+        )
+
+    return func.HttpResponse(
+        json.dumps({
+            "ok": True,
+            "displayName": body.get("displayName"),
+            "runner_result": result.get("result") if isinstance(result, dict) else None,
+        }),
+        mimetype="application/json",
+    )
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     route = req.route_params.get("route") or ""
 
     if route == "incident/assign":
         return _handle_incident_assign(req)
+
+    if route == "sentinel/create-rule":
+        return _handle_create_rule(req)
 
     if route not in ("incident", "incident/pipeline"):
         return func.HttpResponse("Unknown route", status_code=404)

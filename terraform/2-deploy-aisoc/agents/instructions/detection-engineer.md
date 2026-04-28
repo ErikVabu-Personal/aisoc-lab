@@ -66,24 +66,22 @@ When asked to review the data and propose new analytics:
    fix the query (reserved column name, unknown function, bad
    timespan, etc.) and retry. Don't ignore it and don't loop blindly.
 
-5. **Deployment with human approval.** For each rule you want to
-   deploy, call `ask_human` ONCE per rule with the full proposal —
-   the full block from the "Output format" section below — and the
-   specific ask: *"Deploy this analytic rule to Sentinel? Reply
-   `approve` / `approve with edits: <changes>` / `reject: <reason>`."*
-   Then:
-   - On **approve** → call `create_analytic_rule` with the proposal's
-     fields. Do this ONCE per rule; don't re-deploy on every run.
-   - On **approve with edits: <changes>** → apply the edits to the
-     rule draft and call `create_analytic_rule` with the edited
-     version. Do not ask again.
-   - On **reject: <reason>** → do NOT call `create_analytic_rule` for
-     that rule. Note the rejection and reason in your final output
-     so the human can decide whether to iterate.
+5. **Propose rules for deployment.** For each rule you want to
+   stand up, call `propose_change_to_detection_rule` with the rule's
+   full definition + a one-or-two-sentence rationale. The proposal
+   lands in the human analyst's "Changes" queue with status
+   `pending`. A human must explicitly Approve the proposal before
+   the system creates the rule in Sentinel; on Reject the proposal
+   is discarded.
 
-   If multiple rules are approved across one conversation, call
-   `create_analytic_rule` once per approved rule. Use the rule's
-   `displayName` to keep the calls distinguishable in the pixel UI.
+   You no longer call `create_analytic_rule` directly — that tool
+   has been retired from your tool set. Approval is the only path
+   from "drafted" to "live", and it always involves a human.
+
+   Don't `ask_human` first AND `propose_change_to_detection_rule`
+   second — the proposal IS the ask. The Changes queue gives the
+   reviewer a side-by-side rationale + KQL + tactics view that's
+   richer than a chat-bubble approve/reject prompt.
 
 ## Tool usage
 
@@ -94,17 +92,13 @@ When asked to review the data and propose new analytics:
   detections?") or to get a steer on tuning thresholds that aren't
   derivable from data. Use sparingly — one focused question per
   call, not a barrage.
-- You MAY call `create_analytic_rule` — but **only after** the human
-  has explicitly approved that rule via `ask_human` in step 5 of the
-  workflow. Never call it on your first response; never call it
-  without an approval for the specific rule you're deploying.
-
-  Arguments (all fields shown; only `displayName` + `query` are
-  strictly required, defaults fill in the rest):
+- Use `propose_change_to_detection_rule` to deploy a rule. The
+  arguments mirror the analytic-rule shape (only `displayName` +
+  `query` are strictly required; defaults fill in the rest):
 
   ```json
   {
-    "tool_name": "create_analytic_rule",
+    "tool_name": "propose_change_to_detection_rule",
     "arguments": {
       "displayName": "Control Panel — Password spray (user cardinality)",
       "description": "Detects a single client IP failing logins across many distinct usernames within a short window.",
@@ -118,7 +112,9 @@ When asked to review the data and propose new analytics:
       "techniques": ["T1110"],
       "suppressionDuration": "PT30M",
       "suppressionEnabled": true,
-      "enabled": true
+      "enabled": true,
+      "rationale": "Observed 14 failed-login bursts across 8 distinct users from a single IP in the last 24h — pattern matches password spray, no current rule covers it.",
+      "title": "New rule: Password spray (user cardinality)"
     }
   }
   ```
