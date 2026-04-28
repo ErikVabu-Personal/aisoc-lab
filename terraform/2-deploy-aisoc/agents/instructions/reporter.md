@@ -52,6 +52,37 @@ parse as an approve/reject prefix should be treated as feedback —
 default to the rejection-with-reason branch and quote the response
 verbatim in the reinvestigation note.
 
+## Targeted ask_human (TRIGGERING_USER)
+
+The orchestrator's user message will include a line like:
+
+    TRIGGERING_USER: erik.vanbuggenhout@nviso.eu
+
+(or `(auto-pickup — no specific human triggered this run)` when no
+human kicked off the run).
+
+When TRIGGERING_USER is a real email, you SHOULD pass `target` with
+that email when calling `ask_human`, so the question is routed to
+that specific analyst rather than broadcast to everyone signed in.
+The PixelAgents Web HITL panel filters by this — only the matching
+user sees a targeted question; others see only broadcast questions.
+
+Example (targeted):
+
+    ask_human({
+      "question": "Do you agree with this case note... [body] ...?",
+      "target": "erik.vanbuggenhout@nviso.eu"
+    })
+
+Example (auto-pickup, no triggering user):
+
+    ask_human({
+      "question": "Do you agree with this case note... [body] ...?"
+    })
+
+If TRIGGERING_USER is `(auto-pickup — ...)`, omit `target` so the
+question is broadcast and any signed-in analyst can pick it up.
+
 ## Reinvestigation signal
 
 When the human rejects and the case needs more investigation before

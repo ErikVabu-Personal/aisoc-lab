@@ -424,6 +424,15 @@ def tools_execute(
                     detail="Missing arguments.question (string)",
                 )
 
+            # Optional targeting — agents can address a specific human
+            # (typically the one who triggered the workflow) by passing
+            # `target` with their email. The HITL panel filters by
+            # this; unset/empty = broadcast (legacy behavior).
+            target = args.get("target")
+            if not isinstance(target, str):
+                target = ""
+            target = target.strip().lower()
+
             # PIXELAGENTS_URL is the events endpoint (e.g.
             # https://<pixelagents>/events). Strip the trailing /events
             # to get the base so we can hit /api/hitl/... on the same host.
@@ -452,7 +461,11 @@ def tools_execute(
                     "x-pixelagents-token": pa_token,
                     "Content-Type": "application/json",
                 },
-                json={"agent": agent or "unknown", "question": question.strip()},
+                json={
+                    "agent": agent or "unknown",
+                    "question": question.strip(),
+                    "target": target,
+                },
                 timeout=15,
             )
             if submit.status_code >= 400:

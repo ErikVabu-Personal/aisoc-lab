@@ -2303,6 +2303,7 @@ async def _orchestrate_one(
     writeback: bool,
     *,
     trigger: str = "manual",
+    triggering_user: str | None = None,
 ) -> dict[str, Any]:
     """Run the orchestrator for a specific incident.
 
@@ -2358,6 +2359,14 @@ async def _orchestrate_one(
                 # respect this — when False, every run hands back to
                 # the human analyst regardless of reporter confidence.
                 "auto_close": auto_close_flag,
+                # Identity of the human who kicked off this run (None
+                # for auto-pickup). The orchestrator uses this two
+                # ways: (a) injects it into the reporter's user_text
+                # so ask_human can target the same human; (b) on
+                # handoff (success without close OR failure), assigns
+                # the Sentinel incident's owner to this user instead
+                # of leaving it on the last agent.
+                "triggering_user": triggering_user or "",
             },
             timeout=600,
         )
@@ -2425,6 +2434,12 @@ async def orchestrate_incident(
 
     _require_auth(req, x_pixelagents_token)
 
+    # Resolve the calling human's identity (if cookie auth). Token-only
+    # callers — there shouldn't be any on this endpoint, but be
+    # defensive — get None and the orchestrator treats the run like an
+    # auto-pickup (no human attribution on handoff).
+    triggering_user = _session_user(req)
+
     try:
         body = await req.json()
     except Exception:
@@ -2436,7 +2451,13 @@ async def orchestrate_incident(
     writeback = body["writeback"] if "writeback" in body else True
 
     try:
-        return await _orchestrate_one(incident_number, mode, bool(writeback))
+        return await _orchestrate_one(
+            incident_number,
+            mode,
+            bool(writeback),
+            trigger="manual",
+            triggering_user=triggering_user,
+        )
     except OrchestratorError as e:
         if e.status is not None:
             raise HTTPException(
@@ -2582,6 +2603,10 @@ def _hitl_public(q: dict[str, Any]) -> dict[str, Any]:
         "status": q.get("status"),
         "answer": q.get("answer"),
         "answered_at": q.get("answered_at"),
+        # Empty string / None = broadcast (anyone with the HITL panel
+        # open sees it). A specific email = targeted question; only
+        # that user sees it in /api/hitl/pending.
+        "target": q.get("target") or "",
     }
 
 
@@ -2608,6 +2633,15 @@ async def hitl_create_question(
     if not isinstance(question, str) or not question.strip():
         raise HTTPException(status_code=400, detail="Missing question")
 
+    # Optional targeting — when set to a specific email, only that
+    # user sees the question in their HITL panel. Unset / empty =
+    # broadcast (anyone with the panel open sees it; current behavior).
+    target = body.get("target")
+    if isinstance(target, str):
+        target = target.strip().lower()
+    else:
+        target = ""
+
     qid = str(_uuid.uuid4())
     record = {
         "id": qid,
@@ -2618,6 +2652,7 @@ async def hitl_create_question(
         "status": "pending",
         "answer": None,
         "answered_at": None,
+        "target": target,
     }
     HITL_QUESTIONS[qid] = record
     return _hitl_public(record)
@@ -2628,12 +2663,26 @@ def hitl_list_pending(
     request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
-    """UI reads this to show currently-pending questions."""
+    """UI reads this to show currently-pending questions.
+
+    Filters by `target`: questions with no target (broadcast) are
+    visible to everyone; questions with a target are only visible to
+    that specific user. Token-only callers (no session cookie) only
+    see broadcast questions — they have no identity to match against.
+    """
 
     _require_auth(request, x_pixelagents_token)
-    pending = [
-        _hitl_public(q) for q in HITL_QUESTIONS.values() if q.get("status") == "pending"
-    ]
+    me = (_session_user(request) or "").strip().lower()
+
+    def _visible(q: dict[str, Any]) -> bool:
+        if q.get("status") != "pending":
+            return False
+        target = (q.get("target") or "").strip().lower()
+        if not target:
+            return True  # broadcast
+        return target == me
+
+    pending = [_hitl_public(q) for q in HITL_QUESTIONS.values() if _visible(q)]
     pending.sort(key=lambda q: q.get("asked_at") or 0)
     return {"questions": pending, "ts": time.time()}
 

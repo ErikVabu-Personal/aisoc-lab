@@ -517,6 +517,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     else:
         auto_close = os.environ.get("AISOC_AUTO_CLOSE", "0") == "1"
 
+    # Identity of the human who triggered this run (None / empty for
+    # auto-pickup). Used two ways downstream:
+    #   1. Injected into the reporter's user_text as TRIGGERING_USER
+    #      so ask_human can target this analyst by email.
+    #   2. After the run, on handoff to a human (success without
+    #      auto-close OR failure), the Sentinel incident's owner is
+    #      reassigned to this user instead of staying on the last
+    #      agent. Auto-pickup runs leave the owner on whoever the
+    #      orchestrator last set it to (typically Reporter Agent).
+    triggering_user = (body.get("triggering_user") or "").strip()
+
     # A single identifier so cost records + future correlation can group
     # every agent invocation inside this orchestrator run.
     import uuid as _uuid
@@ -680,6 +691,25 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             + "\n\n"
         )
 
+        # When a human kicked off this run (manual trigger from the
+        # dashboard), tell the reporter who it is so ask_human can
+        # target them by email. Auto-pickup runs leave this empty and
+        # the reporter falls back to broadcast (legacy behaviour).
+        if triggering_user:
+            triggering_user_block = (
+                f"TRIGGERING_USER: {triggering_user}\n"
+                "This is the human analyst who triggered this run from the "
+                "dashboard. When you call `ask_human`, pass `target` with "
+                "this email so the question is routed to them specifically "
+                "rather than broadcast to every signed-in analyst.\n\n"
+            )
+        else:
+            triggering_user_block = (
+                "TRIGGERING_USER: (auto-pickup — no specific human triggered this run)\n"
+                "Use `ask_human` without a `target` argument so the question "
+                "is broadcast to every signed-in analyst.\n\n"
+            )
+
         def _invoke_reporter(investigator_output: str) -> tuple[str, dict]:
             return _invoke_agent(
                 project_endpoint,
@@ -690,6 +720,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     "your instructions, call ask_human to validate before writing "
                     "anything back via add_incident_comment / update_incident.\n\n"
                     + auto_close_block
+                    + triggering_user_block
                     + f"INCIDENT_REF:\n{incident_json}\n\n"
                     + f"TRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}\n\n"
                     + f"INVESTIGATOR_OUTPUT:\n{_clip(investigator_output, 8000)}"
@@ -849,6 +880,38 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 flush=True,
             )
 
+        # Pass 4 — Sentinel owner attribution on handoff. If the run
+        # didn't auto-close AND a human triggered it, reassign the
+        # incident owner from "Reporter Agent" to that human's email.
+        # That puts the case in their queue in Sentinel, matching the
+        # UI's "Active · Human Analysis" state.
+        #
+        # Auto-pickup runs (no triggering_user) leave the owner on
+        # whoever the orchestrator last set it to (typically Reporter
+        # Agent). Per Erik's design: "auto-pickup should follow the
+        # actual state — the current agent or human assigned to it."
+        owner_handoff_to: str | None = None
+        if not did_close and triggering_user:
+            try:
+                _assign_incident_owner(
+                    runner_url, runner_bearer,
+                    incident_number, incident_id,
+                    triggering_user,
+                )
+                owner_handoff_to = triggering_user
+                print(
+                    f"[orchestrator] handoff: incident_number={incident_number} "
+                    f"owner -> {triggering_user!r}",
+                    flush=True,
+                )
+            except Exception as e:
+                # Best-effort — don't fail the whole pipeline over a
+                # final ownership write that didn't take.
+                print(
+                    f"[orchestrator] handoff to {triggering_user!r} raised: {e!r}",
+                    flush=True,
+                )
+
         def _maybe_json(s: str) -> Any:
             s = (s or "").strip()
             if s.startswith("{"):
@@ -872,6 +935,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             "close_rationale": close_rationale if did_close else None,
             "close_skipped_reason": close_skip_reason,
             "auto_close_mode": auto_close,
+            "triggering_user": triggering_user or None,
+            "owner_handoff_to": owner_handoff_to,
             "wrote_comment": wrote_comment,
             # Number of reinvestigation loops the reporter triggered
             # (0 = the first reporter run was approved or wrote directly;
