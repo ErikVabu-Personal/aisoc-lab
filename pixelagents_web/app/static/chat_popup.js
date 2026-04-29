@@ -169,11 +169,25 @@
   let composeError = '';
 
   // ── DOM scaffold ──────────────────────────────────────────────────
-  const headerEl = document.createElement('header');
-  headerEl.className = 'popup-header';
-  const subLabel = CFG.kind === 'agent' ? 'agent' : 'human';
-  headerEl.innerHTML = `<span>${escapeHtml(CFG.header)}</span><span class="sub">${escapeHtml(subLabel)}</span>`;
-  document.body.appendChild(headerEl);
+  // The dashboard's draggable in-page panel embeds this page in an
+  // iframe and renders its own header (the drag handle). When that
+  // wrapper passes `?noheader=1` we suppress the popup's own header
+  // to avoid the title showing up twice. Standalone /chat-popup
+  // visits keep the header as before.
+  const noHeader = (() => {
+    try {
+      return new URLSearchParams(window.location.search).get('noheader') === '1';
+    } catch (_) {
+      return false;
+    }
+  })();
+  if (!noHeader) {
+    const headerEl = document.createElement('header');
+    headerEl.className = 'popup-header';
+    const subLabel = CFG.kind === 'agent' ? 'agent' : 'human';
+    headerEl.innerHTML = `<span>${escapeHtml(CFG.header)}</span><span class="sub">${escapeHtml(subLabel)}</span>`;
+    document.body.appendChild(headerEl);
+  }
 
   const messagesEl = document.createElement('div');
   messagesEl.className = 'messages';

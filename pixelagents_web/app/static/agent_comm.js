@@ -1061,7 +1061,10 @@
       return existing;
     }
 
-    const params = new URLSearchParams({ kind, id });
+    // noheader=1 tells chat_popup.js to suppress its own header — the
+    // panel's draggable outer header already shows the title, so we
+    // don't want it twice.
+    const params = new URLSearchParams({ kind, id, noheader: '1' });
     const url = `/chat-popup?${params.toString()}`;
 
     const panel = document.createElement('div');
