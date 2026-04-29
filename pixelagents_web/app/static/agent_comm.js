@@ -1268,11 +1268,33 @@
     // deterministic window name (kind + id) so re-clicking the same
     // row brings the existing popup to focus rather than spawning
     // duplicates.
+    //
+    // The `popup=yes` feature plus the explicit no-chrome flags coax
+    // Chromium-based browsers into opening a minimal-chrome window
+    // (no URL bar, no menu, no status bar). Modern browsers honor
+    // most of these only when at least one geometry feature is
+    // present, which is why width/height come first. Some browsers
+    // (Safari) ignore the chrome flags and always show their own
+    // minimal popup; that's fine — the goal is to drop the URL bar
+    // wherever the browser allows it.
     function openChatPopup(kind, id) {
       const params = new URLSearchParams({ kind, id });
       const url = `/chat-popup?${params.toString()}`;
       const winName = `aisoc-chat-${kind}-${id}`;
-      const features = 'width=440,height=640,resizable=yes,scrollbars=yes';
+      const features = [
+        'popup=yes',
+        'width=440',
+        'height=640',
+        'resizable=yes',
+        'scrollbars=yes',
+        'location=no',
+        'toolbar=no',
+        'menubar=no',
+        'status=no',
+        'titlebar=no',
+        'noopener=no',     // we want the popup to be able to focus()
+        'noreferrer=no',
+      ].join(',');
       const w = window.open(url, winName, features);
       if (w) w.focus();
     }
