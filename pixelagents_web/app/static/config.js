@@ -452,17 +452,26 @@
     const saving = modelSaving.has(slug);
     const mStatus = modelStatus[slug];
     if (availableDeployments.length || currentModel) {
-      // Build the select. If the current model isn't in the catalog
-      // (unusual — happens when an agent points at a deployment that
-      // was never declared in tfvars), surface it as a disabled option
-      // so the user still sees what's bound today.
+      // Build the select.
+      // - If the catalog includes the bound model, render it normally.
+      // - If the catalog is non-empty but the bound model isn't in it
+      //   (rare — an agent points at a deployment that was removed
+      //   from tfvars), surface the bound model as a disabled "(not
+      //   in catalog)" option so the operator sees the truth.
+      // - If the catalog is empty entirely (Terraform hasn't re-applied
+      //   yet, so AISOC_AVAILABLE_MODEL_DEPLOYMENTS is absent), render
+      //   just the bound model without the scary "(not in catalog)"
+      //   label — there's no catalog to be "not in".
       const options = (availableDeployments || []).slice();
       const haveCurrent = options.some((d) => d.name === currentModel);
       if (!haveCurrent && currentModel) {
+        const empty = options.length === 0;
         options.unshift({
           name: currentModel,
-          label: `${currentModel} (not in catalog)`,
-          description: '',
+          label: empty ? currentModel : `${currentModel} (not in catalog)`,
+          description: empty
+            ? 'Catalog not available yet — re-apply Phase 3 Terraform to populate the dropdown.'
+            : '',
         });
       }
       html += '<div class="model-row">';

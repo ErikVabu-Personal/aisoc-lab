@@ -171,13 +171,42 @@ resource "azurerm_container_app" "pixelagents" {
       }
 
       # Catalog of Foundry model deployments the SOC manager can
-      # pick from in /config (the per-agent model dropdown). Phase 2
-      # builds the JSON list from the primary deployment + every entry
-      # in foundry_additional_model_deployments and exports it via the
-      # foundry_available_deployments_json remote-state output.
+      # pick from in /config (the per-agent model dropdown).
+      #
+      # Preferred source: Phase 2's foundry_available_deployments_json
+      # output — it includes the primary deployment + every entry in
+      # foundry_additional_model_deployments.
+      #
+      # Fallback: when that output isn't present yet (Phase 2 hasn't
+      # re-applied since the multi-deployment work landed), build a
+      # single-entry catalog from the long-standing
+      # foundry_model_deployment_name output. That way re-applying
+      # Phase 3 alone is enough to get the primary deployment into the
+      # dropdown — the user only needs to re-apply Phase 2 too if they
+      # want the additional deployments.
       env {
-        name  = "AISOC_AVAILABLE_MODEL_DEPLOYMENTS"
-        value = try(data.terraform_remote_state.aisoc.outputs.foundry_available_deployments_json, "[]")
+        name = "AISOC_AVAILABLE_MODEL_DEPLOYMENTS"
+        value = try(
+          data.terraform_remote_state.aisoc.outputs.foundry_available_deployments_json,
+          jsonencode([{
+            name        = data.terraform_remote_state.aisoc.outputs.foundry_model_deployment_name
+            model       = data.terraform_remote_state.aisoc.outputs.foundry_model_deployment_name
+            version     = ""
+            label       = data.terraform_remote_state.aisoc.outputs.foundry_model_deployment_name
+            description = "Primary Foundry deployment (re-apply Phase 2 to expose additional models)."
+          }]),
+          "[]"
+        )
+      }
+
+      # Mirror the orchestrator's primary model deployment name onto
+      # PA-Web. Used by _available_model_deployments() as a final
+      # fallback when AISOC_AVAILABLE_MODEL_DEPLOYMENTS is genuinely
+      # empty — keeps the dropdown sensible even on a fresh deploy
+      # where neither output is present yet.
+      env {
+        name  = "AZURE_AI_MODEL_DEPLOYMENT"
+        value = try(data.terraform_remote_state.aisoc.outputs.foundry_model_deployment_name, "")
       }
     }
   }
