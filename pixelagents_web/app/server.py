@@ -208,22 +208,47 @@ def _require_token(x_pixelagents_token: str | None) -> None:
 def _load_users() -> dict[str, str]:
     """Build the demo's user roster.
 
+    Each entry is { "password": str, "roles": list[str] }.
+
     Order of precedence:
 
-    1. AISOC_USERS_JSON env var — JSON object {email: password}. The
-       intended path: Terraform stores this as a Container App secret
-       and wires it through, so adding/removing users is a one-line
-       tfvars change instead of a code change.
-    2. Hardcoded fallback roster — used when AISOC_USERS_JSON is unset
-       or unparseable. Lets the demo boot on first deploy without any
-       config and gives a known-good identity if the env var ever
-       breaks.
+    1. AISOC_USERS_JSON env var — JSON object. Two shapes are accepted:
+         (a) {email: {"password": str, "roles": [...]}}  — preferred.
+         (b) {email: "password"}                         — legacy. Maps
+             to {"password": ..., "roles": []} so old deployments keep
+             booting until the tfvars are migrated.
+       Wired in by Terraform (`pixelagents_users`), encrypted at rest.
+    2. Hardcoded fallback roster — used when the env var is unset or
+       unparseable. erik gets all three roles by default so first-deploy
+       admin access works without tfvars.
 
     Emails are case-folded; passwords are stored verbatim. This is a
     demo-grade store — for anything closer to production, hash the
     passwords (bcrypt / passlib) and gate them on a real identity
     provider.
     """
+
+    def _coerce(record: Any) -> dict[str, Any]:
+        # Accept the legacy "password-as-string" shape transparently.
+        if isinstance(record, str):
+            return {"password": record, "roles": []}
+        if isinstance(record, dict):
+            pw = record.get("password")
+            roles_raw = record.get("roles") or []
+            roles = [
+                str(r).strip().lower()
+                for r in (roles_raw if isinstance(roles_raw, list) else [])
+                if str(r).strip()
+            ]
+            # De-dup while preserving order.
+            seen: set[str] = set()
+            roles_dedup: list[str] = []
+            for r in roles:
+                if r not in seen:
+                    seen.add(r)
+                    roles_dedup.append(r)
+            return {"password": str(pw or ""), "roles": roles_dedup}
+        return {"password": "", "roles": []}
 
     raw = os.getenv("AISOC_USERS_JSON", "").strip()
     if raw:
@@ -232,15 +257,56 @@ def _load_users() -> dict[str, str]:
         except Exception:
             data = None
         if isinstance(data, dict) and data:
-            return {str(k).lower().strip(): str(v) for k, v in data.items()}
+            return {
+                str(k).lower().strip(): _coerce(v)
+                for k, v in data.items()
+            }
 
     return {
-        "erik.vanbuggenhout@nviso.eu": "admin123",
-        "jeroen.laureys@nviso.eu": "saleswarmachine",
+        "erik.vanbuggenhout@nviso.eu": {
+            "password": "admin123",
+            "roles": ["soc-manager", "detection-engineer", "soc-analyst"],
+        },
+        "jeroen.laureys@nviso.eu": {
+            "password": "saleswarmachine",
+            "roles": ["soc-analyst"],
+        },
     }
 
 
-USERS: dict[str, str] = _load_users()
+# Canonical role slugs — keep in sync with the UI labels in
+# config.js / agent_comm.js + the terraform tfvars schema.
+ROLE_SOC_MANAGER = "soc-manager"
+ROLE_DETECTION_ENGINEER = "detection-engineer"
+ROLE_SOC_ANALYST = "soc-analyst"
+ROLES_KNOWN = (ROLE_SOC_MANAGER, ROLE_DETECTION_ENGINEER, ROLE_SOC_ANALYST)
+
+
+USERS: dict[str, dict[str, Any]] = _load_users()
+
+
+def _user_record(email: str) -> dict[str, Any] | None:
+    if not email:
+        return None
+    return USERS.get(email.lower().strip())
+
+
+def _user_roles(email: str) -> list[str]:
+    rec = _user_record(email)
+    return list((rec or {}).get("roles") or [])
+
+
+def _user_has_role(email: str, role: str) -> bool:
+    return role in _user_roles(email)
+
+
+def _users_with_role(role: str) -> list[str]:
+    """Return email addresses of every configured user with the role."""
+    out = []
+    for email, rec in USERS.items():
+        if role in (rec.get("roles") or []):
+            out.append(email)
+    return out
 SESSIONS: dict[str, dict[str, Any]] = {}  # sid -> {"user": str, "created": float}
 SESSION_COOKIE = "aisoc_session"
 SESSION_TTL_SEC = 12 * 3600
@@ -329,6 +395,44 @@ def _require_auth(request: Request, x_pixelagents_token: str | None) -> None:
     if expected and x_pixelagents_token == expected:
         return
     raise HTTPException(status_code=401, detail="Authentication required")
+
+
+def _require_soc_manager(
+    request: Request,
+    x_pixelagents_token: str | None = None,
+    *,
+    allow_token: bool = False,
+) -> str:
+    """Restrict access to users holding the soc-manager role.
+
+    Returns the resolved email on success.
+
+    By default, server-to-server token-only callers are NOT allowed —
+    config endpoints are designed for human admins. Set allow_token=True
+    on endpoints where a backend service legitimately needs to bypass
+    the role check (none today; reserved for future use).
+    """
+    _require_auth(request, x_pixelagents_token)
+    user = _session_user(request)
+    if user is None:
+        if allow_token:
+            return ""
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This endpoint is for SOC managers only and requires a "
+                "logged-in browser session — token-only access is denied."
+            ),
+        )
+    if not _user_has_role(user, ROLE_SOC_MANAGER):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Access denied. The /config area and its underlying APIs "
+                "are restricted to users with the 'soc-manager' role."
+            ),
+        )
+    return user
 
 
 # Login page — pure HTML, no JS framework. NVISO Cruiseways palette
@@ -477,7 +581,8 @@ def login_submit(
     password: str = Form(...),
 ) -> Response:
     user_key = username.lower().strip()
-    expected_pw = USERS.get(user_key)
+    rec = USERS.get(user_key) or {}
+    expected_pw = rec.get("password") if isinstance(rec, dict) else None
     if not expected_pw or expected_pw != password:
         err = '<div class="err">Invalid email or password</div>'
         return HTMLResponse(
@@ -762,6 +867,34 @@ def config_view(request: Request) -> Response:
     user = _session_user(request)
     if user is None:
         return RedirectResponse(url="/login", status_code=303)
+    # /config is restricted to soc-managers — instead of bouncing
+    # users to a 403 page, show a friendly explainer inside the
+    # normal app shell so the nav still works.
+    if not _user_has_role(user, ROLE_SOC_MANAGER):
+        denied = (
+            '<h1>SOC manager access only</h1>'
+            '<p class="subtitle">'
+            '  This area lets the SOC manager tune the agents, manage users, '
+            '  and review live telemetry. Your account does not currently '
+            '  hold the <code>soc-manager</code> role, so the configuration '
+            '  surface is hidden.'
+            '</p>'
+            '<p class="subtitle">'
+            "  If you think you should have access, ask whoever manages your "
+            "  team's roster to add the role to your account, or use the "
+            '  Live View / Dashboard nav links above to keep working.'
+            '</p>'
+        )
+        return HTMLResponse(
+            _render_shell(
+                active="config",
+                current_user=user,
+                title="NVISO Cruises · Configuration",
+                body_html=denied,
+                scripts=[],
+            ),
+            status_code=403,
+        )
     body = (
         '<h1>Agentic SOC Configuration</h1>'
         '<p class="subtitle">'
@@ -770,6 +903,7 @@ def config_view(request: Request) -> Response:
         '</p>'
         '<div id="aisoc-auto-pickup-root"></div>'
         '<div id="aisoc-agent-temperature-root"></div>'
+        '<div id="aisoc-user-management-root"></div>'
         '<div id="aisoc-generic-instructions-root"></div>'
         '<div id="aisoc-config-root"></div>'
     )
@@ -1302,7 +1436,10 @@ async def api_agent_temperature_set(
     req: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
-    _require_auth(req, x_pixelagents_token)
+    # Soc-manager only — write side of the slider lives in /config.
+    # The GET above stays open to all authenticated users so the
+    # Live-view badge keeps working for non-managers.
+    _require_soc_manager(req, x_pixelagents_token)
     try:
         body = await req.json()
     except Exception:
@@ -1331,7 +1468,10 @@ async def api_auto_pickup_set(
     req: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
-    _require_auth(req, x_pixelagents_token)
+    # Soc-manager only — write side of the toggle lives in /config.
+    # The GET stays open so the Live-view badge keeps showing the
+    # current state for non-managers.
+    _require_soc_manager(req, x_pixelagents_token)
     try:
         body = await req.json()
     except Exception:
@@ -1924,9 +2064,12 @@ def api_foundry_agent_instructions(
     field, with the shared common preamble extracted into its own
     block. Used by /config to render the "Generic instructions /
     context" card and the per-agent instruction expanders.
+
+    Restricted to soc-managers — these payloads are only useful inside
+    the /config surface, which is itself soc-manager-only.
     """
 
-    _require_auth(request, x_pixelagents_token)
+    _require_soc_manager(request, x_pixelagents_token)
 
     now = time.time()
     cached = _FOUNDRY_INSTRUCTIONS_CACHE.get("payload")
@@ -2187,9 +2330,12 @@ async def api_foundry_agent_instructions_set(
     + role-specific tail) so the server doesn't have to do any
     splitting — it just creates a new version on Foundry with this
     text, preserving model + tools from the current version.
+
+    Soc-manager only — agent-instruction edits go through this
+    endpoint from /config, which is itself gated.
     """
 
-    _require_auth(req, x_pixelagents_token)
+    _require_soc_manager(req, x_pixelagents_token)
 
     try:
         body = await req.json()
@@ -3144,36 +3290,71 @@ def _hitl_online_users() -> set[str]:
     }
 
 
-def _hitl_pick_available() -> str | None:
-    """Pick one available human (online AND not busy). Sorted alpha
-    so the choice is deterministic across calls — fairness can be
-    refined later (e.g., least-recently-routed) but for the demo
-    deterministic > random."""
-    pool = sorted(_hitl_online_users() - _hitl_busy_users())
-    return pool[0] if pool else None
+def _required_role_for_agent(agent_slug: str | None) -> str | None:
+    """Map an agent's slug to the human role that should handle its
+    ask_human calls. Returns None for agents that don't have a clear
+    routing target — those questions stay broadcast.
+
+    Rationale:
+      - detection-engineer agent → detection-engineer (rule reviews)
+      - soc-manager agent        → soc-manager (preamble / instructions)
+      - triage / investigator / reporter → soc-analyst (incident work)
+    """
+    if not isinstance(agent_slug, str):
+        return None
+    s = agent_slug.strip().lower()
+    if s == "detection-engineer":
+        return ROLE_DETECTION_ENGINEER
+    if s == "soc-manager":
+        return ROLE_SOC_MANAGER
+    if s in ("triage", "investigator", "reporter"):
+        return ROLE_SOC_ANALYST
+    return None
+
+
+def _hitl_pick_available(required_role: str | None = None) -> str | None:
+    """Pick one available human (online AND not busy). When
+    `required_role` is set, the candidate pool is narrowed to users
+    holding that role. Sorted alpha so the choice is deterministic
+    across calls — fairness can be refined later (e.g., least-
+    recently-routed) but for the demo deterministic > random."""
+    pool = _hitl_online_users() - _hitl_busy_users()
+    if required_role:
+        pool = pool & {e.lower() for e in _users_with_role(required_role)}
+    ordered = sorted(pool)
+    return ordered[0] if ordered else None
 
 
 def _hitl_route_or_queue(qid: str) -> None:
     """Try to assign the question to an available human; queue if
     nobody fits the bill right now. Mutates HITL_QUESTIONS[qid] to
-    record the routing decision."""
+    record the routing decision.
+
+    The agent that asked decides the candidate pool: the
+    detection-engineer / soc-manager agents route to humans with the
+    matching role; triage / investigator / reporter route to soc-
+    analysts. Other agents (or unknown slugs) fall back to a fully
+    broadcast pool with no role filter."""
     rec = HITL_QUESTIONS.get(qid)
     if rec is None:
         return
-    target = _hitl_pick_available()
+    required_role = _required_role_for_agent(rec.get("agent"))
+    rec["required_role"] = required_role  # remembered for queue drain + UI filter
+    target = _hitl_pick_available(required_role=required_role)
     if target:
         rec["target"] = target
         rec["routed_at"] = time.time()
         rec["routed_method"] = "auto"
         print(
-            f"[hitl] auto-routed qid={qid} -> {target}",
+            f"[hitl] auto-routed qid={qid} role={required_role!r} -> {target}",
             flush=True,
         )
         return
     HITL_QUEUE.append(qid)
     rec["routed_method"] = "queued"
     print(
-        f"[hitl] queued qid={qid} (no available humans; queue size={len(HITL_QUEUE)})",
+        f"[hitl] queued qid={qid} role={required_role!r} "
+        f"(no available humans; queue size={len(HITL_QUEUE)})",
         flush=True,
     )
 
@@ -3182,14 +3363,25 @@ async def _hitl_queue_drain_tick() -> None:
     """Pop entries from HITL_QUEUE and assign them to available
     humans. Each available human gets at most one question per tick
     so we don't pile six questions on one analyst the second they
-    come online."""
+    come online.
+
+    Honors each question's `required_role` (set when the question was
+    first routed): a queued detection-rule question sat there because
+    no detection engineer was online — when one shows up, that's the
+    person who picks it up, even if a soc-analyst happens to be free
+    too. Questions with no required_role still draw from the full
+    available pool."""
     if not HITL_QUEUE:
         return
-    available = sorted(_hitl_online_users() - _hitl_busy_users())
-    if not available:
+    base_available = _hitl_online_users() - _hitl_busy_users()
+    if not base_available:
         return
+    # Available humans, kept fresh as we hand them out (so each human
+    # gets at most one question per tick). Mirror to a sorted list for
+    # deterministic ordering, plus a per-role index for quick lookup.
+    avail_set = set(base_available)
 
-    drained: list[tuple[str, str]] = []
+    drained: list[tuple[str, str, str | None]] = []
     keep: list[str] = []
     while HITL_QUEUE:
         qid = HITL_QUEUE.pop(0)
@@ -3200,20 +3392,27 @@ async def _hitl_queue_drain_tick() -> None:
             # Question was answered or cancelled while it sat in the
             # queue — drop it.
             continue
-        if not available:
-            # Out of available humans this tick — re-queue this and
-            # any remaining ids for the next pass.
+        required_role = rec.get("required_role")
+        # Build the per-question candidate pool from the live avail set.
+        if required_role:
+            role_emails = {e.lower() for e in _users_with_role(required_role)}
+            candidates = sorted(avail_set & role_emails)
+        else:
+            candidates = sorted(avail_set)
+        if not candidates:
+            # No-one qualified is free this tick — re-queue.
             keep.append(qid)
             continue
-        target = available.pop(0)
+        target = candidates[0]
+        avail_set.discard(target)
         rec["target"] = target
         rec["routed_at"] = time.time()
         rec["routed_method"] = "auto-drain"
-        drained.append((qid, target))
+        drained.append((qid, target, required_role))
     # Re-queue anything we couldn't place this tick (preserves order).
     HITL_QUEUE[:0] = keep
-    for qid, t in drained:
-        print(f"[hitl] drained queue: qid={qid} -> {t}", flush=True)
+    for qid, t, r in drained:
+        print(f"[hitl] drained queue: qid={qid} role={r!r} -> {t}", flush=True)
 
 
 async def _hitl_queue_drain_loop() -> None:
@@ -3254,6 +3453,9 @@ def _hitl_public(q: dict[str, Any]) -> dict[str, Any]:
         # groups this question under the relevant case in the
         # "Incident Input Needed" sidebar section.
         "incident_number": q.get("incident_number"),
+        # Role required to pick this question up (e.g. "detection-
+        # engineer" for rule reviews). None = no role filter.
+        "required_role": q.get("required_role"),
     }
 
 
@@ -3335,22 +3537,31 @@ def hitl_list_pending(
 ) -> dict[str, Any]:
     """UI reads this to show currently-pending questions.
 
-    Filters by `target`: questions with no target (broadcast) are
-    visible to everyone; questions with a target are only visible to
-    that specific user. Token-only callers (no session cookie) only
-    see broadcast questions — they have no identity to match against.
+    Visibility rules:
+      1. If a question has an explicit `target` email, only that user
+         sees it.
+      2. Otherwise (broadcast), if it has a `required_role`, only
+         users holding that role see it.
+      3. Otherwise it's truly broadcast — visible to everyone.
+
+    Token-only callers (no session cookie) see only the truly-broadcast
+    rule-3 questions — they have no identity to match against.
     """
 
     _require_auth(request, x_pixelagents_token)
     me = (_session_user(request) or "").strip().lower()
+    my_roles = set(_user_roles(me)) if me else set()
 
     def _visible(q: dict[str, Any]) -> bool:
         if q.get("status") != "pending":
             return False
         target = (q.get("target") or "").strip().lower()
-        if not target:
-            return True  # broadcast
-        return target == me
+        if target:
+            return target == me
+        required_role = q.get("required_role")
+        if required_role:
+            return required_role in my_roles
+        return True  # truly broadcast
 
     pending = [_hitl_public(q) for q in HITL_QUESTIONS.values() if _visible(q)]
     pending.sort(key=lambda q: q.get("asked_at") or 0)
@@ -3428,11 +3639,59 @@ async def hitl_wait(
 # ── Pending changes (Knowledge agent + future detection-engineer) ────
 
 
+def _check_change_role(record: dict[str, Any], me: str) -> None:
+    """Raise 403 if `me` doesn't hold the role required to act on this
+    change record. Called by the approve and reject endpoints. Token-
+    only callers (no me) are also rejected — Approve / Reject is a
+    human-only action."""
+    required_role = _required_role_for_change_kind(record.get("kind"))
+    if not required_role:
+        return  # unknown kind → no gate
+    if not me:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Approving / rejecting a {record.get('kind')} change "
+                f"requires the {required_role} role; this caller has no session."
+            ),
+        )
+    if required_role not in set(_user_roles(me)):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Your account does not have the {required_role} role, "
+                f"which is required to act on a {record.get('kind')} change."
+            ),
+        )
+
+
+def _required_role_for_change_kind(kind: str | None) -> str | None:
+    """Map a change kind to the human role that's allowed to approve /
+    reject it.
+
+      - detection-rule       → detection-engineer (rule reviews)
+      - knowledge-preamble   → soc-manager (shared preamble across all agents)
+      - agent-instructions   → soc-manager (per-agent role tails)
+
+    Anything else → None, treated as "no role gate" so unknown kinds
+    don't accidentally lock everyone out."""
+    if not isinstance(kind, str):
+        return None
+    k = kind.strip().lower()
+    if k == "detection-rule":
+        return ROLE_DETECTION_ENGINEER
+    if k in ("knowledge-preamble", "agent-instructions"):
+        return ROLE_SOC_MANAGER
+    return None
+
+
 def _change_public(c: dict[str, Any]) -> dict[str, Any]:
     """Strip nothing for now — we WANT the analyst to see all the
     fields so they can read the rationale, current snapshot, and
-    proposed content side-by-side."""
+    proposed content side-by-side. Tag the required role so the UI
+    can show who's expected to act on it."""
     out = dict(c)
+    out["required_role"] = _required_role_for_change_kind(c.get("kind"))
     return out
 
 
@@ -3722,13 +3981,30 @@ def api_changes_pending(
     request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
-    """List pending changes. Broadcast for now — every logged-in
-    human sees them; the first to approve / reject wins."""
+    """List pending changes the caller is allowed to act on.
+
+    Each change kind maps to a required role (see
+    _required_role_for_change_kind) — detection-rule needs
+    detection-engineer, knowledge-preamble + agent-instructions need
+    soc-manager. Users only see changes whose required role matches
+    one of their roles. Changes with no role gate (unknown kinds) are
+    visible to everyone so we don't accidentally hide them. Token-
+    only callers with no session see the no-role subset only.
+    """
 
     _require_auth(request, x_pixelagents_token)
-    pending = [
-        _change_public(c) for c in CHANGES.values() if c.get("status") == "pending"
-    ]
+    me = (_session_user(request) or "").strip().lower()
+    my_roles = set(_user_roles(me)) if me else set()
+
+    def _visible(c: dict[str, Any]) -> bool:
+        if c.get("status") != "pending":
+            return False
+        required_role = _required_role_for_change_kind(c.get("kind"))
+        if not required_role:
+            return True
+        return required_role in my_roles
+
+    pending = [_change_public(c) for c in CHANGES.values() if _visible(c)]
     pending.sort(key=lambda c: c.get("proposed_at") or 0)
     return {"changes": pending, "ts": time.time()}
 
@@ -3777,6 +4053,10 @@ async def api_changes_approve(
             status_code=409,
             detail=f"Change is no longer pending (status={record.get('status')!r})",
         )
+
+    # Role gate: detection-rule needs detection-engineer,
+    # knowledge-preamble + agent-instructions need soc-manager.
+    _check_change_role(record, me)
 
     # Mark approved BEFORE applying so a concurrent approve from
     # another tab races to no-op rather than fanning out twice.
@@ -3841,6 +4121,9 @@ async def api_changes_reject(
             status_code=409,
             detail=f"Change is no longer pending (status={record.get('status')!r})",
         )
+
+    # Role gate — same rule as approve.
+    _check_change_role(record, me)
 
     record["status"] = "rejected"
     record["reviewer"] = me
@@ -4133,6 +4416,7 @@ def api_sessions_online(
     for email in USERS.keys():
         is_self = (email == me)
         last_seen = PRESENCE.get(email)
+        roles = _user_roles(email)
         if is_self:
             # Caller is by definition online (their request just got
             # us here). Show them at the top of the list with a
@@ -4143,6 +4427,7 @@ def api_sessions_online(
                 "is_self": True,
                 "last_seen": now,
                 "ago_sec": 0,
+                "roles": roles,
             })
             continue
         if last_seen is None:
@@ -4152,6 +4437,7 @@ def api_sessions_online(
                 "is_self": False,
                 "last_seen": None,
                 "ago_sec": None,
+                "roles": roles,
             })
             continue
         ago = now - last_seen
@@ -4161,6 +4447,7 @@ def api_sessions_online(
             "is_self": False,
             "last_seen": last_seen,
             "ago_sec": int(ago),
+            "roles": roles,
         })
     # Sort: self first, then online, then offline; alpha within each.
     users.sort(key=lambda u: (
@@ -4173,6 +4460,134 @@ def api_sessions_online(
         "window_sec": ONLINE_WINDOW_SEC,
         "ts": now,
     }
+
+
+# ── User management (soc-manager only) ──────────────────────────────
+# Edits mutate the in-memory USERS dict. Changes don't persist across
+# container restarts — the durable source of truth is AISOC_USERS_JSON
+# wired in via Terraform. The /config UI surfaces this caveat so the
+# soc-manager knows roster edits made here are demo-grade.
+
+
+@app.get("/api/users")
+def api_users_list(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> Dict[str, Any]:
+    """Full user roster + roles, for the /config user-management card."""
+    me = _require_soc_manager(request, x_pixelagents_token)
+    users = []
+    for email, rec in USERS.items():
+        users.append({
+            "email": email,
+            "roles": list(rec.get("roles") or []),
+            "is_self": email == me.lower().strip(),
+            "online": (
+                PRESENCE.get(email) is not None
+                and (time.time() - PRESENCE[email]) <= ONLINE_WINDOW_SEC
+            ),
+        })
+    users.sort(key=lambda u: u["email"])
+    return {
+        "users": users,
+        "me": me,
+        "known_roles": list(ROLES_KNOWN),
+    }
+
+
+@app.post("/api/users")
+async def api_users_upsert(
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> Dict[str, Any]:
+    """Add a new user OR update an existing one. Body shape:
+
+        {
+          "email":    "alice@example.com",
+          "password": "<new password — required for new users; "
+                      "  blank to keep the existing one on update>",
+          "roles":    ["soc-analyst", "detection-engineer"]
+        }
+    """
+
+    _require_soc_manager(req, x_pixelagents_token)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    email = (body.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Missing or invalid email")
+
+    raw_roles = body.get("roles") or []
+    if not isinstance(raw_roles, list):
+        raise HTTPException(status_code=400, detail="roles must be a list of strings")
+    roles = []
+    seen: set[str] = set()
+    for r in raw_roles:
+        s = str(r or "").strip().lower()
+        if not s:
+            continue
+        if s not in ROLES_KNOWN:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown role {s!r}; allowed: {list(ROLES_KNOWN)}",
+            )
+        if s in seen:
+            continue
+        seen.add(s)
+        roles.append(s)
+
+    existing = USERS.get(email)
+    pw_in = body.get("password")
+    new_pw = str(pw_in).strip() if isinstance(pw_in, str) else ""
+    if existing is None and not new_pw:
+        raise HTTPException(
+            status_code=400,
+            detail="Password is required when adding a new user.",
+        )
+    password = new_pw if new_pw else (existing or {}).get("password", "")
+
+    USERS[email] = {"password": password, "roles": roles}
+    print(
+        f"[users] upsert email={email!r} roles={roles} "
+        f"(was_new={existing is None})",
+        flush=True,
+    )
+    return {
+        "ok": True,
+        "email": email,
+        "roles": roles,
+    }
+
+
+@app.delete("/api/users/{email}")
+def api_users_delete(
+    email: str,
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> Dict[str, Any]:
+    """Remove a user from the roster. The current SOC manager can't
+    remove themselves — the demo would lock anyone out of /config
+    until container restart, which is a footgun nobody asked for."""
+
+    me = _require_soc_manager(request, x_pixelagents_token)
+    target = (email or "").strip().lower()
+    if not target or target not in USERS:
+        raise HTTPException(status_code=404, detail="No such user")
+    if target == me.lower().strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Refusing to remove yourself — ask another SOC manager.",
+        )
+    USERS.pop(target, None)
+    # Also drop their session presence so they disappear cleanly.
+    PRESENCE.pop(target, None)
+    print(f"[users] delete email={target!r} by={me!r}", flush=True)
+    return {"ok": True, "email": target}
 
 
 @app.get("/api/messages/threads")

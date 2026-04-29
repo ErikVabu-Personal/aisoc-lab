@@ -20,10 +20,24 @@
 # automatically from Phase 2's `foundry_project_endpoint` output — no manual
 # configuration needed.
 
-# Demo login roster. Map of email -> password. Adding/removing users is
-# now a one-line tfvars change — no source-code edit required. Wired
-# into the Container App as a secret (encrypted at rest in ACA) and
-# exposed to the server as AISOC_USERS_JSON.
+# Demo login roster. Map of email → { password, roles }. Adding /
+# removing users + role assignments is a one-line tfvars change — no
+# source-code edit required. Wired into the Container App as a secret
+# (encrypted at rest in ACA) and exposed to the server as
+# AISOC_USERS_JSON.
+#
+# Known role slugs:
+#   - "soc-manager"        — can access /config + manage users +
+#                            approve knowledge-preamble + agent-
+#                            instructions changes
+#   - "detection-engineer" — approves detection-rule changes
+#   - "soc-analyst"        — picks up incidents from the queue +
+#                            answers HITL requests from triage /
+#                            investigator / reporter agents
+#
+# A single user can hold multiple roles; the SOC manager typically
+# also holds the analyst + detection-engineer roles for full
+# visibility during the demo.
 #
 # Demo-grade only — passwords are stored verbatim. For anything closer
 # to production, hash them and gate logins on a real identity provider.
@@ -32,6 +46,22 @@
 # bootstrap roster (useful for first deploy).
 #
 # pixelagents_users = {
+#   "erik.vanbuggenhout@nviso.eu" = {
+#     password = "<password>"
+#     roles    = ["soc-manager", "detection-engineer", "soc-analyst"]
+#   }
+#   "alice@example.com" = {
+#     password = "<password>"
+#     roles    = ["soc-analyst"]
+#   }
+#   "bob@example.com" = {
+#     password = "<password>"
+#     roles    = ["detection-engineer"]
+#   }
+# }
+#
+# Legacy shape (no roles) is still accepted for backwards compat:
+#
+# pixelagents_users = {
 #   "alice@example.com" = "<password>"
-#   "bob@example.com"   = "<password>"
 # }

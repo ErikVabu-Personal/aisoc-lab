@@ -32,16 +32,39 @@ variable "create_log_analytics" {
 }
 
 variable "pixelagents_users" {
-  type = map(string)
+  # Use `any` so callers can pass either:
+  #   (a) {email = {password, roles}}      — preferred (with role gates)
+  #   (b) {email = "password"}             — legacy shape, still accepted
+  # The PixelAgents server's _load_users() handles both shapes
+  # transparently, so old tfvars files keep deploying cleanly.
+  type = any
   description = <<-EOT
-    Demo login roster: { email = password }. Wired into the Container App
-    as a secret + env var (AISOC_USERS_JSON), so adding/removing demo
-    accounts is a one-line tfvars change. Leave empty {} to fall back to
-    the hardcoded server-side roster (useful for first-deploy bootstrap).
+    Demo login roster. Two accepted shapes:
 
-    Demo-grade only — passwords are stored verbatim in the Container App
-    secret. For anything closer to production, hash the values and run
-    them through a real identity provider.
+      {
+        "alice@example.com" = { password = "...", roles = ["soc-analyst"] }
+        "bob@example.com"   = { password = "...", roles = ["soc-manager", "detection-engineer"] }
+      }
+
+      OR the legacy shape (no roles):
+
+      {
+        "alice@example.com" = "password"
+      }
+
+    Wired into the Container App as a secret + env var
+    (AISOC_USERS_JSON), so adding/removing demo accounts is a one-line
+    tfvars change. Leave empty {} to fall back to the hardcoded
+    server-side roster (useful for first-deploy bootstrap).
+
+    Known role slugs: "soc-manager", "detection-engineer",
+    "soc-analyst". Anything else is silently dropped server-side.
+    Only soc-manager users can access /config and the user-management
+    UI.
+
+    Demo-grade only — passwords are stored verbatim in the Container
+    App secret. For anything closer to production, hash the values
+    and run them through a real identity provider.
   EOT
   default     = {}
   sensitive   = true

@@ -607,6 +607,15 @@
     rightLabel: 'Act on its own',
   });
 
+  // ── User management (soc-manager only on the server side) ─────────
+  // Renders into #aisoc-user-management-root. Lets the SOC manager
+  // add / remove users and edit role assignments. Server persists
+  // changes in-memory only; durable roster lives in AISOC_USERS_JSON
+  // wired in via Terraform.
+  injectUserManagementStyles();
+  setupUserManagement();
+  setInterval(fetchUsers, 8000);
+
   // ── Generic instructions / context (read-only) ────────────────────
   // Renders the shared preamble (common.md, identical across all
   // agents) as a single card. Per-agent role-specific instructions are
@@ -1445,5 +1454,446 @@
 
     poll();
     setInterval(poll, 5000);
+  }
+
+  // ── User management ───────────────────────────────────────────────
+  // Renders a card listing every configured user with their roles.
+  // Soc-manager-only on the server side; if a non-manager somehow
+  // hits /config (shouldn't happen — the server bounces them), the
+  // GET /api/users call returns 403 and we surface that gracefully.
+  let umUsers = [];
+  let umKnownRoles = [];
+  let umMe = '';
+  let umError = '';
+  let umAdding = false;          // true when the inline "add user" form is open
+  let umAddDraft = { email: '', password: '', roles: [] };
+  let umEditing = null;          // email currently being edited (or null)
+  let umEditDraft = null;        // {email, password, roles} for the edit form
+  let umBusy = new Set();        // emails for which a POST/DELETE is in-flight
+  let umStatus = '';             // last-action message shown under the card
+  let umStatusKind = '';         // 'ok' | 'error'
+
+  function injectUserManagementStyles() {
+    if (document.getElementById('aisoc-user-management-styles')) return;
+    const css = `
+      #aisoc-user-management-root { margin-bottom: 16px; }
+      #aisoc-user-management-root .um-card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 16px 20px;
+      }
+      #aisoc-user-management-root .um-head {
+        display: flex; align-items: baseline; gap: 12px;
+        margin-bottom: 8px;
+      }
+      #aisoc-user-management-root .um-title {
+        font-size: 15px; font-weight: 700; color: #1f2937;
+        flex: 1;
+      }
+      #aisoc-user-management-root .um-sub {
+        font-size: 12px; color: #6b7280;
+      }
+      #aisoc-user-management-root .um-actions {
+        display: flex; gap: 6px; flex-wrap: wrap;
+      }
+      #aisoc-user-management-root button {
+        padding: 5px 12px;
+        border-radius: 4px;
+        font: 600 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        cursor: pointer;
+        background: #f9fafb;
+        color: #1f2937;
+        border: 1px solid #cbd5e1;
+      }
+      #aisoc-user-management-root button:hover:not(:disabled) {
+        background: #f3f4f6;
+        border-color: #94a3b8;
+      }
+      #aisoc-user-management-root button:disabled {
+        opacity: 0.55; cursor: not-allowed;
+      }
+      #aisoc-user-management-root button.primary {
+        background: #0099cc;
+        border-color: #0099cc;
+        color: #ffffff;
+      }
+      #aisoc-user-management-root button.primary:hover:not(:disabled) {
+        background: #33b0dd;
+      }
+      #aisoc-user-management-root button.danger {
+        color: #991b1b;
+      }
+      #aisoc-user-management-root button.danger:hover:not(:disabled) {
+        background: rgba(239,68,68,0.10);
+        border-color: rgba(239,68,68,0.5);
+      }
+      #aisoc-user-management-root table.um-tbl {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+      }
+      #aisoc-user-management-root table.um-tbl th {
+        font-size: 11px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.05em;
+        color: #6b7280;
+        text-align: left;
+        padding: 6px 8px;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      #aisoc-user-management-root table.um-tbl td {
+        font-size: 13px;
+        color: #1f2937;
+        padding: 8px;
+        border-bottom: 1px solid #f3f4f6;
+        vertical-align: middle;
+      }
+      #aisoc-user-management-root table.um-tbl tr:last-child td { border-bottom: none; }
+      #aisoc-user-management-root .um-email {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12.5px;
+      }
+      #aisoc-user-management-root .um-pill {
+        display: inline-block;
+        padding: 2px 8px;
+        margin: 1px 4px 1px 0;
+        border-radius: 999px;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        background: rgba(0,153,204,0.14);
+        color: #1e3a8a;
+      }
+      #aisoc-user-management-root .um-pill.role-soc-manager       { background: rgba(124,58,237,0.16); color: #4c1d95; }
+      #aisoc-user-management-root .um-pill.role-detection-engineer { background: rgba(245,158,11,0.18); color: #92400e; }
+      #aisoc-user-management-root .um-pill.role-soc-analyst        { background: rgba(16,185,129,0.16); color: #065f46; }
+      #aisoc-user-management-root .um-pill.online {
+        background: rgba(16,185,129,0.16); color: #065f46;
+      }
+      #aisoc-user-management-root .um-self {
+        font-size: 11px; color: #6b7280; font-style: italic;
+        margin-left: 6px;
+      }
+      #aisoc-user-management-root .um-form {
+        margin-top: 12px;
+        padding: 12px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+      }
+      #aisoc-user-management-root .um-form .row {
+        display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      #aisoc-user-management-root .um-form label {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+        text-transform: uppercase; color: #6b7280;
+        flex: 0 0 110px;
+      }
+      #aisoc-user-management-root .um-form input[type=text],
+      #aisoc-user-management-root .um-form input[type=password],
+      #aisoc-user-management-root .um-form input[type=email] {
+        flex: 1;
+        min-width: 240px;
+        padding: 6px 9px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #1f2937;
+        background: #ffffff;
+      }
+      #aisoc-user-management-root .um-form input:focus {
+        outline: none;
+        border-color: #0099cc;
+        box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+      }
+      #aisoc-user-management-root .um-roles {
+        display: flex; gap: 14px; flex-wrap: wrap;
+      }
+      #aisoc-user-management-root .um-roles label.cb {
+        flex: 0 0 auto;
+        font: 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        color: #1f2937;
+        text-transform: none;
+        letter-spacing: 0;
+        font-weight: 500;
+        display: inline-flex; align-items: center; gap: 5px;
+        cursor: pointer;
+      }
+      #aisoc-user-management-root .um-status {
+        margin-top: 8px;
+        font-size: 12px;
+      }
+      #aisoc-user-management-root .um-status.ok    { color: #065f46; }
+      #aisoc-user-management-root .um-status.error {
+        color: #991b1b;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #aisoc-user-management-root .um-empty {
+        font-size: 13px; color: #6b7280; font-style: italic;
+        padding: 8px 0;
+      }
+    `;
+    const style = document.createElement('style');
+    style.id = 'aisoc-user-management-styles';
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  function setupUserManagement() {
+    const root = document.getElementById('aisoc-user-management-root');
+    if (!root) return;
+    fetchUsers();
+  }
+
+  async function fetchUsers() {
+    try {
+      const r = await fetch('/api/users', { credentials: 'same-origin' });
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        throw new Error(`HTTP ${r.status}${text ? `: ${text.slice(0, 240)}` : ''}`);
+      }
+      const data = await r.json();
+      umUsers = (data && data.users) || [];
+      umKnownRoles = (data && data.known_roles) || [];
+      umMe = (data && data.me) || '';
+      umError = '';
+      renderUserManagement();
+    } catch (e) {
+      umError = String(e.message || e);
+      renderUserManagement();
+    }
+  }
+
+  function roleLabel(role) {
+    return ({
+      'soc-manager':         'SOC manager',
+      'detection-engineer':  'Detection engineer',
+      'soc-analyst':         'SOC analyst',
+    })[role] || role;
+  }
+
+  function renderUserManagement() {
+    const root = document.getElementById('aisoc-user-management-root');
+    if (!root) return;
+
+    if (umError) {
+      root.innerHTML = `
+        <div class="um-card">
+          <div class="um-head">
+            <span class="um-title">User management</span>
+          </div>
+          <div class="um-status error">Failed to load: ${escapeHtml(umError)}</div>
+        </div>
+      `;
+      return;
+    }
+
+    let html = '<div class="um-card">';
+    html += '<div class="um-head">';
+    html += '<span class="um-title">User management</span>';
+    html += '<span class="um-sub">In-memory edits — durable roster lives in <code>AISOC_USERS_JSON</code>.</span>';
+    html += '<div class="um-actions">';
+    if (!umAdding && !umEditing) {
+      html += `<button class="primary" id="um-add-btn">+ Add user</button>`;
+    }
+    html += '</div></div>';
+
+    // Table of users.
+    if (!umUsers.length) {
+      html += '<div class="um-empty">No users configured.</div>';
+    } else {
+      html += '<table class="um-tbl"><thead><tr>'
+            + '<th>Email</th><th>Roles</th><th>Status</th><th></th>'
+            + '</tr></thead><tbody>';
+      for (const u of umUsers) {
+        const isEditing = umEditing === u.email;
+        const busy = umBusy.has(u.email);
+        html += `<tr>`;
+        html += `<td><span class="um-email">${escapeHtml(u.email)}</span>`;
+        if (u.is_self) html += `<span class="um-self">(you)</span>`;
+        html += `</td>`;
+        html += `<td>`;
+        if ((u.roles || []).length === 0) {
+          html += `<span style="font-size:11px;color:#9ca3af;">No roles</span>`;
+        } else {
+          for (const r of (u.roles || [])) {
+            html += `<span class="um-pill role-${escapeHtml(r)}">${escapeHtml(roleLabel(r))}</span>`;
+          }
+        }
+        html += `</td>`;
+        html += `<td>${u.online
+          ? '<span class="um-pill online">Online</span>'
+          : '<span style="font-size:11px;color:#9ca3af;">Offline</span>'}</td>`;
+        html += `<td style="text-align:right;white-space:nowrap;">`;
+        if (!isEditing && !umAdding) {
+          html += `<button data-um-edit="${escapeHtml(u.email)}" ${busy ? 'disabled' : ''}>Edit</button> `;
+          const delTitle = u.is_self ? 'You cannot remove yourself.' : '';
+          html += `<button class="danger" data-um-delete="${escapeHtml(u.email)}" `
+                + `${(busy || u.is_self) ? 'disabled' : ''} `
+                + `title="${escapeHtml(delTitle)}">Remove</button>`;
+        }
+        html += `</td>`;
+        html += `</tr>`;
+        if (isEditing) {
+          html += `<tr><td colspan="4">${renderUmFormRow('edit')}</td></tr>`;
+        }
+      }
+      html += '</tbody></table>';
+    }
+
+    if (umAdding) {
+      html += renderUmFormRow('add');
+    }
+
+    if (umStatus) {
+      html += `<div class="um-status ${escapeHtml(umStatusKind)}">${escapeHtml(umStatus)}</div>`;
+    }
+
+    html += '</div>';
+    root.innerHTML = html;
+
+    // Wire handlers.
+    const addBtn = document.getElementById('um-add-btn');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      umAdding = true; umAddDraft = { email: '', password: '', roles: [] };
+      umStatus = ''; umStatusKind = '';
+      renderUserManagement();
+    });
+    root.querySelectorAll('[data-um-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const email = btn.getAttribute('data-um-edit');
+        const u = umUsers.find((x) => x.email === email);
+        if (!u) return;
+        umEditing = email;
+        umEditDraft = { email, password: '', roles: [...(u.roles || [])] };
+        umStatus = ''; umStatusKind = '';
+        renderUserManagement();
+      });
+    });
+    root.querySelectorAll('[data-um-delete]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const email = btn.getAttribute('data-um-delete');
+        if (!confirm(`Remove ${email}? This drops their session immediately.`)) return;
+        onDeleteUser(email);
+      });
+    });
+
+    // Form-input wiring.
+    const draft = umAdding ? umAddDraft : (umEditing ? umEditDraft : null);
+    if (draft) {
+      const emailInput = root.querySelector('[data-um-input="email"]');
+      if (emailInput) emailInput.addEventListener('input', () => { draft.email = emailInput.value; });
+      const pwInput = root.querySelector('[data-um-input="password"]');
+      if (pwInput) pwInput.addEventListener('input', () => { draft.password = pwInput.value; });
+      root.querySelectorAll('[data-um-role]').forEach((cb) => {
+        cb.addEventListener('change', () => {
+          const role = cb.getAttribute('data-um-role');
+          if (cb.checked) {
+            if (!draft.roles.includes(role)) draft.roles.push(role);
+          } else {
+            draft.roles = draft.roles.filter((r) => r !== role);
+          }
+        });
+      });
+      const saveBtn = root.querySelector('[data-um-save]');
+      if (saveBtn) saveBtn.addEventListener('click', () => onSaveUser(umAdding ? 'add' : 'edit'));
+      const cancelBtn = root.querySelector('[data-um-cancel]');
+      if (cancelBtn) cancelBtn.addEventListener('click', () => {
+        umAdding = false; umEditing = null; umEditDraft = null;
+        renderUserManagement();
+      });
+    }
+  }
+
+  function renderUmFormRow(mode) {
+    const draft = mode === 'add' ? umAddDraft : umEditDraft;
+    const isAdd = mode === 'add';
+    let html = `<div class="um-form">`;
+    html += `<div class="row"><label>Email</label>`;
+    html += `<input type="email" data-um-input="email" value="${escapeHtml(draft.email || '')}" `
+          + `${isAdd ? '' : 'disabled'} placeholder="alice@example.com"></div>`;
+    html += `<div class="row"><label>Password</label>`;
+    html += `<input type="password" data-um-input="password" value="${escapeHtml(draft.password || '')}" `
+          + `placeholder="${isAdd ? 'Required for new users' : 'Leave blank to keep current'}"></div>`;
+    html += `<div class="row"><label>Roles</label><div class="um-roles">`;
+    for (const r of umKnownRoles) {
+      const checked = (draft.roles || []).includes(r) ? 'checked' : '';
+      html += `<label class="cb"><input type="checkbox" data-um-role="${escapeHtml(r)}" ${checked}> ${escapeHtml(roleLabel(r))}</label>`;
+    }
+    html += `</div></div>`;
+    html += `<div class="row" style="justify-content:flex-end;margin-bottom:0;">`;
+    html += `<button data-um-cancel>Cancel</button> `;
+    html += `<button class="primary" data-um-save>${isAdd ? 'Add user' : 'Save changes'}</button>`;
+    html += `</div></div>`;
+    return html;
+  }
+
+  async function onSaveUser(mode) {
+    const draft = mode === 'add' ? umAddDraft : umEditDraft;
+    if (!draft) return;
+    const email = (draft.email || '').trim().toLowerCase();
+    if (!email) {
+      umStatus = 'Email is required.'; umStatusKind = 'error';
+      renderUserManagement();
+      return;
+    }
+    umBusy.add(email);
+    umStatus = 'Saving…'; umStatusKind = 'ok';
+    renderUserManagement();
+    try {
+      const r = await fetch('/api/users', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password: draft.password || '',
+          roles: draft.roles || [],
+        }),
+      });
+      const text = await r.text().catch(() => '');
+      let data; try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+      if (!r.ok) {
+        const detail = (data && data.detail) || data.raw || `HTTP ${r.status}`;
+        throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      }
+      umAdding = false; umEditing = null; umEditDraft = null;
+      umStatus = `Saved ${email}`; umStatusKind = 'ok';
+      await fetchUsers();
+    } catch (e) {
+      umStatus = String(e.message || e); umStatusKind = 'error';
+      renderUserManagement();
+    } finally {
+      umBusy.delete(email);
+    }
+  }
+
+  async function onDeleteUser(email) {
+    umBusy.add(email);
+    umStatus = `Removing ${email}…`; umStatusKind = 'ok';
+    renderUserManagement();
+    try {
+      const r = await fetch(`/api/users/${encodeURIComponent(email)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      const text = await r.text().catch(() => '');
+      let data; try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+      if (!r.ok) {
+        const detail = (data && data.detail) || data.raw || `HTTP ${r.status}`;
+        throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      }
+      umStatus = `Removed ${email}`; umStatusKind = 'ok';
+      await fetchUsers();
+    } catch (e) {
+      umStatus = String(e.message || e); umStatusKind = 'error';
+      renderUserManagement();
+    } finally {
+      umBusy.delete(email);
+    }
   }
 })();

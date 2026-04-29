@@ -599,6 +599,27 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    /* Role pills next to a human's email. Coloured per role so a
+       glance at the sidebar shows who can do what. Slightly smaller
+       than the agent-status pills to leave room for multi-role users. */
+    #${ROOT_ID} .item .head .role-pill {
+      flex-shrink: 0;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: rgba(0,153,204,0.14);
+      color: #1e3a8a;
+      max-width: 110px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #${ROOT_ID} .item .head .role-pill.role-soc-manager       { background: rgba(124,58,237,0.16); color: #4c1d95; }
+    #${ROOT_ID} .item .head .role-pill.role-detection-engineer { background: rgba(245,158,11,0.20); color: #92400e; }
+    #${ROOT_ID} .item .head .role-pill.role-soc-analyst        { background: rgba(16,185,129,0.16); color: #065f46; }
   `;
   const style = document.createElement('style');
   style.textContent = css;
@@ -1461,13 +1482,36 @@
     return prefix + (last.text || '').replace(/\s+/g, ' ').slice(0, 80);
   }
 
+  // Friendly short labels for role pills next to human emails. Kept
+  // short so multiple roles fit on a single sidebar row.
+  function roleShortLabel(role) {
+    return ({
+      'soc-manager':         'SOC Manager',
+      'detection-engineer':  'Det. Engineer',
+      'soc-analyst':         'SOC Analyst',
+    })[role] || role;
+  }
+
+  function rolePillsHtml(roles) {
+    if (!Array.isArray(roles) || !roles.length) return '';
+    let html = '';
+    for (const r of roles) {
+      const cls = `role-pill role-${String(r).replace(/[^a-z0-9-]/gi, '')}`;
+      html += `<span class="${cls}" title="${escapeHtml(r)}">`
+            + `${escapeHtml(roleShortLabel(r))}</span>`;
+    }
+    return html;
+  }
+
   function renderDmItem(userRec) {
     // Accept either a full {email, online, ...} record (preferred)
     // or a bare email string (legacy callers that just had a peer).
     const peer = (userRec && typeof userRec === 'object') ? userRec.email : userRec;
     const isOnline = !!(userRec && userRec.online);
     const isSelf = !!(userRec && userRec.is_self);
+    const roles = (userRec && Array.isArray(userRec.roles)) ? userRec.roles : [];
     if (!peer) return '';
+    const pills = rolePillsHtml(roles);
 
     // Self gets a flat, non-clickable row — no toggle, no thread,
     // no compose. The pulsing green dot makes it visually
@@ -1482,6 +1526,7 @@
             + `${escapeHtml(peer)} `
             + `<em style="font-style:italic;opacity:0.6;font-weight:500;">(you)</em>`
             + `</span>
+            ${pills}
           </div>
         </div>`;
     }
@@ -1499,6 +1544,7 @@
         <div class="head" data-popup-human="${escapeHtml(peer)}">
           <span class="${dotCls}" title="${escapeHtml(dotTitle)}"></span>
           <span class="name email" title="${escapeHtml(peer)}">${escapeHtml(peer)}</span>
+          ${pills}
           <span class="preview">${escapeHtml(dmPreviewFor(peer))}</span>
         </div>
       </div>`;
