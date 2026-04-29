@@ -49,3 +49,26 @@ foundry_model_deployment_name = "gpt-4.1-mini"
 # If you hit: "SKU 'Standard' ... not supported", try:
 foundry_model_sku_name     = "GlobalStandard"
 foundry_model_sku_capacity = 10
+
+# Additional Foundry model deployments. Each entry creates one extra
+# deployment in the Foundry account; the /config UI lets the SOC
+# manager re-bind any agent to any of these via the per-agent model
+# dropdown. Defaults to gpt-4.1 + gpt-4o-mini so a fresh deploy has
+# options out of the box. Set to [] to keep only the primary deployment.
+#
+# foundry_additional_model_deployments = [
+#   {
+#     deployment_name = "gpt-4.1"
+#     model_name      = "gpt-4.1"
+#     model_version   = "2025-04-14"
+#     label           = "GPT-4.1"
+#     description     = "Larger, more capable; better for tricky investigations."
+#   },
+#   {
+#     deployment_name = "gpt-4o-mini"
+#     model_name      = "gpt-4o-mini"
+#     model_version   = "2024-07-18"
+#     label           = "GPT-4o-mini"
+#     description     = "Fast + cheap; good fit for triage."
+#   },
+# ]

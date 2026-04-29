@@ -95,6 +95,57 @@ variable "foundry_model_sku_capacity" {
 }
 
 
+variable "foundry_additional_model_deployments" {
+  description = <<-EOT
+    Extra model deployments to create alongside the primary one. Each
+    object describes a single Foundry model deployment that becomes
+    selectable in the per-agent model dropdown on /config. Leave empty
+    to keep only the primary deployment.
+
+    Per-entry fields:
+      - deployment_name: name of the deployment in Foundry (also the
+        slug agents reference; must be unique in the account).
+      - model_name: e.g. "gpt-4.1", "gpt-4o-mini", "gpt-5".
+      - model_version: model version string (e.g. "2025-04-14").
+      - sku_name: SKU; usually "GlobalStandard".
+      - sku_capacity: thousands of TPM (e.g. 1500 = 1.5M TPM).
+      - label: optional friendly name shown in the UI dropdown.
+      - description: optional 1-line hint for the dropdown ("faster",
+        "more capable", etc).
+
+    Defaults to a small recommended set (gpt-4.1, gpt-4o-mini) so a
+    fresh deploy already has options beyond gpt-4.1-mini. Override in
+    tfvars when you want different models or want to lock the demo
+    down to one option.
+  EOT
+  type = list(object({
+    deployment_name = string
+    model_name      = string
+    model_version   = string
+    sku_name        = optional(string, "GlobalStandard")
+    sku_capacity    = optional(number, 1500)
+    label           = optional(string, "")
+    description     = optional(string, "")
+  }))
+  default = [
+    {
+      deployment_name = "gpt-4.1"
+      model_name      = "gpt-4.1"
+      model_version   = "2025-04-14"
+      label           = "GPT-4.1"
+      description     = "Larger, more capable than 4.1-mini; better for tricky investigations."
+    },
+    {
+      deployment_name = "gpt-4o-mini"
+      model_name      = "gpt-4o-mini"
+      model_version   = "2024-07-18"
+      label           = "GPT-4o-mini"
+      description     = "Fast + cheap; good fit for triage."
+    },
+  ]
+}
+
+
 # -----------------------------
 # Runner (Azure Container Apps)
 # -----------------------------

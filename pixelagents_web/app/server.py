@@ -1783,6 +1783,54 @@ def _extract_instructions_from_result(result: Any) -> str:
     return ""
 
 
+def _extract_model_from_result(result: Any) -> str:
+    """Probe a Foundry agents-API result shape for the agent's bound
+    model deployment name. Same nesting pattern as
+    _extract_instructions_from_result — model lives at the root of a
+    version body, or under definition/properties on richer shapes."""
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return ""
+
+    if isinstance(result, dict):
+        m = result.get("model")
+        if isinstance(m, str) and m:
+            return m
+        for accessor in ("definition", "_definition", "properties"):
+            obj = result.get(accessor)
+            if obj is not None:
+                nested = _extract_model_from_result(obj)
+                if nested:
+                    return nested
+        return ""
+
+    m = getattr(result, "model", None)
+    if isinstance(m, str) and m:
+        return m
+    for accessor in ("definition", "_definition", "properties"):
+        obj = getattr(result, accessor, None)
+        if obj is not None:
+            nested = _extract_model_from_result(obj)
+            if nested:
+                return nested
+
+    if (
+        hasattr(result, "__iter__")
+        and not isinstance(result, (str, bytes, bytearray, dict))
+    ):
+        try:
+            items = list(result)
+        except Exception:
+            items = []
+        for item in reversed(items):
+            nested = _extract_model_from_result(item)
+            if nested:
+                return nested
+
+    return ""
+
+
 _FOUNDRY_LAST_AVAILABLE_METHODS: list[str] = []
 
 
@@ -1937,6 +1985,7 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for slug in _default_agent_roster():
         instructions = ""
+        model = ""
         debug: list[str] = []
 
         for tmpl in url_templates:
@@ -1961,6 +2010,15 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
                 continue
 
             keys = list(body.keys())[:14]
+
+            # Opportunistic model extraction — even if we don't find
+            # instructions in this probe response, the model field is
+            # often present and we'd hate to round-trip again later
+            # just to read it.
+            if not model:
+                m_extracted = _extract_model_from_result(body)
+                if m_extracted:
+                    model = m_extracted
 
             # First, try direct extraction — works if the response
             # already includes the full instructions blob.
@@ -1990,6 +2048,10 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
             # Try the embedded object first — saves a round-trip if
             # Foundry already inlined the full instructions.
             if embedded is not None:
+                if not model:
+                    em_model = _extract_model_from_result(embedded)
+                    if em_model:
+                        model = em_model
                 em_extracted = _extract_instructions_from_result(embedded)
                 if em_extracted and em_extracted != "blueprint_reference":
                     debug.append(
@@ -2031,6 +2093,10 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
                 )
                 continue
 
+            if not model:
+                v_model = _extract_model_from_result(v_body)
+                if v_model:
+                    model = v_model
             v_extracted = _extract_instructions_from_result(v_body)
             if v_extracted and v_extracted != "blueprint_reference":
                 debug.append(
@@ -2052,7 +2118,7 @@ def _fetch_foundry_agent_instructions() -> dict[str, dict[str, Any]]:
                 flush=True,
             )
 
-        out[slug] = {"instructions": instructions, "_debug": debug}
+        out[slug] = {"instructions": instructions, "model": model, "_debug": debug}
     return out
 
 
@@ -2131,6 +2197,9 @@ def api_foundry_agent_instructions(
             {
                 "slug": slug,
                 "instructions": roles.get(slug, ""),
+                # Currently bound model deployment name — surfaced so
+                # the /config dropdown can pre-select the right option.
+                "model": rich.get(slug, {}).get("model", ""),
                 # Per-agent diagnostic — empty list when extraction
                 # succeeded; populated with method probes + errors
                 # when nothing worked. Useful for debugging SDK
@@ -2358,6 +2427,186 @@ def _foundry_post_new_version(
     }
 
 
+def _foundry_post_new_version_with_model(
+    slug: str,
+    new_model: str,
+) -> dict[str, Any]:
+    """Create a new version of `slug`'s Foundry agent with a different
+    model deployment, preserving instructions + tools from the current
+    version. Mirrors _foundry_post_new_version's flow exactly — same
+    GET-then-POST shape, same read-only field stripping — only the
+    field swapped is `model` instead of `instructions`."""
+
+    new_model = (new_model or "").strip()
+    if not new_model:
+        raise HTTPException(status_code=400, detail="new model is required")
+
+    project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
+    if not project_endpoint:
+        raise HTTPException(status_code=500, detail="AZURE_AI_FOUNDRY_PROJECT_ENDPOINT not set")
+
+    try:
+        from azure.identity import DefaultAzureCredential
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"azure-identity not available: {e!r}")
+
+    try:
+        token = DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"could not get bearer token: {e!r}")
+
+    base = project_endpoint.rstrip("/")
+    api_ver = "2025-05-15-preview"
+    debug: list[str] = []
+
+    import requests as _requests
+    import time as _time
+
+    def _get_with_retry(url: str, *, attempts: int = 3) -> Any:
+        last_resp = None
+        for i in range(attempts):
+            try:
+                resp = _requests.get(
+                    url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=15,
+                )
+            except Exception as e:
+                debug.append(f"GET {url} attempt {i+1}: {type(e).__name__}: {e!r}")
+                if i + 1 == attempts:
+                    raise
+                _time.sleep(0.5 * (i + 1))
+                continue
+            last_resp = resp
+            if 500 <= resp.status_code < 600 and i + 1 < attempts:
+                debug.append(f"GET {url} attempt {i+1}: {resp.status_code} (retrying)")
+                _time.sleep(0.5 * (i + 1))
+                continue
+            return resp
+        return last_resp
+
+    meta_url = f"{base}/agents/{slug}?api-version={api_ver}"
+    try:
+        r = _get_with_retry(meta_url)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"agent metadata GET raised: {e!r}")
+    debug.append(f"GET {meta_url}: {r.status_code}")
+    if r.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"metadata fetch returned {r.status_code}: {r.text[:1000]}",
+        )
+
+    try:
+        meta = r.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"metadata not JSON: {e!r}")
+
+    versions_obj = meta.get("versions") if isinstance(meta, dict) else None
+    latest = versions_obj.get("latest") if isinstance(versions_obj, dict) else None
+    if not isinstance(latest, dict):
+        raise HTTPException(
+            status_code=502,
+            detail=f"agent metadata has no versions.latest dict; keys={list(meta.keys()) if isinstance(meta, dict) else None}",
+        )
+
+    needs_full_fetch = (
+        "instructions" not in latest
+        and "definition" not in latest
+        and "model" not in latest
+    )
+    if needs_full_fetch:
+        v_num = latest.get("version") or (
+            latest.get("id", "").split(":")[-1] if isinstance(latest.get("id"), str) else None
+        )
+        if not v_num:
+            raise HTTPException(
+                status_code=502,
+                detail=f"could not determine version number from versions.latest: {list(latest.keys())}",
+            )
+        v_url = f"{base}/agents/{slug}/versions/{v_num}?api-version={api_ver}"
+        debug.append(f"versions.latest summary-only; fetching {v_url}")
+        try:
+            r2 = _get_with_retry(v_url)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"version GET raised: {e!r}")
+        debug.append(f"GET {v_url}: {r2.status_code}")
+        if r2.status_code >= 400:
+            raise HTTPException(
+                status_code=502,
+                detail=f"version fetch returned {r2.status_code}: {r2.text[:1000]}",
+            )
+        try:
+            full_version = r2.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"version body not JSON: {e!r}")
+    else:
+        full_version = latest
+
+    READ_ONLY_FIELDS = {
+        "id", "object", "version", "created_at", "createdAt",
+        "updated_at", "updatedAt", "name", "agent_endpoint",
+        "instance_identity", "metadata",
+    }
+
+    if isinstance(full_version.get("definition"), dict):
+        new_definition = {
+            k: v for k, v in full_version["definition"].items()
+            if k not in READ_ONLY_FIELDS
+        }
+        new_definition["model"] = new_model
+        new_body: dict[str, Any] = {"definition": new_definition}
+        if "description" in full_version:
+            new_body["description"] = full_version["description"]
+    else:
+        new_body = {
+            k: v for k, v in full_version.items()
+            if k not in READ_ONLY_FIELDS
+        }
+        new_body["model"] = new_model
+
+    create_url = f"{base}/agents/{slug}/versions?api-version={api_ver}"
+    try:
+        r3 = _requests.post(
+            create_url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=new_body,
+            timeout=30,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"create_version raised: {e!r}")
+    debug.append(f"POST {create_url}: {r3.status_code}")
+    if r3.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": f"create_version returned {r3.status_code}",
+                "body": r3.text[:2000],
+                "_debug": debug,
+            },
+        )
+
+    try:
+        created = r3.json()
+    except Exception:
+        created = {}
+
+    # Bust the read cache so the next /config render reflects the new model.
+    _FOUNDRY_INSTRUCTIONS_CACHE["payload"] = None
+    _FOUNDRY_INSTRUCTIONS_CACHE["ts"] = 0.0
+
+    return {
+        "ok": True,
+        "agent": slug,
+        "model": new_model,
+        "new_version": created.get("version") or created.get("id"),
+        "_debug": debug,
+    }
+
+
 @app.post("/api/foundry/agents/{agent_id}/instructions")
 async def api_foundry_agent_instructions_set(
     agent_id: str,
@@ -2404,6 +2653,115 @@ async def api_foundry_agent_instructions_set(
         )
 
     return _foundry_post_new_version(slug, new_instructions)
+
+
+# ── Available Foundry model deployments ──────────────────────────────
+# The Container App receives the catalog as JSON in
+# AISOC_AVAILABLE_MODEL_DEPLOYMENTS; Terraform builds it from the
+# primary deployment + every entry in foundry_additional_model_deployments.
+# When the env var is missing or unparseable, we fall back to a single
+# entry built from AZURE_AI_MODEL_DEPLOYMENT so the demo still boots.
+
+
+def _available_model_deployments() -> list[dict[str, Any]]:
+    raw = os.getenv("AISOC_AVAILABLE_MODEL_DEPLOYMENTS", "").strip()
+    if raw:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            data = None
+        if isinstance(data, list):
+            out: list[dict[str, Any]] = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or item.get("deployment_name") or "").strip()
+                if not name:
+                    continue
+                out.append({
+                    "name": name,
+                    "model": str(item.get("model") or item.get("model_name") or "").strip(),
+                    "version": str(item.get("version") or item.get("model_version") or "").strip(),
+                    "label": str(item.get("label") or name).strip(),
+                    "description": str(item.get("description") or "").strip(),
+                })
+            if out:
+                return out
+    fallback_name = (os.getenv("AZURE_AI_MODEL_DEPLOYMENT", "") or "").strip()
+    if fallback_name:
+        return [{
+            "name": fallback_name,
+            "model": fallback_name,
+            "version": "",
+            "label": fallback_name,
+            "description": "",
+        }]
+    return []
+
+
+@app.get("/api/foundry/deployments")
+def api_foundry_deployments(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """List the model deployments the SOC manager can pick from in
+    /config. Soc-manager only — same auth gate as the rest of /config."""
+    _require_soc_manager(request, x_pixelagents_token)
+    return {
+        "deployments": _available_model_deployments(),
+        "default": (os.getenv("AZURE_AI_MODEL_DEPLOYMENT", "") or "").strip(),
+    }
+
+
+@app.post("/api/foundry/agents/{agent_id}/model")
+async def api_foundry_agent_model_set(
+    agent_id: str,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Change one Foundry agent's bound model deployment. Body:
+
+        {"model": "<deployment_name>"}
+
+    The new value MUST be one of the entries returned by
+    /api/foundry/deployments — anything else is rejected so the user
+    can't accidentally point an agent at a deployment that doesn't
+    exist in the Foundry account.
+
+    Soc-manager only — agent edits ride the same gate as instructions."""
+
+    _require_soc_manager(req, x_pixelagents_token)
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    new_model = body.get("model")
+    if not isinstance(new_model, str) or not new_model.strip():
+        raise HTTPException(status_code=400, detail="Missing 'model' (string)")
+    new_model = new_model.strip()
+
+    allowed = {d["name"] for d in _available_model_deployments() if d.get("name")}
+    if allowed and new_model not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Model {new_model!r} is not in the configured deployment "
+                f"catalog. Allowed: {sorted(allowed)}"
+            ),
+        )
+
+    slug = _slug_agent(agent_id)
+    if slug not in set(_default_agent_roster()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"agent {slug!r} is not in the configured roster",
+        )
+
+    return _foundry_post_new_version_with_model(slug, new_model)
 
 
 def _ai_projects_token() -> str:

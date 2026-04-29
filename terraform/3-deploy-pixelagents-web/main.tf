@@ -169,6 +169,16 @@ resource "azurerm_container_app" "pixelagents" {
         name        = "AISOC_USERS_JSON"
         secret_name = "aisoc-users-json"
       }
+
+      # Catalog of Foundry model deployments the SOC manager can
+      # pick from in /config (the per-agent model dropdown). Phase 2
+      # builds the JSON list from the primary deployment + every entry
+      # in foundry_additional_model_deployments and exports it via the
+      # foundry_available_deployments_json remote-state output.
+      env {
+        name  = "AISOC_AVAILABLE_MODEL_DEPLOYMENTS"
+        value = try(data.terraform_remote_state.aisoc.outputs.foundry_available_deployments_json, "[]")
+      }
     }
   }
 

@@ -91,6 +91,64 @@
     }
     #${ROOT_ID} .card dd.muted { color: #9ca3af; font-style: italic; font-family: inherit; }
 
+    /* Per-agent model dropdown row. Sits above the toggle button row
+       so the LLM choice is the most prominent control on the card. */
+    #${ROOT_ID} .card .model-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid #f3f4f6;
+      flex-wrap: wrap;
+    }
+    #${ROOT_ID} .card .model-row .model-label {
+      flex: 0 0 auto;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+    #${ROOT_ID} .card .model-row .model-select {
+      flex: 1 1 200px;
+      min-width: 180px;
+      padding: 5px 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #1f2937;
+      background: #ffffff;
+      cursor: pointer;
+    }
+    #${ROOT_ID} .card .model-row .model-select:focus {
+      outline: none;
+      border-color: #0099cc;
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+    }
+    #${ROOT_ID} .card .model-row .model-select:disabled {
+      opacity: 0.55;
+      cursor: wait;
+      background: #f3f4f6;
+    }
+    #${ROOT_ID} .card .model-row .model-hint {
+      flex: 1 1 100%;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+    #${ROOT_ID} .card .model-row .model-status {
+      flex: 1 1 100%;
+      font-size: 11px;
+    }
+    #${ROOT_ID} .card .model-row .model-status.saving { color: #6b7280; font-style: italic; }
+    #${ROOT_ID} .card .model-row .model-status.ok     { color: #065f46; }
+    #${ROOT_ID} .card .model-row .model-status.error  {
+      color: #991b1b;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     #${ROOT_ID} .card .toggle {
       display: flex;
       justify-content: flex-end;
@@ -224,6 +282,21 @@
   // {slug: instructions_text} populated by fetchInstructions(); used by
   // both renderAgent (per-agent expander) and the Generic card IIFE.
   let agentInstructions = {};
+  // {slug: deployment_name} — currently bound model for each agent,
+  // sourced from the same GET /api/foundry/agents/instructions call.
+  let agentModels = {};
+  // Available Foundry model deployments — loaded once from
+  // /api/foundry/deployments. Each entry: {name, model, version,
+  // label, description}.
+  let availableDeployments = [];
+  let availableDeploymentsLoadedAt = 0;
+  // Per-agent inline status from a model-change POST. Map slug ->
+  // {state: 'saving'|'ok'|'error', message: str}.
+  const modelStatus = {};
+  // Slugs whose model-change POST is in flight. Disables the dropdown
+  // until the request resolves so a fast double-click can't fire two
+  // version creates back-to-back.
+  const modelSaving = new Set();
 
   // ── Generic instructions card state ────────────────────────────────
   // These are referenced by renderGenericInstructions() which is
@@ -301,9 +374,50 @@
     }
     html += '</dl>';
 
+    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const currentModel = agentModels[slug] || '';
+    const saving = modelSaving.has(slug);
+    const mStatus = modelStatus[slug];
+    if (availableDeployments.length || currentModel) {
+      // Build the select. If the current model isn't in the catalog
+      // (unusual — happens when an agent points at a deployment that
+      // was never declared in tfvars), surface it as a disabled option
+      // so the user still sees what's bound today.
+      const options = (availableDeployments || []).slice();
+      const haveCurrent = options.some((d) => d.name === currentModel);
+      if (!haveCurrent && currentModel) {
+        options.unshift({
+          name: currentModel,
+          label: `${currentModel} (not in catalog)`,
+          description: '',
+        });
+      }
+      html += '<div class="model-row">';
+      html += `<label class="model-label" for="model-${escapeHtml(slug)}">Model</label>`;
+      html += `<select class="model-select" id="model-${escapeHtml(slug)}" `
+            + `data-model-select="${escapeHtml(slug)}" ${saving ? 'disabled' : ''}>`;
+      if (!options.length) {
+        html += `<option value="">(no deployments configured)</option>`;
+      }
+      for (const opt of options) {
+        const sel = opt.name === currentModel ? 'selected' : '';
+        const lbl = opt.label || opt.name;
+        const title = opt.description || '';
+        html += `<option value="${escapeHtml(opt.name)}" ${sel} `
+              + `title="${escapeHtml(title)}">${escapeHtml(lbl)}</option>`;
+      }
+      html += `</select>`;
+      if (mStatus && mStatus.message) {
+        html += `<span class="model-status ${escapeHtml(mStatus.state || '')}">`
+              + `${escapeHtml(mStatus.message)}</span>`;
+      } else {
+        html += `<span class="model-hint">Changes apply on next agent run.</span>`;
+      }
+      html += '</div>';
+    }
+
     const showInstr = expandedInstructions.has(name);
     const editing = editingInstructions.has(name);
-    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const instr = agentInstructions[slug];
     const hasInstr = typeof instr === 'string' && instr.length > 0;
     // (`status` is already in scope above as the agent's lifecycle
@@ -458,6 +572,17 @@
     root.querySelectorAll('[data-instr-save]').forEach((btn) => {
       btn.addEventListener('click', () => {
         onInstructionsSave(btn.getAttribute('data-instr-save'));
+      });
+    });
+    // Per-agent model dropdown — POSTs on change. Skips if the user
+    // selected the current value (re-binding to the same model is a
+    // no-op but would still spend a Foundry version create).
+    root.querySelectorAll('[data-model-select]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const slug = sel.getAttribute('data-model-select');
+        const newModel = sel.value;
+        if (!newModel || newModel === (agentModels[slug] || '')) return;
+        onAgentModelChange(slug, newModel);
       });
     });
   }
@@ -628,6 +753,14 @@
   // per-agent "Show instructions" buttons can light up.
   fetchAgentInstructions();
   setInterval(fetchAgentInstructions, 60000);
+
+  // Foundry model-deployment catalog — loaded once at boot. The list
+  // doesn't change between deploys (it's pinned to whatever Terraform
+  // built), so a one-shot fetch is enough for the demo. A 5-minute
+  // re-poll catches any post-deploy edits while keeping the request
+  // count low.
+  fetchDeployments();
+  setInterval(fetchDeployments, 5 * 60_000);
 
   // ── Generic instructions card ─────────────────────────────────────
   function injectGenericInstructionsStyles() {
@@ -1042,6 +1175,72 @@
     }
   }
 
+  async function fetchDeployments() {
+    try {
+      const r = await fetch('/api/foundry/deployments', { credentials: 'same-origin' });
+      if (!r.ok) {
+        // 403 (non-soc-manager) or 502 (Foundry hiccup) — leave the
+        // current list intact and try again later.
+        return;
+      }
+      const data = await r.json();
+      const list = (data && data.deployments) || [];
+      if (Array.isArray(list)) {
+        availableDeployments = list;
+        availableDeploymentsLoadedAt = Math.floor(Date.now() / 1000);
+        // Re-render the agents grid so the dropdown options refresh.
+        render(window.__AISOC_AGENTS_LAST || []);
+      }
+    } catch (_) { /* ignore — transient */ }
+  }
+
+  async function onAgentModelChange(slug, newModel) {
+    if (!slug || !newModel) return;
+    if (modelSaving.has(slug)) return;
+    modelSaving.add(slug);
+    modelStatus[slug] = { state: 'saving', message: 'Saving model change to Foundry…' };
+    render(window.__AISOC_AGENTS_LAST || []);
+    try {
+      const r = await fetch(
+        `/api/foundry/agents/${encodeURIComponent(slug)}/model`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: newModel }),
+        },
+      );
+      const text = await r.text().catch(() => '');
+      let data; try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        const detail = data && data.detail;
+        if (typeof detail === 'string') msg += `: ${detail}`;
+        else if (detail && typeof detail === 'object') {
+          msg += `: ${detail.error || ''} ${detail.body || ''}`.trim();
+        } else if (data && data.raw) {
+          msg += `: ${data.raw.slice(0, 300)}`;
+        }
+        modelStatus[slug] = { state: 'error', message: msg };
+        return;
+      }
+      const ver = data && (data.new_version || '');
+      agentModels[slug] = newModel;
+      modelStatus[slug] = {
+        state: 'ok',
+        message: ver ? `Now using ${newModel} (version ${ver})` : `Now using ${newModel}`,
+      };
+      // Re-fetch instructions so the read-only side reflects the
+      // new bound model on subsequent renders.
+      fetchAgentInstructions();
+    } catch (e) {
+      modelStatus[slug] = { state: 'error', message: `Network error: ${e.message || e}` };
+    } finally {
+      modelSaving.delete(slug);
+      render(window.__AISOC_AGENTS_LAST || []);
+    }
+  }
+
   async function fetchAgentInstructions() {
     try {
       const r = await fetch('/api/foundry/agents/instructions',
@@ -1056,13 +1255,19 @@
       giLoadedAt = Math.floor(Date.now() / 1000);
 
       const map = {};
+      const models = {};
       for (const a of (data && data.agents) || []) {
-        if (a && a.slug) map[a.slug] = a.instructions || '';
+        if (!a || !a.slug) continue;
+        map[a.slug] = a.instructions || '';
+        if (typeof a.model === 'string' && a.model) {
+          models[a.slug] = a.model;
+        }
       }
       // Sentinel field so renderAgent can distinguish "loaded but empty"
       // from "still loading".
       map.__loaded = true;
       agentInstructions = map;
+      agentModels = models;
 
       renderGenericInstructions();
       // Re-render the agents grid so the per-agent buttons appear /
