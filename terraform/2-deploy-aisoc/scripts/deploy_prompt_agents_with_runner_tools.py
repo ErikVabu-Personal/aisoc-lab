@@ -23,6 +23,75 @@ import os
 import sys
 from typing import Any, Dict, List
 
+
+def _ensure_project_connection_remote_tool(
+    *,
+    sub_id: str,
+    rg: str,
+    hub: str,
+    project: str,
+    connection_name: str,
+    target_url: str,
+    audience: str,
+) -> None:
+    """Idempotently create or update a Foundry project connection of
+    category=RemoteTool with ProjectManagedIdentity auth, pointing at
+    `target_url`. Used to expose the detection-rules KB's MCP endpoint
+    to the Detection Engineer agent.
+
+    The Azure AI Projects SDK doesn't have a first-class API for
+    RemoteTool connections yet, so we hit ARM directly with the
+    project's MI as the authenticated identity.
+    """
+
+    try:
+        from azure.identity import DefaultAzureCredential
+        import requests as _requests
+    except Exception as e:
+        raise RuntimeError(
+            f"missing azure-identity / requests for project connection: {e!r}"
+        ) from e
+
+    cred = DefaultAzureCredential()
+    token = cred.get_token("https://management.azure.com/.default").token
+
+    api_version = "2025-10-01-preview"
+    url = (
+        f"https://management.azure.com/subscriptions/{sub_id}"
+        f"/resourceGroups/{rg}"
+        f"/providers/Microsoft.CognitiveServices/accounts/{hub}"
+        f"/projects/{project}"
+        f"/connections/{connection_name}"
+        f"?api-version={api_version}"
+    )
+
+    body = {
+        "name": connection_name,
+        "type": "Microsoft.MachineLearningServices/workspaces/connections",
+        "properties": {
+            "authType": "ProjectManagedIdentity",
+            "category": "RemoteTool",
+            "target": target_url,
+            "isSharedToAll": True,
+            "audience": audience,
+            "metadata": {"ApiType": "Azure"},
+        },
+    }
+
+    r = _requests.put(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        json=body,
+        timeout=30,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(
+            f"project connection PUT returned {r.status_code}: {r.text[:1000]}"
+        )
+
 import jsonref
 
 AGENTS = [
@@ -183,6 +252,15 @@ def main() -> int:
     hub = os.environ.get("AZURE_FOUNDRY_HUB_NAME")
     project = os.environ.get("AZURE_FOUNDRY_PROJECT_NAME")
 
+    # Detection Rules KB wiring — optional. When all four are present
+    # AND the kb is enabled, the Detection Engineer agent gets an
+    # extra MCP tool exposing the knowledge base for retrieval.
+    drk_enabled    = (os.environ.get("AISOC_DETECTION_RULES_KB_ENABLED", "false") or "").strip().lower() == "true"
+    drk_search_ep  = (os.environ.get("AISOC_DETECTION_RULES_KB_SEARCH_ENDPOINT", "") or "").strip().rstrip("/")
+    drk_kb_name    = (os.environ.get("AISOC_DETECTION_RULES_KB_NAME", "") or "").strip()
+    drk_conn_name  = (os.environ.get("AISOC_DETECTION_RULES_KB_PROJECT_CONNECTION", "") or "").strip()
+    drk_attach     = bool(drk_enabled and drk_search_ep and drk_kb_name and drk_conn_name)
+
     if (
         not endpoint
         or not model
@@ -274,12 +352,67 @@ def main() -> int:
 
         agent_name = slug(name)
 
+        # Tool list always starts with the runner OpenAPI tool. The
+        # Detection Engineer also gets an MCP tool wired to the
+        # detection-rules Foundry IQ knowledge base, when the kb has
+        # been provisioned by Phase 2 Terraform.
+        tools_for_agent = [tool]
+        if drk_attach and agent_name == "detection-engineer":
+            # Ensure the project connection exists (idempotent). This
+            # can't be done in Terraform because the Foundry project
+            # itself is created post-apply, so we lazily make the
+            # connection right before we need it for the tool wiring.
+            drk_mcp_endpoint = (
+                f"{drk_search_ep}/knowledgebases/{drk_kb_name}"
+                f"/mcp?api-version=2025-11-01-preview"
+            )
+            try:
+                _ensure_project_connection_remote_tool(
+                    sub_id=sub_id,
+                    rg=rg,
+                    hub=hub,
+                    project=project,
+                    connection_name=drk_conn_name,
+                    target_url=drk_mcp_endpoint,
+                    audience="https://search.azure.com/",
+                )
+                print(
+                    f"INFO: project connection {drk_conn_name!r} ready "
+                    f"(RemoteTool / ProjectManagedIdentity)"
+                )
+            except Exception as e:
+                print(
+                    f"WARN: could not create / verify project connection "
+                    f"{drk_conn_name!r}: {e!r}. Skipping MCP-tool attach for "
+                    f"{name}.",
+                    file=sys.stderr,
+                )
+                drk_attach = False  # don't try again on this run
+
+        if drk_attach and agent_name == "detection-engineer":
+            mcp_tool = {
+                "type": "mcp",
+                "server_label": "detection-rules",
+                "server_url": (
+                    f"{drk_search_ep}/knowledgebases/{drk_kb_name}"
+                    f"/mcp?api-version=2025-11-01-preview"
+                ),
+                "require_approval": "never",
+                "allowed_tools": ["knowledge_base_retrieve"],
+                "project_connection_id": drk_conn_name,
+            }
+            tools_for_agent.append(mcp_tool)
+            print(
+                f"INFO: attaching detection-rules MCP tool to {name} "
+                f"(kb={drk_kb_name}, conn={drk_conn_name})"
+            )
+
         agent = client.agents.create_version(
             agent_name=agent_name,
             definition=PromptAgentDefinition(
                 model=model,
                 instructions=load_instructions(name),
-                tools=[tool],
+                tools=tools_for_agent,
             ),
             description=f"AISOC demo agent: {name}",
         )

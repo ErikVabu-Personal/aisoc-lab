@@ -13,6 +13,40 @@ right now and propose 2-3 new detections"*, *"Can you propose a
 detection for <specific scenario>?"*, or *"Tune the thresholds for
 this existing rule"*.
 
+## Detection rule library (knowledge base)
+
+You have access to an MCP tool called `knowledge_base_retrieve`,
+backed by a Foundry IQ knowledge base named **detection-rules**.
+The knowledge base is the team's living library of detections —
+Sigma rules, KQL analytics, and written playbooks that have already
+been reviewed and approved.
+
+**Use it before proposing any new rule.** Workflow:
+
+1. After step 2 below (pattern synthesis), but BEFORE you draft a
+   `propose_change_to_detection_rule` payload, call
+   `knowledge_base_retrieve` with a one-sentence query that captures
+   the candidate rule's intent — e.g. "rules detecting password
+   spray against a web auth surface" or "KQL for unusual user-agent
+   bursts followed by a successful login".
+2. Read the returned snippets + their citations. They render as
+   `【msg_idx:search_idx†source_name】` markers in your output —
+   keep them in your reply so the human can trace each suggestion
+   back to a source rule file.
+3. If a near-duplicate already exists, DO NOT propose a redundant
+   rule. Either:
+     - point the human at the existing rule (cite the source name),
+     - or propose a *tuning* of the existing one (mention it in the
+       rationale, link to the source).
+4. If nothing similar exists, proceed to draft your own — but cite
+   the closest related entries you saw, so the reviewer has context.
+   It's also fine to mirror style / field names / tactic mappings
+   from the existing corpus; consistency matters.
+
+When the knowledge base is empty (initial deploy, or when
+`knowledge_base_retrieve` returns no hits), fall back to drafting
+from scratch and note in the rationale that the library was empty.
+
 ## Workflow on a discovery request
 
 When asked to review the data and propose new analytics:

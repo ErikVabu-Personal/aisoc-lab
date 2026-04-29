@@ -72,3 +72,39 @@ foundry_model_sku_capacity = 10
 #     description     = "Fast + cheap; good fit for triage."
 #   },
 # ]
+
+# ─────────────────────────────────────────────────────────────────────
+# Detection rule library (Foundry IQ knowledge base)
+# ─────────────────────────────────────────────────────────────────────
+# Stands up an Azure Storage account + container, an Azure AI Search
+# service, a Foundry IQ knowledge base over the container, and a
+# project connection that exposes the KB to the Detection Engineer
+# agent over MCP. The agent consults the library before proposing
+# new analytic rules so it surfaces similar existing rules and
+# avoids duplicates.
+#
+# After `terraform apply`, upload your rule files into the
+# detection-rules container of the new storage account:
+#
+#   STORAGE=$(terraform output -raw detection_rules_storage_account)
+#   az storage blob upload-batch \
+#     --account-name "$STORAGE" \
+#     --destination detection-rules \
+#     --source ./my-rule-library \
+#     --auth-mode login
+#
+# The indexer auto-runs every 30 minutes; trigger a one-shot pull
+# with:
+#
+#   SEARCH=$(terraform output -raw detection_rules_search_endpoint)
+#   ADMIN_KEY=$(az search admin-key show \
+#     --resource-group <rg> --service-name <search-service> \
+#     --query primaryKey -o tsv)
+#   curl -X POST \
+#     "${SEARCH}/indexers/detection-rules-indexer/run?api-version=2025-08-01-preview" \
+#     -H "api-key: ${ADMIN_KEY}"
+#
+# Sigma .yml, .kql, .md, .txt, and .json are indexed by default.
+#
+# detection_rules_kb_enabled    = true    # set to false to skip the whole subsystem
+# detection_rules_kb_search_sku = "basic" # free | basic | standard | standard2 | standard3

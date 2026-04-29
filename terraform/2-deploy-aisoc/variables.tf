@@ -95,6 +95,30 @@ variable "foundry_model_sku_capacity" {
 }
 
 
+variable "detection_rules_kb_enabled" {
+  type        = bool
+  description = <<-EOT
+    Stand up the Detection Rules knowledge base (Azure Storage + Azure
+    AI Search + Foundry IQ knowledge base + project connection) and
+    attach it as an MCP tool to the Detection Engineer agent. When
+    true, the agent gains a `knowledge_base_retrieve` tool it can
+    call before proposing new analytic rules so it surfaces similar
+    existing rules and avoids duplicates. Set to false to skip the
+    whole subsystem.
+  EOT
+  default     = true
+}
+
+variable "detection_rules_kb_search_sku" {
+  type        = string
+  description = "Azure AI Search SKU for the Detection Rules knowledge base. Basic is the smallest paid tier that supports agentic retrieval at full quality (~€80/month list); Free is free but tightly capped (50MB, 3 indexes)."
+  default     = "basic"
+  validation {
+    condition     = contains(["free", "basic", "standard", "standard2", "standard3"], var.detection_rules_kb_search_sku)
+    error_message = "detection_rules_kb_search_sku must be one of: free, basic, standard, standard2, standard3."
+  }
+}
+
 variable "foundry_additional_model_deployments" {
   description = <<-EOT
     Extra model deployments to create alongside the primary one. Each

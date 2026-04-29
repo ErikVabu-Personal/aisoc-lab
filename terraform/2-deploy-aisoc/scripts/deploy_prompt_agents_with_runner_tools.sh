@@ -42,6 +42,14 @@ export AZURE_RESOURCE_GROUP="$(terraform output -raw resource_group)"
 export AZURE_FOUNDRY_HUB_NAME="$(terraform output -raw foundry_hub_name)"
 export AZURE_FOUNDRY_PROJECT_NAME="$(terraform output -raw foundry_project_name)"
 
+# Detection Rules knowledge base wiring (optional). Empty values
+# trigger the Python script to skip the MCP-tool attach for the
+# Detection Engineer agent — the rest of the deploy works unchanged.
+export AISOC_DETECTION_RULES_KB_ENABLED="$(terraform output -raw detection_rules_kb_enabled 2>/dev/null || echo false)"
+export AISOC_DETECTION_RULES_KB_SEARCH_ENDPOINT="$(terraform output -raw detection_rules_search_endpoint 2>/dev/null || echo)"
+export AISOC_DETECTION_RULES_KB_NAME="$(terraform output -raw detection_rules_kb_name 2>/dev/null || echo)"
+export AISOC_DETECTION_RULES_KB_PROJECT_CONNECTION="$(terraform output -raw detection_rules_project_connection_name 2>/dev/null || echo)"
+
 RG="$AZURE_RESOURCE_GROUP"
 HUB="$AZURE_FOUNDRY_HUB_NAME"
 PROJ="$AZURE_FOUNDRY_PROJECT_NAME"
