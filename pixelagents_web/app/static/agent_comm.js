@@ -633,6 +633,21 @@
       resize: both;
       font: 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     }
+    /*
+      The vendored Pixel Agents bundle has a global "all-elements"
+      rule that cascades the FS Pixel Sans font into every descendant
+      it can reach (header, button, textarea, placeholders, etc).
+      Floating panels are appended to document.body — outside the
+      sidebar root that already overrides this — so we have to
+      restate the override here too. Same pattern as #aisoc-comm-root.
+      Note: the iframe inside chat panels has its own document; the
+      vendor stylesheet doesn't reach across the iframe boundary, so
+      this rule is enough.
+    */
+    .aisoc-chat-panel,
+    .aisoc-chat-panel * {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+    }
     .aisoc-chat-panel.dragging {
       /* Disable transitions and pointer events on the iframe while
          dragging so the cursor doesn't get stolen by the iframe
@@ -647,11 +662,11 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 12px;
+      padding: 10px 12px;
       background: var(--color-accent, #0099cc);
       color: #ffffff;
       font-weight: 700;
-      font-size: 13px;
+      font-size: 14px;
       cursor: move;
       user-select: none;
     }
