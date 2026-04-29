@@ -599,11 +599,40 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    /* Role pills next to a human's email. Coloured per role so a
-       glance at the sidebar shows who can do what. Slightly smaller
-       than the agent-status pills to leave room for multi-role users. */
+    /* Stacked human head: dot stays on the left, but the name +
+       role pills + DM preview stack vertically inside .hum-info so
+       the pills don't fight the email for horizontal space. */
+    #${ROOT_ID} .item .head.head-stacked {
+      align-items: flex-start;
+    }
+    #${ROOT_ID} .item .head .hum-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    #${ROOT_ID} .item .head .hum-info .name.email {
+      /* Override the row-wide nowrap so the email always fits the
+         column width even when long; the title attr still shows the
+         full address on hover. */
+      max-width: 100%;
+    }
+    #${ROOT_ID} .item .head .hum-info .preview {
+      /* Preview is no longer competing with the name on a single
+         row — drop the flex:1 it inherits and let it sit naturally
+         below the role pills. */
+      flex: none;
+    }
+    #${ROOT_ID} .item .head .role-pills-row {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    /* Role pills under a human's email. Coloured per role so a
+       glance at the sidebar shows who can do what. */
     #${ROOT_ID} .item .head .role-pill {
-      flex-shrink: 0;
+      display: inline-block;
       padding: 1px 7px;
       border-radius: 999px;
       font-size: 9.5px;
@@ -612,7 +641,7 @@
       text-transform: uppercase;
       background: rgba(0,153,204,0.14);
       color: #1e3a8a;
-      max-width: 110px;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -1520,13 +1549,15 @@
     if (isSelf) {
       return `
         <div class="item">
-          <div class="head" style="cursor: default;">
+          <div class="head head-stacked" style="cursor: default;">
             <span class="dot online" title="You"></span>
-            <span class="name email" title="${escapeHtml(peer)}">`
-            + `${escapeHtml(peer)} `
-            + `<em style="font-style:italic;opacity:0.6;font-weight:500;">(you)</em>`
-            + `</span>
-            ${pills}
+            <div class="hum-info">
+              <span class="name email" title="${escapeHtml(peer)}">`
+              + `${escapeHtml(peer)} `
+              + `<em style="font-style:italic;opacity:0.6;font-weight:500;">(you)</em>`
+              + `</span>
+              ${pills ? `<div class="role-pills-row">${pills}</div>` : ''}
+            </div>
           </div>
         </div>`;
     }
@@ -1539,13 +1570,18 @@
           : 'Offline');
 
     // Click on the row opens a draggable in-page chat panel for this human.
+    // The head uses a vertical stack (.hum-info) so the email keeps
+    // its own line + the role pills sit cleanly below it without
+    // competing for horizontal space.
     return `
       <div class="item">
-        <div class="head" data-popup-human="${escapeHtml(peer)}">
+        <div class="head head-stacked" data-popup-human="${escapeHtml(peer)}">
           <span class="${dotCls}" title="${escapeHtml(dotTitle)}"></span>
-          <span class="name email" title="${escapeHtml(peer)}">${escapeHtml(peer)}</span>
-          ${pills}
-          <span class="preview">${escapeHtml(dmPreviewFor(peer))}</span>
+          <div class="hum-info">
+            <span class="name email" title="${escapeHtml(peer)}">${escapeHtml(peer)}</span>
+            ${pills ? `<div class="role-pills-row">${pills}</div>` : ''}
+            <span class="preview">${escapeHtml(dmPreviewFor(peer))}</span>
+          </div>
         </div>
       </div>`;
   }
