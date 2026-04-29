@@ -1014,6 +1014,48 @@ WORKFLOW_RUNS_CAP = 20
 INCIDENT_PHASES: dict[str, dict[str, Any]] = {}
 
 
+# Per-incident audit log of human actions (owner / status edits, manual
+# orchestrate triggers, HITL replies). The /api/incidents/{n}/timeline
+# endpoint mixes these with cost records + tool-call events to build the
+# combined timeline shown in the in-page incident-details panel.
+#
+# Shape: { "<incident_number>": [ {ts, kind, actor, details}, ... ] }
+# Capped per-incident so a long-running demo doesn't grow unbounded.
+INCIDENT_AUDIT: dict[str, list[dict[str, Any]]] = {}
+_INCIDENT_AUDIT_CAP = 200
+
+
+def _audit_record(
+    incident_number: Any,
+    kind: str,
+    actor: str | None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Append one audit row for an incident. No-op when incident_number
+    is missing — the timeline filter would never surface it anyway.
+    Best-effort: raises are swallowed so a botched audit write can't
+    break the originating action."""
+    if incident_number is None:
+        return
+    try:
+        key = str(int(incident_number))
+    except (TypeError, ValueError):
+        return
+    bucket = INCIDENT_AUDIT.get(key)
+    if bucket is None:
+        bucket = []
+        INCIDENT_AUDIT[key] = bucket
+    bucket.append({
+        "ts": time.time(),
+        "kind": kind,
+        "actor": actor or "",
+        "details": details or {},
+    })
+    if len(bucket) > _INCIDENT_AUDIT_CAP:
+        # Trim oldest, keep most recent.
+        del bucket[: len(bucket) - _INCIDENT_AUDIT_CAP]
+
+
 def _set_phase(incident_number: int, phase: str, reason: str) -> None:
     """Record the current view-level phase for an incident."""
     INCIDENT_PHASES[str(incident_number)] = {
@@ -2875,6 +2917,13 @@ async def orchestrate_incident(
     mode = body.get("mode") or "full"
     writeback = body["writeback"] if "writeback" in body else True
 
+    _audit_record(
+        incident_number,
+        kind="manual_trigger",
+        actor=triggering_user,
+        details={"mode": mode, "writeback": bool(writeback)},
+    )
+
     try:
         return await _orchestrate_one(
             incident_number,
@@ -3033,6 +3082,12 @@ async def api_incident_set_owner(
 
     if _is_triage_assignment(owner):
         # Triage path — fire the workflow.
+        _audit_record(
+            incident_number,
+            kind="re_triage",
+            actor=triggering_user,
+            details={"reason": "owner reassigned to Triage Agent"},
+        )
         result = await _trigger_triage_only(incident_number, triggering_user)
         return {
             "ok": True,
@@ -3049,6 +3104,12 @@ async def api_incident_set_owner(
         )
 
     await _orchestrator_set_owner_or_status(incident_number, owner=owner)
+    _audit_record(
+        incident_number,
+        kind="owner_changed",
+        actor=triggering_user,
+        details={"to": owner},
+    )
     return {
         "ok": True,
         "action": "owner-set",
@@ -3104,6 +3165,12 @@ async def api_incident_set_status(
         # as it kicks off — that's expected behaviour, the user's
         # intent was "re-triage this" rather than "literally store
         # 'New' in Sentinel."
+        _audit_record(
+            incident_number,
+            kind="re_triage",
+            actor=triggering_user,
+            details={"reason": "status flipped to New"},
+        )
         result = await _trigger_triage_only(incident_number, triggering_user)
         return {
             "ok": True,
@@ -3114,11 +3181,178 @@ async def api_incident_set_status(
 
     # status == "Active" — just write the status, no workflow.
     await _orchestrator_set_owner_or_status(incident_number, status=status)
+    _audit_record(
+        incident_number,
+        kind="status_changed",
+        actor=triggering_user,
+        details={"to": status},
+    )
     return {
         "ok": True,
         "action": "status-set",
         "incident_number": incident_number,
         "status": status,
+    }
+
+
+# ── Incident timeline aggregator ─────────────────────────────────────
+# Combines four in-memory sources (cost records, runner tool-call
+# events, HITL question-and-answer pairs, INCIDENT_AUDIT human actions)
+# into a single time-ordered timeline for the in-page incident-details
+# panel on the dashboard. All sources are server-process-local; the
+# Container App is pinned to one replica so this isn't a sharding
+# problem for the demo.
+
+
+@app.get("/api/incidents/{incident_number}/timeline")
+def api_incident_timeline(
+    incident_number: int,
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Return a combined timeline for one incident.
+
+    Output shape:
+      {
+        "incident_number": int,
+        "events": [ {ts, kind, ...}, ... ]   (sorted ascending by ts),
+        "totals": { eur_cost, tokens_in, tokens_out, agent_phases,
+                    tool_calls, hitl_questions, human_actions }
+      }
+    """
+
+    _require_auth(request, x_pixelagents_token)
+
+    key = str(incident_number)
+    events: list[dict[str, Any]] = []
+    totals = {
+        "eur_cost": 0.0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "agent_phases": 0,
+        "tool_calls": 0,
+        "hitl_questions": 0,
+        "human_actions": 0,
+    }
+
+    # 1) Agent phases — from COSTS records (one record per phase end).
+    cost_bucket = COSTS.get(key)
+    if isinstance(cost_bucket, dict):
+        for r in (cost_bucket.get("records") or []):
+            ts = float(r.get("ts") or 0)
+            events.append({
+                "ts": ts,
+                "kind": "agent_phase",
+                "agent": r.get("agent"),
+                "phase": r.get("phase"),
+                "workflow_run_id": r.get("workflow_run_id"),
+                "input_tokens": int(r.get("input_tokens") or 0),
+                "output_tokens": int(r.get("output_tokens") or 0),
+                "eur_cost": float(r.get("eur_cost") or 0.0),
+            })
+            totals["agent_phases"] += 1
+            totals["eur_cost"] += float(r.get("eur_cost") or 0.0)
+            totals["tokens_in"] += int(r.get("input_tokens") or 0)
+            totals["tokens_out"] += int(r.get("output_tokens") or 0)
+
+    # 2) Tool calls — runner /events tagged with this incident_number.
+    #    Only tool.call.end carries duration; tool.call.start is the
+    #    "I'm working" signal. We surface ends (more useful) and the
+    #    start as a separate row when there's no matching end (still
+    #    in flight or runner crashed mid-call).
+    seen_starts: dict[tuple, dict[str, Any]] = {}
+    for ev in EVENTS:
+        try:
+            inc = ev.get("incident_number")
+            if inc is None or int(inc) != incident_number:
+                continue
+        except (TypeError, ValueError):
+            continue
+        ev_type = (ev.get("type") or "").lower()
+        if ev_type == "tool.call.start":
+            seen_starts[(ev.get("agent"), ev.get("tool_name"), ev.get("ts"))] = ev
+        elif ev_type == "tool.call.end":
+            ts = float(ev.get("ts") or 0)
+            events.append({
+                "ts": ts,
+                "kind": "tool_call",
+                "agent": ev.get("agent"),
+                "tool_name": ev.get("tool_name"),
+                "duration_ms": int(ev.get("duration_ms") or 0),
+            })
+            totals["tool_calls"] += 1
+    # Surface in-flight starts that never matched an end (rare).
+    for (_, _, _), ev in seen_starts.items():
+        # Crude pairing: if any end after this start with same agent+tool
+        # exists, skip. Otherwise treat as in-flight.
+        in_flight = True
+        for ev2 in EVENTS:
+            if (ev2.get("type") or "").lower() != "tool.call.end":
+                continue
+            try:
+                if int(ev2.get("incident_number") or -1) != incident_number:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            if ev2.get("agent") == ev.get("agent") and ev2.get("tool_name") == ev.get("tool_name") \
+                    and float(ev2.get("ts") or 0) >= float(ev.get("ts") or 0):
+                in_flight = False
+                break
+        if in_flight:
+            events.append({
+                "ts": float(ev.get("ts") or 0),
+                "kind": "tool_call_inflight",
+                "agent": ev.get("agent"),
+                "tool_name": ev.get("tool_name"),
+            })
+            totals["tool_calls"] += 1
+
+    # 3) HITL questions + answers.
+    for q in HITL_QUESTIONS.values():
+        try:
+            qi = q.get("incident_number")
+            if qi is None or int(qi) != incident_number:
+                continue
+        except (TypeError, ValueError):
+            continue
+        events.append({
+            "ts": float(q.get("asked_at") or 0),
+            "kind": "hitl_question",
+            "agent": q.get("agent"),
+            "agent_display": q.get("agent_display"),
+            "question": q.get("question"),
+            "target": q.get("target") or "",
+            "required_role": q.get("required_role"),
+            "status": q.get("status"),
+        })
+        totals["hitl_questions"] += 1
+        if q.get("status") == "answered" and q.get("answered_at"):
+            events.append({
+                "ts": float(q.get("answered_at") or 0),
+                "kind": "hitl_answer",
+                "agent": q.get("agent"),
+                "answer": q.get("answer") or "",
+                "answered_target": q.get("target") or "",
+            })
+
+    # 4) Human actions from the audit log.
+    for rec in INCIDENT_AUDIT.get(key, []):
+        events.append({
+            "ts": float(rec.get("ts") or 0),
+            "kind": "human_action",
+            "action": rec.get("kind"),
+            "actor": rec.get("actor") or "",
+            "details": rec.get("details") or {},
+        })
+        totals["human_actions"] += 1
+
+    events.sort(key=lambda e: e.get("ts") or 0)
+
+    return {
+        "incident_number": incident_number,
+        "events": events,
+        "totals": totals,
+        "ts": time.time(),
     }
 
 
@@ -3598,6 +3832,21 @@ async def hitl_submit_answer(
     q["answer"] = answer
     q["answered_at"] = time.time()
     q["status"] = "answered"
+    # Record on the per-incident timeline so the details panel surfaces
+    # human replies alongside agent activity. HITL questions without an
+    # incident binding (chat-initiated asks) have no incident to log to.
+    inc_for_audit = q.get("incident_number")
+    if inc_for_audit is not None:
+        _audit_record(
+            inc_for_audit,
+            kind="hitl_answer",
+            actor=_session_user(req),
+            details={
+                "question_id": qid,
+                "agent": q.get("agent"),
+                "answer": answer,
+            },
+        )
     return _hitl_public(q)
 
 

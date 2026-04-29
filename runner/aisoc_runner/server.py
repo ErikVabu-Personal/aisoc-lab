@@ -179,6 +179,22 @@ def tools_execute(
 
     agent = x_aisoc_agent or payload.get("agent") or os.getenv("DEFAULT_AGENT_NAME", "unknown")
     started = time.time()
+
+    # Best-effort incident binding: when the tool's args carry an
+    # incidentNumber / incident_number, attach it to the event so
+    # PixelAgents Web can group this call under the right case in the
+    # incident-details timeline. Tools that don't operate on a specific
+    # incident (kql_query, list_incidents, ask_human without binding)
+    # leave it unset.
+    incident_number_for_event: int | None = None
+    if isinstance(args, dict):
+        raw_inc = args.get("incident_number") or args.get("incidentNumber")
+        if raw_inc is not None:
+            try:
+                incident_number_for_event = int(raw_inc)
+            except (TypeError, ValueError):
+                incident_number_for_event = None
+
     _emit_pixelagents_event(
         {
             "type": "tool.call.start",
@@ -186,6 +202,7 @@ def tools_execute(
             "state": "typing",
             "tool_name": tool_name,
             "args_keys": sorted(list(args.keys())) if isinstance(args, dict) else [],
+            "incident_number": incident_number_for_event,
             "ts": started,
         }
     )
@@ -836,6 +853,7 @@ def tools_execute(
                 "state": "idle",
                 "tool_name": tool_name,
                 "duration_ms": int((ended - started) * 1000),
+                "incident_number": incident_number_for_event,
                 "ts": ended,
             }
         )

@@ -596,16 +596,11 @@
         const summary = runsSummary[numStr] || null;
         const isExpanded = expandedIncidents.has(numStr);
 
-        const portalUrl = sentinelPortalUrl(inc);
         body += `<tr class="${running ? 'running' : ''}">`;
         body += `<td class="num">`;
-        if (portalUrl) {
-          body += `<a href="${escapeHtml(portalUrl)}" target="_blank" rel="noopener" `
-                + `title="Open incident #${num} in Microsoft Sentinel">`
-                + `#${num}<span class="ext">↗</span></a>`;
-        } else {
-          body += `#${num}`;
-        }
+        body += `<a href="#" data-open-incident="${num}" `
+              + `title="View incident details (timeline of agents, tools, humans)">`
+              + `#${num}</a>`;
         body += `</td>`;
         body += `<td class="title">${escapeHtml(inc.title || '')}</td>`;
         body += `<td><span class="sev ${severityClass(inc.severity)}">${escapeHtml(inc.severity || '?')}</span></td>`;
@@ -753,6 +748,20 @@
         render();
       });
     }
+
+    // Open the in-page incident-details panel when the user clicks
+    // the # column. The panel shows a combined timeline (agent
+    // phases, tool calls, HITL Q&A, human actions). A "View in
+    // Sentinel" link inside the panel header preserves the old
+    // jump-to-Sentinel behaviour for users who need it.
+    root.querySelectorAll('[data-open-incident]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const num = Number(el.getAttribute('data-open-incident'));
+        const inc = (window.__INCIDENTS_CACHE || []).find((x) => Number(x.number) === num);
+        openIncidentPanel(num, inc);
+      });
+    });
 
     // Click-to-edit triggers — Status pill / Owner pill.
     root.querySelectorAll('[data-open-status]').forEach((el) => {
@@ -935,7 +944,14 @@
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       incidents = (data && data.incidents) || [];
+      // Mirror the latest list onto window so the incident-details
+      // panel handler can resolve a row's title / arm_id / severity
+      // without a re-fetch.
+      window.__INCIDENTS_CACHE = incidents;
       render();
+      // Bump every open detail panel so its sidebar metadata
+      // (severity, status, owner) reflects the freshest snapshot.
+      refreshIncidentPanels();
     } catch (e) {
       // Show the error inline once instead of clobbering the table.
       if (!incidents.length) {
@@ -1003,4 +1019,475 @@
   setInterval(pollRuns, POLL_COSTS_MS);
   // Roster doesn't change often; refresh once a minute is plenty.
   setInterval(pollRoster, 60_000);
+
+  // ── Incident-details panel (draggable) ────────────────────────────
+  // Same pattern as the chat / change panels in agent_comm.js: a
+  // fixed-position div with a draggable header and a scrollable body
+  // showing a combined timeline (agent phases, tool calls, HITL Q&A,
+  // human actions). Multiple panels can be open at once and cascade
+  // visibly. We poll /api/incidents/{n}/timeline every 3s while a
+  // panel is open so live runs stream in.
+
+  injectIncidentPanelStyles();
+  const incidentPanels = new Map(); // num -> { el, render, timer }
+  let nextZ = 9000;
+  let cascadeOffset = 0;
+  let openPanelsPollers = 0;
+
+  function injectIncidentPanelStyles() {
+    if (document.getElementById('aisoc-incident-panel-styles')) return;
+    const css = `
+      .aisoc-incident-panel {
+        position: fixed;
+        top: 80px;
+        left: 80px;
+        width: 560px;
+        height: 680px;
+        min-width: 380px;
+        min-height: 360px;
+        max-width: 95vw;
+        max-height: 95vh;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+        z-index: 9000;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        resize: both;
+        font: 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      }
+      .aisoc-incident-panel,
+      .aisoc-incident-panel * {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+      }
+      .aisoc-incident-panel.dragging { user-select: none; }
+      .aisoc-incident-panel > header {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        background: #0099cc;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 14px;
+        cursor: move;
+        user-select: none;
+      }
+      .aisoc-incident-panel > header .num {
+        font-variant-numeric: tabular-nums;
+        flex-shrink: 0;
+      }
+      .aisoc-incident-panel > header .title {
+        flex: 1; min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 500;
+        opacity: 0.92;
+      }
+      .aisoc-incident-panel > header .ext {
+        flex-shrink: 0;
+        color: #ffffff;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 600;
+        background: rgba(255,255,255,0.16);
+        padding: 3px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .aisoc-incident-panel > header .ext:hover {
+        background: rgba(255,255,255,0.30);
+      }
+      .aisoc-incident-panel > header .close {
+        flex-shrink: 0;
+        width: 22px; height: 22px;
+        border: none;
+        border-radius: 4px;
+        background: rgba(255,255,255,0.16);
+        color: #ffffff;
+        font-size: 16px; line-height: 1;
+        cursor: pointer; padding: 0;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .aisoc-incident-panel > header .close:hover { background: rgba(255,255,255,0.30); }
+
+      .aisoc-incident-panel > .body {
+        flex: 1; min-height: 0;
+        overflow-y: auto;
+        padding: 12px 14px;
+        background: #f9fafb;
+      }
+      .aisoc-incident-panel .meta {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        column-gap: 10px;
+        row-gap: 4px;
+        font-size: 12.5px;
+      }
+      .aisoc-incident-panel .meta dt {
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-size: 10.5px;
+        font-weight: 700;
+        align-self: center;
+      }
+      .aisoc-incident-panel .meta dd {
+        margin: 0;
+        color: #1f2937;
+      }
+      .aisoc-incident-panel .totals {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+        gap: 10px;
+      }
+      .aisoc-incident-panel .totals .stat {
+        text-align: center;
+      }
+      .aisoc-incident-panel .totals .stat .label {
+        color: #6b7280;
+        font-size: 9.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 700;
+      }
+      .aisoc-incident-panel .totals .stat .value {
+        color: #1f2937;
+        font-size: 16px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        margin-top: 2px;
+      }
+      .aisoc-incident-panel .timeline {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 4px 0;
+      }
+      .aisoc-incident-panel .timeline .row {
+        display: flex;
+        gap: 10px;
+        padding: 8px 12px;
+        border-bottom: 1px solid #f3f4f6;
+      }
+      .aisoc-incident-panel .timeline .row:last-child { border-bottom: none; }
+      .aisoc-incident-panel .timeline .ts {
+        flex: 0 0 78px;
+        color: #6b7280;
+        font-size: 11px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        padding-top: 1px;
+      }
+      .aisoc-incident-panel .timeline .marker {
+        flex: 0 0 18px;
+        font-size: 14px;
+        line-height: 1.3;
+        text-align: center;
+      }
+      .aisoc-incident-panel .timeline .body-cell {
+        flex: 1;
+        font-size: 12.5px;
+        color: #1f2937;
+        word-wrap: break-word;
+      }
+      .aisoc-incident-panel .timeline .body-cell .head {
+        font-weight: 600;
+      }
+      .aisoc-incident-panel .timeline .body-cell .head .agent {
+        color: #1e3a8a;
+      }
+      .aisoc-incident-panel .timeline .body-cell .sub {
+        color: #6b7280;
+        font-size: 11.5px;
+        margin-top: 2px;
+      }
+      .aisoc-incident-panel .timeline .body-cell pre.q {
+        margin: 4px 0 0;
+        padding: 6px 8px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 4px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #1f2937;
+      }
+      .aisoc-incident-panel .timeline .row.kind-agent_phase     .marker { color: #0099cc; }
+      .aisoc-incident-panel .timeline .row.kind-tool_call       .marker { color: #6b7280; }
+      .aisoc-incident-panel .timeline .row.kind-tool_call_inflight .marker { color: #f59e0b; }
+      .aisoc-incident-panel .timeline .row.kind-hitl_question   .marker { color: #facc15; }
+      .aisoc-incident-panel .timeline .row.kind-hitl_answer     .marker { color: #10b981; }
+      .aisoc-incident-panel .timeline .row.kind-human_action    .marker { color: #7c3aed; }
+      .aisoc-incident-panel .empty,
+      .aisoc-incident-panel .err {
+        text-align: center;
+        font-style: italic;
+        color: #6b7280;
+        padding: 18px 12px;
+        font-size: 13px;
+      }
+      .aisoc-incident-panel .err {
+        color: #991b1b;
+        font-style: normal;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+    `;
+    const style = document.createElement('style');
+    style.id = 'aisoc-incident-panel-styles';
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  function raisePanel(el) {
+    nextZ += 1;
+    el.style.zIndex = String(nextZ);
+  }
+
+  function attachDrag(panelEl, headerEl) {
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+    let pointerId = null;
+    headerEl.addEventListener('pointerdown', (ev) => {
+      if (ev.target && ev.target.closest && ev.target.closest('.close, .ext')) return;
+      pointerId = ev.pointerId;
+      startX = ev.clientX; startY = ev.clientY;
+      const rect = panelEl.getBoundingClientRect();
+      startLeft = rect.left; startTop = rect.top;
+      panelEl.classList.add('dragging');
+      headerEl.setPointerCapture(pointerId);
+      raisePanel(panelEl);
+      ev.preventDefault();
+    });
+    headerEl.addEventListener('pointermove', (ev) => {
+      if (pointerId == null || ev.pointerId !== pointerId) return;
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const w = panelEl.offsetWidth, h = panelEl.offsetHeight;
+      const nl = Math.max(-(w - 80), Math.min(vw - 40, startLeft + dx));
+      const nt = Math.max(0, Math.min(vh - 40, startTop + dy));
+      panelEl.style.left = `${nl}px`;
+      panelEl.style.top  = `${nt}px`;
+    });
+    function release(ev) {
+      if (pointerId == null || ev.pointerId !== pointerId) return;
+      try { headerEl.releasePointerCapture(pointerId); } catch (_) {}
+      pointerId = null;
+      panelEl.classList.remove('dragging');
+    }
+    headerEl.addEventListener('pointerup', release);
+    headerEl.addEventListener('pointercancel', release);
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString();
+  }
+
+  function fmtEur(n) {
+    return `€${(Number(n) || 0).toFixed(4)}`;
+  }
+
+  function escapeHtmlSafe(s) { return escapeHtml(String(s == null ? '' : s)); }
+
+  function renderTimelineEvent(ev) {
+    const ts = fmtTime(ev.ts);
+    let marker = '·';
+    let body = '';
+    let cls = `kind-${escapeHtmlSafe(ev.kind || '')}`;
+    if (ev.kind === 'agent_phase') {
+      marker = '🤖';
+      const dur = (ev.input_tokens + ev.output_tokens > 0)
+        ? ` · in ${ev.input_tokens} / out ${ev.output_tokens} tok · ${fmtEur(ev.eur_cost)}`
+        : '';
+      body = `<div class="head"><span class="agent">${escapeHtmlSafe(ev.agent)}</span> finished phase <em>${escapeHtmlSafe(ev.phase)}</em></div>`
+           + (dur ? `<div class="sub">${escapeHtmlSafe(dur)}</div>` : '');
+    } else if (ev.kind === 'tool_call') {
+      marker = '🔧';
+      body = `<div class="head"><span class="agent">${escapeHtmlSafe(ev.agent)}</span> called <code>${escapeHtmlSafe(ev.tool_name)}</code></div>`
+           + (ev.duration_ms != null ? `<div class="sub">${escapeHtmlSafe(ev.duration_ms)}ms</div>` : '');
+    } else if (ev.kind === 'tool_call_inflight') {
+      marker = '⏳';
+      body = `<div class="head"><span class="agent">${escapeHtmlSafe(ev.agent)}</span> is running <code>${escapeHtmlSafe(ev.tool_name)}</code>…</div>`
+           + `<div class="sub">tool call still in flight</div>`;
+    } else if (ev.kind === 'hitl_question') {
+      marker = '❓';
+      const target = ev.target ? ` → ${escapeHtmlSafe(ev.target)}` : (ev.required_role ? ` → role:${escapeHtmlSafe(ev.required_role)}` : ' (broadcast)');
+      body = `<div class="head"><span class="agent">${escapeHtmlSafe(ev.agent)}</span> asked the human${target}</div>`
+           + (ev.question ? `<pre class="q">${escapeHtmlSafe(ev.question)}</pre>` : '');
+    } else if (ev.kind === 'hitl_answer') {
+      marker = '💬';
+      body = `<div class="head">Human replied to <span class="agent">${escapeHtmlSafe(ev.agent)}</span></div>`
+           + (ev.answer ? `<pre class="q">${escapeHtmlSafe(ev.answer)}</pre>` : '');
+    } else if (ev.kind === 'human_action') {
+      marker = '👤';
+      const labels = {
+        owner_changed:   'Owner reassigned',
+        status_changed:  'Status changed',
+        re_triage:       'Re-triage triggered',
+        manual_trigger:  'Manual workflow run',
+        hitl_answer:     'HITL reply sent',  // unused — HITL has its own kind
+      };
+      const action = labels[ev.action] || ev.action || 'Action';
+      const det = ev.details || {};
+      const detStr = Object.keys(det).length
+        ? Object.entries(det).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ')
+        : '';
+      body = `<div class="head">${escapeHtmlSafe(action)}${ev.actor ? ' by ' + escapeHtmlSafe(ev.actor) : ''}</div>`
+           + (detStr ? `<div class="sub">${escapeHtmlSafe(detStr)}</div>` : '');
+    } else {
+      body = `<div class="head">${escapeHtmlSafe(ev.kind)}</div>`;
+    }
+    return `<div class="row ${cls}"><div class="ts">${ts}</div><div class="marker">${marker}</div><div class="body-cell">${body}</div></div>`;
+  }
+
+  function renderIncidentMeta(inc) {
+    if (!inc) return '<div class="meta"><dt>Loading</dt><dd>fetching incident metadata…</dd></div>';
+    const sev = inc.severity || '—';
+    const status = inc.status || '—';
+    const owner = inc.owner || '—';
+    const portal = sentinelPortalUrl(inc);
+    return `<dl class="meta">`
+         + `<dt>Title</dt><dd>${escapeHtmlSafe(inc.title || '(no title)')}</dd>`
+         + `<dt>Severity</dt><dd>${escapeHtmlSafe(sev)}</dd>`
+         + `<dt>Status</dt><dd>${escapeHtmlSafe(status)}</dd>`
+         + `<dt>Owner</dt><dd>${escapeHtmlSafe(owner)}</dd>`
+         + (portal ? `<dt>Sentinel</dt><dd><a href="${escapeHtmlSafe(portal)}" target="_blank" rel="noopener">${escapeHtmlSafe(portal)}</a></dd>` : '')
+         + `</dl>`;
+  }
+
+  function renderTotals(totals) {
+    const t = totals || {};
+    return `<div class="totals">`
+         + `<div class="stat"><div class="label">Phases</div><div class="value">${escapeHtmlSafe(t.agent_phases || 0)}</div></div>`
+         + `<div class="stat"><div class="label">Tool calls</div><div class="value">${escapeHtmlSafe(t.tool_calls || 0)}</div></div>`
+         + `<div class="stat"><div class="label">HITL asks</div><div class="value">${escapeHtmlSafe(t.hitl_questions || 0)}</div></div>`
+         + `<div class="stat"><div class="label">Human actions</div><div class="value">${escapeHtmlSafe(t.human_actions || 0)}</div></div>`
+         + `<div class="stat"><div class="label">Tokens in</div><div class="value">${escapeHtmlSafe(t.tokens_in || 0)}</div></div>`
+         + `<div class="stat"><div class="label">Tokens out</div><div class="value">${escapeHtmlSafe(t.tokens_out || 0)}</div></div>`
+         + `<div class="stat"><div class="label">Cost</div><div class="value">${fmtEur(t.eur_cost)}</div></div>`
+         + `</div>`;
+  }
+
+  function closeIncidentPanel(num) {
+    const rec = incidentPanels.get(num);
+    if (!rec) return;
+    if (rec.timer) clearInterval(rec.timer);
+    try { rec.el.remove(); } catch (_) {}
+    incidentPanels.delete(num);
+  }
+
+  function refreshIncidentPanels() {
+    for (const [, rec] of incidentPanels) {
+      // Pull fresh meta off the incidents cache; the timeline body
+      // re-fetches itself on its own interval.
+      rec.refreshMeta();
+    }
+  }
+
+  async function fetchTimeline(num) {
+    const r = await fetch(`/api/incidents/${num}/timeline`, { credentials: 'same-origin' });
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status}${text ? `: ${text.slice(0, 240)}` : ''}`);
+    }
+    return r.json();
+  }
+
+  function openIncidentPanel(num, incFromCache) {
+    const existing = incidentPanels.get(num);
+    if (existing) {
+      raisePanel(existing.el);
+      return existing;
+    }
+
+    const panel = document.createElement('div');
+    panel.className = 'aisoc-incident-panel';
+    const baseLeft = 80, baseTop = 80;
+    panel.style.left = `${baseLeft + cascadeOffset}px`;
+    panel.style.top  = `${baseTop + cascadeOffset}px`;
+    cascadeOffset = (cascadeOffset + 30) % 240;
+
+    const inc0 = incFromCache || (window.__INCIDENTS_CACHE || []).find((x) => Number(x.number) === num) || null;
+    const portalAttr = inc0 && inc0.arm_id
+      ? ` href="${escapeHtmlSafe(sentinelPortalUrl(inc0))}" target="_blank" rel="noopener" title="Open #${num} in Microsoft Sentinel"`
+      : '';
+
+    panel.innerHTML = `
+      <header>
+        <span class="num">#${escapeHtmlSafe(num)}</span>
+        <span class="title" data-title>${escapeHtmlSafe((inc0 && inc0.title) || 'Loading…')}</span>
+        ${inc0 && inc0.arm_id ? `<a class="ext"${portalAttr}>Sentinel ↗</a>` : ''}
+        <button class="close" aria-label="Close" title="Close">&times;</button>
+      </header>
+      <div class="body">
+        <div data-meta>${renderIncidentMeta(inc0)}</div>
+        <div data-totals></div>
+        <div data-timeline class="timeline"><div class="empty">Loading timeline…</div></div>
+      </div>
+    `;
+    document.body.appendChild(panel);
+    raisePanel(panel);
+
+    const headerEl = panel.querySelector('header');
+    const closeBtn = panel.querySelector('button.close');
+    const metaEl = panel.querySelector('[data-meta]');
+    const titleEl = panel.querySelector('[data-title]');
+    const totalsEl = panel.querySelector('[data-totals]');
+    const timelineEl = panel.querySelector('[data-timeline]');
+
+    closeBtn.addEventListener('click', () => closeIncidentPanel(num));
+    panel.addEventListener('mousedown', () => raisePanel(panel), true);
+    attachDrag(panel, headerEl);
+
+    function refreshMeta() {
+      const inc = (window.__INCIDENTS_CACHE || []).find((x) => Number(x.number) === num);
+      if (!inc) return;
+      titleEl.textContent = inc.title || titleEl.textContent;
+      metaEl.innerHTML = renderIncidentMeta(inc);
+    }
+
+    async function refreshTimeline() {
+      try {
+        const data = await fetchTimeline(num);
+        const events = data.events || [];
+        if (!events.length) {
+          timelineEl.innerHTML = '<div class="empty">No activity yet for this incident.</div>';
+        } else {
+          timelineEl.innerHTML = events.map(renderTimelineEvent).join('');
+        }
+        totalsEl.innerHTML = renderTotals(data.totals);
+      } catch (e) {
+        timelineEl.innerHTML = `<div class="err">Failed to load timeline: ${escapeHtmlSafe(e.message || e)}</div>`;
+      }
+    }
+
+    // Initial fetch + 3s refresh while the panel is open. cleared on
+    // close so we don't keep polling for closed panels.
+    refreshTimeline();
+    const timer = setInterval(refreshTimeline, 3000);
+
+    incidentPanels.set(num, {
+      el: panel,
+      refreshMeta,
+      refreshTimeline,
+      timer,
+    });
+    return incidentPanels.get(num);
+  }
 })();
