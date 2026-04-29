@@ -604,6 +604,109 @@
   style.textContent = css;
   document.head.appendChild(style);
 
+  // ── Floating chat-panel CSS ──────────────────────────────────────
+  // Each .aisoc-chat-panel is a fixed-position, draggable, resizable
+  // box that hosts an iframe pointing at /chat-popup. Replaces the
+  // old window.open-based popups, which Chromium kept showing a URL
+  // bar on. z-index sits below the sidebar (9999) so the sidebar
+  // remains usable, but above the rest of the page.
+  const panelCss = `
+    .aisoc-chat-panel {
+      position: fixed;
+      top: 80px;
+      left: 80px;
+      width: 440px;
+      height: 640px;
+      min-width: 320px;
+      min-height: 360px;
+      max-width: 95vw;
+      max-height: 95vh;
+      background: #ffffff;
+      border: 1px solid var(--color-border, #cbd5e1);
+      border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+      z-index: 9000;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      /* Native browser resize on the bottom-right corner. */
+      resize: both;
+      font: 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    }
+    .aisoc-chat-panel.dragging {
+      /* Disable transitions and pointer events on the iframe while
+         dragging so the cursor doesn't get stolen by the iframe
+         document. */
+      user-select: none;
+    }
+    .aisoc-chat-panel.dragging > iframe {
+      pointer-events: none;
+    }
+    .aisoc-chat-panel > header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--color-accent, #0099cc);
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: move;
+      user-select: none;
+    }
+    .aisoc-chat-panel > header .title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-transform: capitalize;
+    }
+    .aisoc-chat-panel > header .title.email {
+      text-transform: none;
+    }
+    .aisoc-chat-panel > header .badge {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.20);
+      color: #ffffff;
+    }
+    .aisoc-chat-panel > header .close {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border: none;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.16);
+      color: #ffffff;
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .aisoc-chat-panel > header .close:hover {
+      background: rgba(255,255,255,0.30);
+    }
+    .aisoc-chat-panel > iframe {
+      flex: 1;
+      width: 100%;
+      border: none;
+      background: #ffffff;
+    }
+  `;
+  const panelStyle = document.createElement('style');
+  panelStyle.textContent = panelCss;
+  document.head.appendChild(panelStyle);
+
   // ── State ───────────────────────────────────────────────────────────
   const STATE = {
     hitl: [],                    // [{id, agent, question, asked_at}]
@@ -871,6 +974,131 @@
       </div>`;
   }
 
+  // ── Floating chat panels ────────────────────────────────────────────
+  // Replaces the old window.open() popups. Each panel is an absolute-
+  // positioned <div> that hosts an iframe pointing at the existing
+  // /chat-popup route, so we don't have to re-implement streaming +
+  // history. The panels are draggable by their header and resizable
+  // via the browser-native CSS `resize: both` corner. Multiple panels
+  // can be open at once; clicking any panel raises it above its
+  // siblings (still under the sidebar's z-index).
+  const chatPanels = new Map(); // panelKey -> { el, iframe, lastZ }
+  let nextZ = 9000;             // grows as panels are raised
+  let cascadeOffset = 0;        // each new panel offsets so they stack visibly
+
+  function panelKey(kind, id) { return `${kind}::${id}`; }
+
+  function raisePanel(panelEl) {
+    nextZ += 1;
+    panelEl.style.zIndex = String(nextZ);
+  }
+
+  function closeChatPanel(key) {
+    const rec = chatPanels.get(key);
+    if (!rec) return;
+    try { rec.el.remove(); } catch (_) { /* best-effort */ }
+    chatPanels.delete(key);
+  }
+
+  // Wire the drag-on-header behaviour. Uses pointer events so it works
+  // with mouse + touch + pen alike. While dragging we toggle the
+  // .dragging class which disables pointer-events on the iframe — that
+  // way the iframe document doesn't steal the pointer mid-drag (which
+  // would make the panel "stick" to the cursor on iframe entry/exit).
+  function attachDrag(panelEl, headerEl) {
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+    let pointerId = null;
+
+    function onPointerDown(ev) {
+      // Ignore drags that originate on a button (e.g. the close button).
+      if (ev.target && ev.target.closest && ev.target.closest('button')) return;
+      pointerId = ev.pointerId;
+      startX = ev.clientX;
+      startY = ev.clientY;
+      const rect = panelEl.getBoundingClientRect();
+      startLeft = rect.left;
+      startTop = rect.top;
+      panelEl.classList.add('dragging');
+      headerEl.setPointerCapture(pointerId);
+      raisePanel(panelEl);
+      ev.preventDefault();
+    }
+    function onPointerMove(ev) {
+      if (pointerId == null || ev.pointerId !== pointerId) return;
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      let nextLeft = startLeft + dx;
+      let nextTop = startTop + dy;
+      // Keep at least 40px of the header inside the viewport so the
+      // panel can always be grabbed back.
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const w = panelEl.offsetWidth, h = panelEl.offsetHeight;
+      nextLeft = Math.max(-(w - 80), Math.min(vw - 40, nextLeft));
+      nextTop  = Math.max(0,           Math.min(vh - 40, nextTop));
+      panelEl.style.left = `${nextLeft}px`;
+      panelEl.style.top  = `${nextTop}px`;
+    }
+    function onPointerUp(ev) {
+      if (pointerId == null || ev.pointerId !== pointerId) return;
+      try { headerEl.releasePointerCapture(pointerId); } catch (_) {}
+      pointerId = null;
+      panelEl.classList.remove('dragging');
+    }
+    headerEl.addEventListener('pointerdown', onPointerDown);
+    headerEl.addEventListener('pointermove', onPointerMove);
+    headerEl.addEventListener('pointerup', onPointerUp);
+    headerEl.addEventListener('pointercancel', onPointerUp);
+  }
+
+  // Open a draggable in-page chat panel. If a panel for this key is
+  // already open, raise it to the top instead of spawning a duplicate
+  // (mirrors the old window.open named-window behaviour).
+  function openChatPanel(kind, id) {
+    const key = panelKey(kind, id);
+    const existing = chatPanels.get(key);
+    if (existing) {
+      raisePanel(existing.el);
+      return existing;
+    }
+
+    const params = new URLSearchParams({ kind, id });
+    const url = `/chat-popup?${params.toString()}`;
+
+    const panel = document.createElement('div');
+    panel.className = 'aisoc-chat-panel';
+    // Cascade subsequent panels by ~30px down/right from the previous
+    // so they stack visibly rather than landing exactly on top.
+    const baseLeft = 80, baseTop = 80;
+    panel.style.left = `${baseLeft + cascadeOffset}px`;
+    panel.style.top  = `${baseTop + cascadeOffset}px`;
+    cascadeOffset = (cascadeOffset + 30) % 240;
+
+    const titleClass = (kind === 'human') ? 'title email' : 'title';
+    const titleText = (kind === 'human') ? id : capitalize(id);
+    const badgeText = (kind === 'human') ? 'Direct' : 'Agent';
+    panel.innerHTML = `
+      <header>
+        <span class="badge">${escapeHtml(badgeText)}</span>
+        <span class="${titleClass}" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</span>
+        <button class="close" aria-label="Close" title="Close">&times;</button>
+      </header>
+      <iframe src="${escapeHtml(url)}" allow="clipboard-write"></iframe>
+    `;
+    document.body.appendChild(panel);
+    raisePanel(panel);
+
+    const headerEl = panel.querySelector('header');
+    const closeBtn = panel.querySelector('button.close');
+    const iframe = panel.querySelector('iframe');
+
+    closeBtn.addEventListener('click', () => closeChatPanel(key));
+    panel.addEventListener('mousedown', () => raisePanel(panel), true);
+    attachDrag(panel, headerEl);
+
+    chatPanels.set(key, { el: panel, iframe });
+    return chatPanels.get(key);
+  }
+
   // ── Rendering ───────────────────────────────────────────────────────
   let rootEl = null;
 
@@ -984,9 +1212,10 @@
       : '';
     const itemCls = ownsActive ? 'item owns-active' : 'item';
 
-    // Click on the row opens a chat popup window for this agent.
-    // Inline expand was retired — analysts found it cramped the
-    // sidebar; popups let them keep multiple chats docked.
+    // Click on the row opens a draggable in-page chat panel for this
+    // agent. Inline expand was retired (cramped the sidebar); the
+    // panels let analysts keep multiple chats docked side-by-side
+    // without leaving the dashboard.
     return `
       <div class="${itemCls}">
         <div class="head" data-popup-agent="${escapeHtml(agent)}">
@@ -1039,7 +1268,7 @@
           ? `Offline (last seen ${userRec.ago_sec}s ago)`
           : 'Offline');
 
-    // Click on the row opens a chat popup window for this human.
+    // Click on the row opens a draggable in-page chat panel for this human.
     return `
       <div class="item">
         <div class="head" data-popup-human="${escapeHtml(peer)}">
@@ -1264,48 +1493,18 @@
       btn.addEventListener('click', () => onHitlAnswer(btn.getAttribute('data-hitl-send')));
     });
 
-    // Open a chat popup window for an agent or human. Uses a
-    // deterministic window name (kind + id) so re-clicking the same
-    // row brings the existing popup to focus rather than spawning
-    // duplicates.
-    //
-    // The `popup=yes` feature plus the explicit no-chrome flags coax
-    // Chromium-based browsers into opening a minimal-chrome window
-    // (no URL bar, no menu, no status bar). Modern browsers honor
-    // most of these only when at least one geometry feature is
-    // present, which is why width/height come first. Some browsers
-    // (Safari) ignore the chrome flags and always show their own
-    // minimal popup; that's fine — the goal is to drop the URL bar
-    // wherever the browser allows it.
-    function openChatPopup(kind, id) {
-      const params = new URLSearchParams({ kind, id });
-      const url = `/chat-popup?${params.toString()}`;
-      const winName = `aisoc-chat-${kind}-${id}`;
-      const features = [
-        'popup=yes',
-        'width=440',
-        'height=640',
-        'resizable=yes',
-        'scrollbars=yes',
-        'location=no',
-        'toolbar=no',
-        'menubar=no',
-        'status=no',
-        'titlebar=no',
-        'noopener=no',     // we want the popup to be able to focus()
-        'noreferrer=no',
-      ].join(',');
-      const w = window.open(url, winName, features);
-      if (w) w.focus();
-    }
+    // Open a draggable in-page chat panel for an agent or human. The
+    // panel hosts an iframe pointing at /chat-popup so we don't have
+    // to re-implement streaming + history here. Re-clicking the same
+    // row brings the existing panel to the front.
     root.querySelectorAll('[data-popup-agent]').forEach((el) => {
       el.addEventListener('click', () => {
-        openChatPopup('agent', el.getAttribute('data-popup-agent'));
+        openChatPanel('agent', el.getAttribute('data-popup-agent'));
       });
     });
     root.querySelectorAll('[data-popup-human]').forEach((el) => {
       el.addEventListener('click', () => {
-        openChatPopup('human', el.getAttribute('data-popup-human'));
+        openChatPanel('human', el.getAttribute('data-popup-human'));
       });
     });
 
@@ -1734,8 +1933,8 @@
   }
 
   // Refresh every configured human's DM thread so the preview line
-  // in the sidebar reflects messages received via popup windows.
-  // Inline DM expand was retired in favour of popup chats, so polling
+  // in the sidebar reflects messages received via in-page chat panels.
+  // Inline DM expand was retired in favour of the panels, so polling
   // open threads only is no longer the right scope.
   async function pollAllDmThreads() {
     if (!STATE.users || !STATE.users.length) return;
