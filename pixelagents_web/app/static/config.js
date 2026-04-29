@@ -149,6 +149,70 @@
       word-break: break-word;
     }
 
+    /* Per-agent CONFIDENCE_THRESHOLD slider row. Sits right under the
+       Model dropdown so model + behavioural dials are clustered. */
+    #${ROOT_ID} .card .temp-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #f3f4f6;
+      flex-wrap: wrap;
+    }
+    #${ROOT_ID} .card .temp-row .temp-label {
+      flex: 0 0 auto;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+    #${ROOT_ID} .card .temp-row .temp-input {
+      -webkit-appearance: none;
+      appearance: none;
+      flex: 1 1 200px;
+      min-width: 160px;
+      height: 5px;
+      border-radius: 999px;
+      background: linear-gradient(to right, #fbbf24 0%, #cbd5e1 50%, #10b981 100%);
+      outline: none;
+      cursor: pointer;
+      padding: 0;
+    }
+    #${ROOT_ID} .card .temp-row .temp-input:disabled { opacity: 0.55; cursor: wait; }
+    #${ROOT_ID} .card .temp-row .temp-input::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 2px solid #0099cc;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+    }
+    #${ROOT_ID} .card .temp-row .temp-input::-moz-range-thumb {
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 2px solid #0099cc;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+    }
+    #${ROOT_ID} .card .temp-row .temp-value {
+      flex: 0 0 auto;
+      font-size: 12px;
+      font-weight: 700;
+      color: #0099cc;
+      font-variant-numeric: tabular-nums;
+      min-width: 110px;
+    }
+    #${ROOT_ID} .card .temp-row .temp-hint {
+      flex: 1 1 100%;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+
     #${ROOT_ID} .card .toggle {
       display: flex;
       justify-content: flex-end;
@@ -297,6 +361,15 @@
   // until the request resolves so a fast double-click can't fire two
   // version creates back-to-back.
   const modelSaving = new Set();
+  // Per-agent CONFIDENCE_THRESHOLD slider value (0–100). Populated
+  // from /api/agent_temperature, written via POST /api/agent_temperature/{slug}.
+  const agentTemps = {};
+  // Slugs with a temperature-change POST in flight + the value the
+  // user is currently dragging towards. Same UX shape as setupSlider:
+  // we render the pending value immediately so the thumb doesn't snap
+  // back during the round trip.
+  const tempSaving = new Set();
+  const tempPending = {};
 
   // ── Generic instructions card state ────────────────────────────────
   // These are referenced by renderGenericInstructions() which is
@@ -413,6 +486,28 @@
       } else {
         html += `<span class="model-hint">Changes apply on next agent run.</span>`;
       }
+      html += '</div>';
+    }
+
+    // Per-agent CONFIDENCE_THRESHOLD slider. Always render so the
+    // operator can dial each agent independently — even triage's
+    // value goes onto the request body, though triage's prompt
+    // explicitly forbids ask_human so the dial is a no-op there.
+    {
+      const tempVal = (tempPending[slug] != null)
+        ? tempPending[slug]
+        : (agentTemps[slug] != null ? agentTemps[slug] : 50);
+      const tempBand = tempVal < 34 ? 'cautious' : (tempVal < 67 ? 'balanced' : 'confident');
+      const tempBusy = tempSaving.has(slug);
+      html += '<div class="temp-row">';
+      html += `<label class="temp-label" for="temp-${escapeHtml(slug)}">Temperature</label>`;
+      html += `<input type="range" class="temp-input" id="temp-${escapeHtml(slug)}" `
+            + `data-temp-input="${escapeHtml(slug)}" `
+            + `min="0" max="100" step="5" value="${escapeHtml(String(tempVal))}" `
+            + `${tempBusy ? 'disabled' : ''}>`;
+      html += `<span class="temp-value" data-temp-value="${escapeHtml(slug)}">`
+            + `${escapeHtml(String(tempVal))}% · ${escapeHtml(tempBand)}</span>`;
+      html += `<span class="temp-hint">Lower = ask humans often · Higher = act on its own</span>`;
       html += '</div>';
     }
 
@@ -585,6 +680,31 @@
         onAgentModelChange(slug, newModel);
       });
     });
+
+    // Per-agent temperature slider — live-update the inline label on
+    // `input` (every drag step) but only commit (POST) on `change`
+    // (release). Same UX as the global slider was before.
+    root.querySelectorAll('[data-temp-input]').forEach((input) => {
+      input.addEventListener('input', () => {
+        const slug = input.getAttribute('data-temp-input');
+        const v = Number(input.value);
+        tempPending[slug] = v;
+        const valEl = root.querySelector(`[data-temp-value="${slug}"]`);
+        if (valEl) {
+          const band = v < 34 ? 'cautious' : (v < 67 ? 'balanced' : 'confident');
+          valEl.textContent = `${v}% · ${band}`;
+        }
+      });
+      input.addEventListener('change', () => {
+        const slug = input.getAttribute('data-temp-input');
+        const v = Number(input.value);
+        if (v === (agentTemps[slug] || 50)) {
+          delete tempPending[slug];
+          return;
+        }
+        onAgentTemperatureChange(slug, v);
+      });
+    });
   }
 
   // ── Save handler ───────────────────────────────────────────────────
@@ -712,25 +832,12 @@
     },
   });
 
-  setupSlider({
-    rootId: 'aisoc-agent-temperature-root',
-    apiPath: '/api/agent_temperature',
-    title: 'Agent temperature',
-    desc:
-      'How readily the investigator and reporter agents reach for '
-      + '<code>ask_human</code> mid-flow. <strong>Lower</strong> = ask '
-      + 'humans often (cautious — better for high-stakes / unfamiliar '
-      + 'environments). <strong>Higher</strong> = act autonomously '
-      + 'whenever reasonably confident (faster — better for trusted, '
-      + 'well-tuned setups). The reporter is always free to close an '
-      + 'incident outright when it reads as a clear false positive; '
-      + 'this slider just biases how often the agents pause to confirm.',
-    min: 0,
-    max: 100,
-    step: 5,
-    leftLabel: 'Ask often',
-    rightLabel: 'Act on its own',
-  });
+  // Agent temperature is now per-agent — each agent card renders its
+  // own inline slider via renderAgent() / renderAgentTemperatureRow().
+  // Loaded once at boot from /api/agent_temperature so dropdowns
+  // pre-fill correctly.
+  fetchAgentTemperatures();
+  setInterval(fetchAgentTemperatures, 8000);
 
   // ── User management (soc-manager only on the server side) ─────────
   // Renders into #aisoc-user-management-root. Lets the SOC manager
@@ -1172,6 +1279,64 @@
       };
       // Stay in edit mode so the user can retry.
       renderGenericInstructions();
+    }
+  }
+
+  async function fetchAgentTemperatures() {
+    try {
+      const r = await fetch('/api/agent_temperature', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const data = await r.json();
+      const agents = (data && data.agents) || {};
+      for (const slug of Object.keys(agents)) {
+        // Don't clobber a value the user is currently dragging.
+        if (tempPending[slug] != null) continue;
+        const v = agents[slug] && agents[slug].value;
+        if (typeof v === 'number') agentTemps[slug] = v;
+      }
+      render(window.__AISOC_AGENTS_LAST || []);
+    } catch (_) { /* ignore */ }
+  }
+
+  async function onAgentTemperatureChange(slug, newValue) {
+    if (!slug || newValue == null) return;
+    if (tempSaving.has(slug)) return;
+    tempSaving.add(slug);
+    tempPending[slug] = newValue;
+    render(window.__AISOC_AGENTS_LAST || []);
+    try {
+      const r = await fetch(
+        `/api/agent_temperature/${encodeURIComponent(slug)}`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: newValue }),
+        },
+      );
+      if (!r.ok) {
+        // Resync from server on failure so the slider snaps back.
+        const fresh = await fetch(
+          `/api/agent_temperature/${encodeURIComponent(slug)}`,
+          { credentials: 'same-origin' },
+        ).then((rr) => rr.ok ? rr.json() : null).catch(() => null);
+        if (fresh && typeof fresh.value === 'number') agentTemps[slug] = fresh.value;
+      } else {
+        agentTemps[slug] = newValue;
+      }
+    } catch (_) {
+      // Same fallback — pull current state, give up the optimistic update.
+      try {
+        const fresh = await fetch(
+          `/api/agent_temperature/${encodeURIComponent(slug)}`,
+          { credentials: 'same-origin' },
+        ).then((rr) => rr.ok ? rr.json() : null);
+        if (fresh && typeof fresh.value === 'number') agentTemps[slug] = fresh.value;
+      } catch (__) { /* ignore */ }
+    } finally {
+      tempSaving.delete(slug);
+      delete tempPending[slug];
+      render(window.__AISOC_AGENTS_LAST || []);
     }
   }
 

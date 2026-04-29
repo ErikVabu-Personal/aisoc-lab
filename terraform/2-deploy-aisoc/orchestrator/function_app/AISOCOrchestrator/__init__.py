@@ -630,20 +630,35 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     mode = (body.get("mode") or "triage_only").lower()  # triage_only | full
     max_chars = int(body.get("max_chars") or 1800)
 
-    # Confidence threshold (0–100). Tunes how readily the investigator
-    # and reporter request human input. Lower = ask the human often
-    # (cautious); higher = ask only when really uncertain (confident).
-    # 50 is the neutral default. Body value takes precedence; the
-    # AISOC_CONFIDENCE_THRESHOLD env var is preserved as a fallback so
-    # older callers (and CI smoke tests) keep working.
-    try:
-        if "confidence_threshold" in body:
-            confidence_threshold = int(body.get("confidence_threshold") or 50)
-        else:
-            confidence_threshold = int(os.environ.get("AISOC_CONFIDENCE_THRESHOLD", "50"))
-    except (TypeError, ValueError):
-        confidence_threshold = 50
-    confidence_threshold = max(0, min(100, confidence_threshold))
+    # Confidence thresholds (0–100). Tunes how readily each agent
+    # reaches for ask_human mid-flow. Lower = cautious (ask often),
+    # higher = confident (ask rarely). Per-agent values are now the
+    # canonical input — `confidence_thresholds` is a dict keyed by
+    # agent slug. The legacy single-int `confidence_threshold` is
+    # accepted as a fallback (applied to every agent) so older PA-Web
+    # builds still work until both halves redeploy. The
+    # AISOC_CONFIDENCE_THRESHOLD env var is the final fallback.
+    def _clamp(v: Any, default: int = 50) -> int:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return default
+        return max(0, min(100, n))
+
+    fallback_threshold = _clamp(
+        body.get("confidence_threshold")
+        if "confidence_threshold" in body
+        else os.environ.get("AISOC_CONFIDENCE_THRESHOLD", "50")
+    )
+
+    raw_thresholds = body.get("confidence_thresholds")
+    confidence_thresholds: dict[str, int] = {}
+    if isinstance(raw_thresholds, dict):
+        for k, v in raw_thresholds.items():
+            confidence_thresholds[str(k).strip().lower()] = _clamp(v, fallback_threshold)
+
+    def _threshold_for(agent_slug: str) -> int:
+        return confidence_thresholds.get(agent_slug, fallback_threshold)
 
     # Identity of the human who triggered this run (None / empty for
     # auto-pickup). Used two ways downstream:
@@ -794,20 +809,25 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(json.dumps(out), mimetype="application/json")
 
         # Shared blocks injected into the investigator + reporter prompts.
-        # CONFIDENCE_THRESHOLD tunes how readily they reach for ask_human;
-        # TRIGGERING_USER lets ask_human target the right analyst.
-        confidence_block = (
-            f"CONFIDENCE_THRESHOLD: {confidence_threshold}%\n"
-            "This is a 0–100 dial set by the human operator that controls "
-            "how readily you should reach for `ask_human` mid-flow. Lower "
-            "values mean the operator wants you to be cautious and ask "
-            "often when something is ambiguous. Higher values mean the "
-            "operator trusts you to push through on your own and only "
-            "interrupt them when you're truly stuck. 50 is neutral. "
-            "Use this as a soft prior — never as license to make up "
-            "evidence you don't have, and never as a reason to skip a "
-            "writeback the case clearly needs.\n\n"
-        )
+        # CONFIDENCE_THRESHOLD tunes how readily that agent reaches for
+        # ask_human; TRIGGERING_USER lets ask_human target the right
+        # analyst. Each agent gets ITS OWN threshold value — the
+        # operator can dial them independently from /config.
+        def _confidence_block(agent_slug: str) -> str:
+            v = _threshold_for(agent_slug)
+            return (
+                f"CONFIDENCE_THRESHOLD: {v}%\n"
+                "This is a 0–100 dial the human operator set specifically "
+                "for you. It controls how readily you should reach for "
+                "`ask_human` mid-flow. Lower values mean the operator wants "
+                "you to be cautious and ask often when something is "
+                "ambiguous. Higher values mean the operator trusts you to "
+                "push through on your own and only interrupt them when "
+                "you're truly stuck. 50 is neutral. Use this as a soft "
+                "prior — never as license to make up evidence you don't "
+                "have, and never as a reason to skip a writeback the case "
+                "clearly needs.\n\n"
+            )
 
         if triggering_user:
             triggering_user_block = (
@@ -844,7 +864,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "CONFIDENCE_THRESHOLD below to decide how readily to do so — at "
                 "the same incident_number so the question shows up under the "
                 "right case in the human's queue.\n\n"
-                + confidence_block
+                + _confidence_block("investigator")
                 + triggering_user_block
                 + f"INCIDENT_NUMBER: {incident_number}\n\n"
                 + f"INCIDENT_REF:\n{incident_json}\n\n"
@@ -887,7 +907,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     "approval at the same incident_number, then write back. Use "
                     "the CONFIDENCE_THRESHOLD below to calibrate how readily to "
                     "ask vs. act.\n\n"
-                    + confidence_block
+                    + _confidence_block("reporter")
                     + triggering_user_block
                     + f"INCIDENT_NUMBER: {incident_number}\n\n"
                     + f"INCIDENT_REF:\n{incident_json}\n\n"
@@ -1079,7 +1099,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # to do that whenever it's confident the case is a false
             # positive; the CONFIDENCE_THRESHOLD biases that decision.
             "did_close": did_close,
-            "confidence_threshold": confidence_threshold,
+            "confidence_threshold": fallback_threshold,
+            "confidence_thresholds": {
+                "investigator": _threshold_for("investigator"),
+                "reporter":     _threshold_for("reporter"),
+            },
             "triggering_user": triggering_user or None,
             "owner_handoff_to": owner_handoff_to,
             "wrote_comment": wrote_comment,

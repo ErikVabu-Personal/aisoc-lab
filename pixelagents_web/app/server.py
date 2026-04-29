@@ -902,7 +902,6 @@ def config_view(request: Request) -> Response:
         '  state PixelAgents Web has on file.'
         '</p>'
         '<div id="aisoc-auto-pickup-root"></div>'
-        '<div id="aisoc-agent-temperature-root"></div>'
         '<div id="aisoc-user-management-root"></div>'
         '<div id="aisoc-generic-instructions-root"></div>'
         '<div id="aisoc-config-root"></div>'
@@ -1437,30 +1436,66 @@ def api_auto_pickup_get(
     return _auto_pickup_public_state()
 
 
-# ── Agent confidence temperature ─────────────────────────────────────
-# Slider 0–100 that influences how readily the investigator and
-# reporter agents request human input via ask_human. Low value = ask
-# often (cautious); high value = ask only when truly stuck (confident).
-# Threaded into the orchestrator's user_text for the relevant agents.
+# ── Agent confidence temperature (per-agent) ─────────────────────────
+# Per-agent slider 0–100 that influences how readily that agent
+# requests human input via ask_human. Low value = ask often (cautious);
+# high value = ask only when truly stuck (confident). Each agent's
+# value is threaded into ITS user_text by the orchestrator.
 # In-memory only (resets on container restart).
-AGENT_TEMPERATURE: dict[str, Any] = {
-    "value": 50,  # 0–100 percent
-    "last_event": None,
-    "last_event_ts": None,
-}
+AGENT_TEMPERATURE_DEFAULT = 50
+AGENT_TEMPERATURE: dict[str, dict[str, Any]] = {}
 
 
-def _agent_temperature_set_event(msg: str) -> None:
-    AGENT_TEMPERATURE["last_event"] = msg
-    AGENT_TEMPERATURE["last_event_ts"] = time.time()
-    print(f"[temperature] {msg}", flush=True)
+def _agent_temperature_record(slug: str) -> dict[str, Any]:
+    rec = AGENT_TEMPERATURE.get(slug)
+    if rec is None:
+        rec = {"value": AGENT_TEMPERATURE_DEFAULT, "last_event": None, "last_event_ts": None}
+        AGENT_TEMPERATURE[slug] = rec
+    return rec
 
 
-def _agent_temperature_public_state() -> dict[str, Any]:
+def _agent_temperature_value(slug: str) -> int:
+    """Per-agent threshold value, falling back to the global default."""
+    return int((AGENT_TEMPERATURE.get(slug) or {}).get("value") or AGENT_TEMPERATURE_DEFAULT)
+
+
+def _agent_temperature_band(value: int) -> str:
+    if value < 34:
+        return "cautious"
+    if value < 67:
+        return "balanced"
+    return "confident"
+
+
+def _agent_temperature_public_state(slug: str) -> dict[str, Any]:
+    rec = _agent_temperature_record(slug)
     return {
-        "value": int(AGENT_TEMPERATURE.get("value") or 0),
-        "last_event": AGENT_TEMPERATURE.get("last_event"),
-        "last_event_ts": AGENT_TEMPERATURE.get("last_event_ts"),
+        "agent": slug,
+        "value": int(rec.get("value") or AGENT_TEMPERATURE_DEFAULT),
+        "last_event": rec.get("last_event"),
+        "last_event_ts": rec.get("last_event_ts"),
+    }
+
+
+def _agent_temperature_set_event(slug: str, msg: str) -> None:
+    rec = _agent_temperature_record(slug)
+    rec["last_event"] = msg
+    rec["last_event_ts"] = time.time()
+    print(f"[temperature] agent={slug} {msg}", flush=True)
+
+
+def _agent_temperatures_summary() -> dict[str, Any]:
+    """Aggregate snapshot used by the Live-view badge + /config."""
+    slugs = _default_agent_roster()
+    agents = {slug: _agent_temperature_public_state(slug) for slug in slugs}
+    values = [int(rec.get("value") or AGENT_TEMPERATURE_DEFAULT) for rec in agents.values()]
+    avg = int(round(sum(values) / len(values))) if values else AGENT_TEMPERATURE_DEFAULT
+    return {
+        "agents": agents,
+        "default": AGENT_TEMPERATURE_DEFAULT,
+        "average": avg,
+        "average_band": _agent_temperature_band(avg),
+        "ts": time.time(),
     }
 
 
@@ -1469,19 +1504,37 @@ def api_agent_temperature_get(
     request: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
+    """All-agents snapshot: per-slug values + a global average for the
+    Live-view badge. Open to any authenticated session — read-only."""
     _require_auth(request, x_pixelagents_token)
-    return _agent_temperature_public_state()
+    return _agent_temperatures_summary()
 
 
-@app.post("/api/agent_temperature")
-async def api_agent_temperature_set(
+@app.get("/api/agent_temperature/{agent_id}")
+def api_agent_temperature_get_one(
+    agent_id: str,
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
+    slug = _slug_agent(agent_id)
+    if slug not in set(_default_agent_roster()):
+        raise HTTPException(status_code=404, detail=f"Unknown agent {slug!r}")
+    return _agent_temperature_public_state(slug)
+
+
+@app.post("/api/agent_temperature/{agent_id}")
+async def api_agent_temperature_set_one(
+    agent_id: str,
     req: Request,
     x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
 ) -> dict[str, Any]:
-    # Soc-manager only — write side of the slider lives in /config.
-    # The GET above stays open to all authenticated users so the
-    # Live-view badge keeps working for non-managers.
+    """Update a single agent's threshold. Soc-manager only — the read
+    side stays open so non-managers' Live-view badge keeps rendering."""
     _require_soc_manager(req, x_pixelagents_token)
+    slug = _slug_agent(agent_id)
+    if slug not in set(_default_agent_roster()):
+        raise HTTPException(status_code=404, detail=f"Unknown agent {slug!r}")
     try:
         body = await req.json()
     except Exception:
@@ -1495,14 +1548,15 @@ async def api_agent_temperature_set(
         raise HTTPException(status_code=400, detail="value must be an integer 0..100")
     if new_val < 0 or new_val > 100:
         raise HTTPException(status_code=400, detail="value must be between 0 and 100")
-    prev = int(AGENT_TEMPERATURE.get("value") or 0)
-    AGENT_TEMPERATURE["value"] = new_val
+    rec = _agent_temperature_record(slug)
+    prev = int(rec.get("value") or AGENT_TEMPERATURE_DEFAULT)
+    rec["value"] = new_val
     if new_val != prev:
         _agent_temperature_set_event(
-            f"Confidence threshold set to {new_val}% "
-            f"({'cautious — ask humans often' if new_val < 34 else 'balanced' if new_val < 67 else 'confident — ask humans rarely'})"
+            slug,
+            f"set to {new_val}% ({_agent_temperature_band(new_val)})",
         )
-    return _agent_temperature_public_state()
+    return _agent_temperature_public_state(slug)
 
 
 @app.post("/api/auto_pickup")
@@ -3159,7 +3213,16 @@ async def _orchestrate_one(
     import asyncio
     import requests as _requests
 
-    confidence_threshold = int(AGENT_TEMPERATURE.get("value") or 50)
+    # Per-agent confidence thresholds. The orchestrator reads
+    # `confidence_thresholds` (a {slug: int} dict) and injects each
+    # agent's value into its prompt; the older single-int
+    # `confidence_threshold` field is preserved as a fallback so an
+    # outdated orchestrator still receives at least the average value
+    # for every agent until both halves redeploy.
+    confidence_thresholds = {
+        slug: _agent_temperature_value(slug) for slug in _default_agent_roster()
+    }
+    summary = _agent_temperatures_summary()
 
     CURRENT_INCIDENT["incident_number"] = incident_number
     CURRENT_INCIDENT["started_at"] = time.time()
@@ -3186,11 +3249,15 @@ async def _orchestrate_one(
                 # the Sentinel incident's owner to this user instead
                 # of leaving it on the last agent.
                 "triggering_user": triggering_user or "",
-                # Confidence threshold (0–100). Lower = agents ask
-                # humans more often; higher = agents are more
-                # autonomous. Plumbed into the investigator + reporter
-                # prompts so the agents can self-pace ask_human calls.
-                "confidence_threshold": confidence_threshold,
+                # Per-agent confidence thresholds (preferred). Each
+                # agent's value is injected into its own prompt so
+                # different agents can be tuned independently.
+                "confidence_thresholds": confidence_thresholds,
+                # Backward compat with older orchestrators that only
+                # read a single int — the average is a reasonable
+                # global default until both halves are on the new
+                # contract.
+                "confidence_threshold": summary["average"],
             },
             timeout=600,
         )

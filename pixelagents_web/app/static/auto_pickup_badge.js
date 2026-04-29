@@ -120,17 +120,22 @@
   async function pollTemperature() {
     try {
       const s = await fetchJson('/api/agent_temperature');
-      const v = Math.max(0, Math.min(100, Number(s.value || 0)));
-      // Soft ranges so the analyst can tell the dial isn't all-or-nothing
-      // without having to read the slider.
-      let band;
-      if (v <= 30) band = 'cautious';
-      else if (v >= 70) band = 'confident';
-      else band = 'balanced';
+      // Per-agent payload now: {agents: {slug: {value, ...}}, average,
+      // average_band, default}. Show the average + a hover tooltip
+      // listing each agent's individual setting.
+      const avg = Math.max(0, Math.min(100, Number(s.average || 0)));
+      const band = s.average_band
+        || (avg <= 30 ? 'cautious' : avg >= 70 ? 'confident' : 'balanced');
+      const agentMap = (s && s.agents) || {};
+      const perAgent = Object.keys(agentMap)
+        .sort()
+        .map((slug) => `${slug}: ${agentMap[slug] && agentMap[slug].value}%`)
+        .join(' · ');
       setBadge('temperature', 'info',
-        `Temperature: ${v}% · ${band}`,
-        s.last_event
-          || `Investigator and reporter ask humans more readily at low values, less at high values.`);
+        `Temperature: avg ${avg}% · ${band}`,
+        perAgent
+          ? `Per-agent CONFIDENCE_THRESHOLD: ${perAgent}\n\nLower = ask humans often · Higher = act on its own.`
+          : 'Per-agent CONFIDENCE_THRESHOLD biases ask_human behaviour.');
     } catch (_) {
       setBadge('temperature', 'unknown', 'Temperature: ?', 'Could not load agent-temperature state.');
     }
