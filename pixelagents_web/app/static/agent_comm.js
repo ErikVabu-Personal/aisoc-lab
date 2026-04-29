@@ -702,6 +702,105 @@
       border: none;
       background: #ffffff;
     }
+    /* Change-review variant: scrollable body div instead of an iframe.
+       Restates the sidebar's .change-item content rules unscoped so
+       they apply inside the panel too. */
+    .aisoc-chat-panel.change-panel > .ch-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 14px 16px;
+      font-size: 13px;
+      color: #1f2937;
+    }
+    .aisoc-chat-panel.change-panel .ch-rationale {
+      margin: 0 0 12px;
+      line-height: 1.45;
+    }
+    .aisoc-chat-panel.change-panel .ch-section {
+      margin-top: 12px;
+    }
+    .aisoc-chat-panel.change-panel .ch-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+    .aisoc-chat-panel.change-panel .ch-content {
+      padding: 8px 10px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 280px;
+      overflow-y: auto;
+      color: #1f2937;
+    }
+    .aisoc-chat-panel.change-panel .ch-content.proposed {
+      background: rgba(34,197,94,0.06);
+      border-color: rgba(34,197,94,0.3);
+    }
+    .aisoc-chat-panel.change-panel .ch-content.mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    .aisoc-chat-panel.change-panel .ch-actions {
+      margin-top: 14px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .aisoc-chat-panel.change-panel .ch-actions textarea {
+      flex: 1 1 100%;
+      resize: vertical;
+      min-height: 56px;
+      max-height: 200px;
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font: 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      box-sizing: border-box;
+      color: #1f2937;
+    }
+    .aisoc-chat-panel.change-panel .ch-actions textarea:focus {
+      outline: none;
+      border-color: #0099cc;
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+    }
+    .aisoc-chat-panel.change-panel .ch-actions button {
+      padding: 7px 16px;
+      border-radius: 4px;
+      font: 600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      cursor: pointer;
+      border: 1px solid #cbd5e1;
+      background: #f9fafb;
+      color: #1f2937;
+    }
+    .aisoc-chat-panel.change-panel .ch-actions button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .aisoc-chat-panel.change-panel .ch-actions button.approve {
+      background: #facc15;
+      border-color: #ca8a04;
+      color: #1f2937;
+    }
+    .aisoc-chat-panel.change-panel .ch-actions button.approve:hover:not(:disabled) {
+      background: #eab308;
+    }
+    .aisoc-chat-panel.change-panel .ch-actions button.reject {
+      color: #991b1b;
+    }
+    .aisoc-chat-panel.change-panel .ch-actions button.reject:hover:not(:disabled) {
+      background: rgba(239,68,68,0.10);
+    }
   `;
   const panelStyle = document.createElement('style');
   panelStyle.textContent = panelCss;
@@ -860,19 +959,19 @@
     }
   }
 
+  // Sidebar row for a pending change. Clicking the row opens a
+  // draggable in-page panel with the full proposal + Approve/Reject
+  // controls; the row itself stays compact so the queue remains
+  // scannable. Body content + handlers live in openChangePanel().
   function renderChangeItem(c) {
     const id = c.id;
     const kindLabel = changeKindLabel(c.kind);
     const proposedBy = c.proposed_by || 'unknown';
     const target = c.target || '';
     const title = c.title || '(untitled change)';
-    const isOpen = STATE.expandedChanges.has(id);
-    const sending = STATE.sendingChange.has(id);
-    const note = STATE.changeNotes[id] || '';
-    const chev = isOpen ? '▾' : '▸';
 
     let html = `<div class="change-item">`;
-    html += `<div class="ch-head" data-change-toggle="${escapeHtml(id)}">`;
+    html += `<div class="ch-head" data-change-popup="${escapeHtml(id)}">`;
     html += `<span class="ch-kind">${escapeHtml(kindLabel)}</span>`;
     if (target && c.kind !== 'knowledge-preamble') {
       // For agent-instructions show the agent slug; for detection-
@@ -882,44 +981,8 @@
     }
     html += `<span class="ch-title">${escapeHtml(title)}</span>`;
     html += `<span class="ch-by">${escapeHtml(proposedBy)}</span>`;
-    html += `<span class="ch-chev">${chev}</span>`;
+    html += `<span class="ch-chev">▸</span>`;
     html += `</div>`;
-
-    if (isOpen) {
-      html += `<div class="ch-body">`;
-      if (c.rationale) {
-        html += `<p class="ch-rationale">${escapeHtml(c.rationale)}</p>`;
-      }
-      // Proposed content first (the thing the analyst is acting on),
-      // then current for comparison.
-      const proposedText = changeProposedAsText(c);
-      const currentText = changeCurrentAsText(c);
-      // Detection rules render as JSON — show with monospace.
-      const monoCls = c.kind === 'detection-rule' ? ' mono' : '';
-      html += `<div class="ch-section">`;
-      html += `<div class="ch-label">Proposed</div>`;
-      html += `<div class="ch-content proposed${monoCls}">${escapeHtml(proposedText)}</div>`;
-      html += `</div>`;
-      if (currentText) {
-        html += `<div class="ch-section">`;
-        html += `<div class="ch-label">Current (for comparison)</div>`;
-        html += `<div class="ch-content${monoCls}">${escapeHtml(currentText)}</div>`;
-        html += `</div>`;
-      } else if (c.kind === 'detection-rule') {
-        html += `<div class="ch-section" style="color:#6b7280;font-size:11px;">`
-              + `(net-new rule — no current state to compare against)`
-              + `</div>`;
-      }
-      html += `<div class="ch-actions">`;
-      html += `<textarea data-change-note="${escapeHtml(id)}" `
-            + `placeholder="Optional note (sent with Approve / Reject)…" `
-            + `${sending ? 'disabled' : ''}>${escapeHtml(note)}</textarea>`;
-      html += `<button class="approve" data-change-approve="${escapeHtml(id)}" ${sending ? 'disabled' : ''}>Approve</button>`;
-      html += `<button class="reject"  data-change-reject="${escapeHtml(id)}" ${sending ? 'disabled' : ''}>Reject</button>`;
-      html += `</div>`;
-      html += `</div>`;
-    }
-
     html += `</div>`;
     return html;
   }
@@ -1100,6 +1163,150 @@
 
     chatPanels.set(key, { el: panel, iframe });
     return chatPanels.get(key);
+  }
+
+  // ── Change panels (proposed-changes review) ─────────────────────────
+  // Same draggable + resizable shell as the chat panels, but the body
+  // is a div (not an iframe) because the change content + approve /
+  // reject controls are driven entirely by client-side STATE we
+  // already poll. Each open panel has a render() function that we
+  // call from the main render() pass so the panel reflects fresh
+  // STATE.changes data.
+  const changePanels = new Map(); // changeId -> { el, render }
+
+  function _findChange(changeId) {
+    return STATE.changes.find((c) => c && c.id === changeId) || null;
+  }
+
+  function closeChangePanel(changeId) {
+    const rec = changePanels.get(changeId);
+    if (!rec) return;
+    try { rec.el.remove(); } catch (_) { /* best-effort */ }
+    changePanels.delete(changeId);
+  }
+
+  // Re-render every open change panel from current STATE. Called from
+  // the main render() pass so server-side updates (other analysts
+  // approving / rejecting, agents withdrawing the proposal) are
+  // reflected immediately. If the change has disappeared from
+  // STATE.changes, the panel auto-closes — pending changes that turn
+  // into history aren't actionable, so the panel can't usefully linger.
+  function refreshChangePanels() {
+    for (const [changeId, rec] of Array.from(changePanels.entries())) {
+      const c = _findChange(changeId);
+      if (!c) {
+        closeChangePanel(changeId);
+        continue;
+      }
+      rec.render(c);
+    }
+  }
+
+  function _renderChangePanelBody(c) {
+    const sending = STATE.sendingChange.has(c.id);
+    const note = STATE.changeNotes[c.id] || '';
+    const proposedText = changeProposedAsText(c);
+    const currentText = changeCurrentAsText(c);
+    const monoCls = c.kind === 'detection-rule' ? ' mono' : '';
+
+    let html = '';
+    if (c.rationale) {
+      html += `<p class="ch-rationale">${escapeHtml(c.rationale)}</p>`;
+    }
+    html += `<div class="ch-section">`;
+    html += `<div class="ch-label">Proposed</div>`;
+    html += `<div class="ch-content proposed${monoCls}">${escapeHtml(proposedText)}</div>`;
+    html += `</div>`;
+    if (currentText) {
+      html += `<div class="ch-section">`;
+      html += `<div class="ch-label">Current (for comparison)</div>`;
+      html += `<div class="ch-content${monoCls}">${escapeHtml(currentText)}</div>`;
+      html += `</div>`;
+    } else if (c.kind === 'detection-rule') {
+      html += `<div class="ch-section" style="color:#6b7280;font-size:11px;">`
+            + `(net-new rule — no current state to compare against)`
+            + `</div>`;
+    }
+    html += `<div class="ch-actions">`;
+    html += `<textarea data-change-note="${escapeHtml(c.id)}" `
+          + `placeholder="Optional note (sent with Approve / Reject)…" `
+          + `${sending ? 'disabled' : ''}>${escapeHtml(note)}</textarea>`;
+    html += `<button class="approve" data-change-approve="${escapeHtml(c.id)}" ${sending ? 'disabled' : ''}>${sending ? 'Sending…' : 'Approve'}</button>`;
+    html += `<button class="reject"  data-change-reject="${escapeHtml(c.id)}"  ${sending ? 'disabled' : ''}>Reject</button>`;
+    html += `</div>`;
+    return html;
+  }
+
+  function openChangePanel(changeId) {
+    const existing = changePanels.get(changeId);
+    if (existing) {
+      raisePanel(existing.el);
+      return existing;
+    }
+    const c = _findChange(changeId);
+    if (!c) return null;
+
+    const panel = document.createElement('div');
+    panel.className = 'aisoc-chat-panel change-panel';
+    const baseLeft = 80, baseTop = 80;
+    panel.style.left = `${baseLeft + cascadeOffset}px`;
+    panel.style.top  = `${baseTop + cascadeOffset}px`;
+    cascadeOffset = (cascadeOffset + 30) % 240;
+
+    const kindLabel = changeKindLabel(c.kind);
+    const titleText = c.title || '(untitled change)';
+    panel.innerHTML = `
+      <header>
+        <span class="badge">${escapeHtml(kindLabel)}</span>
+        <span class="title" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</span>
+        <button class="close" aria-label="Close" title="Close">&times;</button>
+      </header>
+      <div class="ch-body" data-change-body="${escapeHtml(changeId)}"></div>
+    `;
+    document.body.appendChild(panel);
+    raisePanel(panel);
+
+    const headerEl = panel.querySelector('header');
+    const closeBtn = panel.querySelector('button.close');
+    const bodyEl = panel.querySelector('.ch-body');
+
+    closeBtn.addEventListener('click', () => closeChangePanel(changeId));
+    panel.addEventListener('mousedown', () => raisePanel(panel), true);
+    attachDrag(panel, headerEl);
+
+    // Wire delegated handlers on the body so they survive re-renders
+    // of the inner HTML (we replace innerHTML on every refresh).
+    bodyEl.addEventListener('input', (ev) => {
+      const ta = ev.target.closest && ev.target.closest('[data-change-note]');
+      if (ta) STATE.changeNotes[ta.getAttribute('data-change-note')] = ta.value;
+    });
+    bodyEl.addEventListener('click', (ev) => {
+      const approve = ev.target.closest && ev.target.closest('[data-change-approve]');
+      const reject  = ev.target.closest && ev.target.closest('[data-change-reject]');
+      if (approve) onChangeDecision(approve.getAttribute('data-change-approve'), 'approve');
+      else if (reject) onChangeDecision(reject.getAttribute('data-change-reject'), 'reject');
+    });
+
+    function render(latest) {
+      // Preserve focus + selection in the textarea across re-renders.
+      const active = document.activeElement;
+      const wasNote = active && active.getAttribute && active.getAttribute('data-change-note');
+      let selStart = 0, selEnd = 0;
+      if (wasNote === changeId) {
+        try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
+      }
+      bodyEl.innerHTML = _renderChangePanelBody(latest);
+      if (wasNote === changeId) {
+        const ta = bodyEl.querySelector(`[data-change-note="${CSS.escape(changeId)}"]`);
+        if (ta) {
+          try { ta.focus(); ta.setSelectionRange(selStart, selEnd); } catch (_) {}
+        }
+      }
+    }
+    render(c);
+
+    changePanels.set(changeId, { el: panel, render });
+    return changePanels.get(changeId);
   }
 
   // ── Rendering ───────────────────────────────────────────────────────
@@ -1550,30 +1757,21 @@
       }
     }
 
-    // ── Pending change handlers ────────────────────────────────────────
-    root.querySelectorAll('[data-change-toggle]').forEach((el) => {
+    // ── Pending change row → open draggable panel ─────────────────────
+    // The body content (rationale, proposed/current, approve/reject)
+    // now lives in the panel, not inline; the textarea + buttons are
+    // wired by openChangePanel via delegated handlers on the panel
+    // body, so no per-render attachment is needed here.
+    root.querySelectorAll('[data-change-popup]').forEach((el) => {
       el.addEventListener('click', () => {
-        const id = el.getAttribute('data-change-toggle');
-        if (STATE.expandedChanges.has(id)) STATE.expandedChanges.delete(id);
-        else STATE.expandedChanges.add(id);
-        render();
+        openChangePanel(el.getAttribute('data-change-popup'));
       });
     });
-    root.querySelectorAll('[data-change-note]').forEach((ta) => {
-      ta.addEventListener('input', () => {
-        STATE.changeNotes[ta.getAttribute('data-change-note')] = ta.value;
-      });
-    });
-    root.querySelectorAll('[data-change-approve]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        onChangeDecision(btn.getAttribute('data-change-approve'), 'approve');
-      });
-    });
-    root.querySelectorAll('[data-change-reject]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        onChangeDecision(btn.getAttribute('data-change-reject'), 'reject');
-      });
-    });
+
+    // Refresh any open change panels so they reflect the latest poll
+    // (e.g. another analyst's approve/reject pulled the change off
+    // the pending list — the panel auto-closes in that case).
+    refreshChangePanels();
   }
 
   // POST handler for queue reassignment. Same endpoint the dashboard
