@@ -33,6 +33,20 @@ resource "azapi_resource" "foundry_model_deployment" {
     }
   }
 
+  # Microsoft.CognitiveServices/accounts only allows one mutation at
+  # a time on the parent resource. When the primary deployment + the
+  # extras are scheduled in parallel by Terraform, the loser hits a
+  # 409 RequestConflict ("Another operation is being performed on the
+  # parent resource"). Retry on that error class — Azure clears the
+  # lock as the in-flight op finishes, usually in seconds.
+  retry = {
+    error_message_regex  = ["RequestConflict", "another operation is being performed"]
+    interval_seconds     = 10
+    max_interval_seconds = 60
+    multiplier           = 1.5
+    randomization_factor = 0.5
+  }
+
   depends_on = [azapi_resource.foundry_account]
 }
 
@@ -68,7 +82,21 @@ resource "azapi_resource" "foundry_extra_model_deployments" {
     }
   }
 
-  depends_on = [azapi_resource.foundry_account]
+  # Same conflict-retry as the primary. Plus depend on the primary
+  # so we don't even attempt the extras until the primary settles —
+  # halves the contention on the parent resource.
+  retry = {
+    error_message_regex  = ["RequestConflict", "another operation is being performed"]
+    interval_seconds     = 10
+    max_interval_seconds = 60
+    multiplier           = 1.5
+    randomization_factor = 0.5
+  }
+
+  depends_on = [
+    azapi_resource.foundry_account,
+    azapi_resource.foundry_model_deployment,
+  ]
 }
 
 # Output a JSON-serialisable list of every available deployment

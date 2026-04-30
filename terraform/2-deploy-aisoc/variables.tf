@@ -147,7 +147,14 @@ variable "foundry_additional_model_deployments" {
     model_name      = string
     model_version   = string
     sku_name        = optional(string, "GlobalStandard")
-    sku_capacity    = optional(number, 1500)
+    # Capacity in thousands of TPM. The default lands intentionally
+    # low (100 = 100K TPM) so a fresh subscription with default Azure
+    # OpenAI quota (typically 1000K TPM total per model family on
+    # GlobalStandard) doesn't fail with InsufficientQuota — the
+    # primary deployment's 1500K already eats most of one family;
+    # extras need to fit in what's left for OTHER families. Bump in
+    # tfvars when you have headroom (`sku_capacity = 1500` etc).
+    sku_capacity    = optional(number, 100)
     label           = optional(string, "")
     description     = optional(string, "")
   }))

@@ -46,8 +46,16 @@ locals {
   drk_project_connection_name = "detection-rules-kb"
   drk_search_endpoint         = local.drk_enabled ? "https://${azurerm_search_service.detection_rules[0].name}.search.windows.net" : ""
 
-  drk_search_api_version    = "2025-08-01-preview"
-  drk_kb_api_version        = "2025-11-01-preview"
+  # Stable ARM API version for Microsoft.Search/searchServices/* —
+  # confirmed in the Azure RP supported-versions list. Older preview
+  # versions like "2025-08-01-preview" don't exist for this RP and
+  # fail at apply with NoRegisteredProviderFound.
+  drk_search_api_version    = "2025-05-01"
+  # Knowledge bases / knowledge sources are preview features. The
+  # latest preview that the searchServices RP actually advertises
+  # (per a 400 NoRegisteredProviderFound list, May 2026) is
+  # 2026-03-01-Preview.
+  drk_kb_api_version        = "2026-03-01-Preview"
 }
 
 
