@@ -83,7 +83,11 @@
 #
 # Pure single-line JSON keeps the bash escaping simple — no nested
 # quotes inside the string.
-# TF_VAR_pixelagents_users='{"erik.vanbuggenhout@nviso.eu":{"password":"admin123","roles":["soc-manager","detection-engineer","soc-analyst"]},"jeroen.laureys@nviso.eu":{"password":"saleswarmachine","roles":["soc-analyst"]}}'
+#
+# Mirrors the hardcoded fallback in pixelagents_web/app/server.py
+# (_load_users) so a fresh deploy with this uncommented gets the
+# same roster as the no-config-file boot path.
+# TF_VAR_pixelagents_users='{"erik.vanbuggenhout@nviso.eu":{"password":"admin123","roles":["soc-manager","detection-engineer","soc-analyst"]},"jeroen.laureys@nviso.eu":{"password":"saleswarmachine","roles":["soc-analyst"]},"arne.magnus@nviso.eu":{"password":"sales123","roles":["soc-manager","detection-engineer","soc-analyst"]},"julian.obenlandrecker@nviso.eu":{"password":"sales123","roles":["soc-manager","detection-engineer","soc-analyst"]},"maxim.deweerdt@nviso.eu":{"password":"needsmorecowbell","roles":["soc-manager","detection-engineer","soc-analyst"]},"jeroen.vandeleur@nviso.eu":{"password":"hardcorevibes","roles":["soc-manager","detection-engineer","soc-analyst"]},"daan.raman@nviso.eu":{"password":"ClasseAffaires","roles":["soc-manager","detection-engineer","soc-analyst"]},"kurt.ceuppens@nviso.eu":{"password":"iamtheboss","roles":["soc-manager","detection-engineer","soc-analyst"]},"jan.deblauwe@nviso.eu":{"password":"ebitda","roles":["soc-manager","detection-engineer","soc-analyst"]}}'
 #
 # Legacy shape (no roles) is still accepted — those users get zero
 # roles and won't be able to hit /config or approve changes:
