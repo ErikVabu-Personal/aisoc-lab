@@ -544,6 +544,114 @@ def tools_execute(
 
             return {"result": {"answer": answer_text, "question_id": qid}}
 
+        # ── Threat Intel hook ─────────────────────────────────────────
+        # Lets the Investigator (or any agent that wants it) ask the
+        # Threat Intel agent for a grounded answer mid-incident.
+        # Single shot — caller passes a focused question, we invoke
+        # the threat-intel Foundry agent via the Responses API and
+        # return its text. Keeps the cross-agent contract narrow:
+        # the caller doesn't need to know about Foundry endpoints,
+        # tokens, or agent_reference shapes.
+        if tool_name == "query_threat_intel":
+            question = args.get("question")
+            if not isinstance(question, str) or not question.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.question (string)",
+                )
+
+            project_endpoint = (os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "") or "").strip()
+            if not project_endpoint:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "query_threat_intel: AZURE_AI_FOUNDRY_PROJECT_ENDPOINT "
+                        "is not set on the runner. Set it via terraform/3-... "
+                        "configure_runner_pixelagents_env.sh after Phase 2 apply."
+                    ),
+                )
+
+            try:
+                from azure.identity import DefaultAzureCredential
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"azure-identity not available on runner: {e!r}",
+                )
+
+            try:
+                ai_token = DefaultAzureCredential().get_token(
+                    "https://ai.azure.com/.default"
+                ).token
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"could not acquire Foundry bearer: {e!r}",
+                )
+
+            url = project_endpoint.rstrip("/") + "/openai/v1/responses"
+            payload = {
+                "input": (
+                    "You are being invoked by another agent for a focused "
+                    "threat-intel lookup. Keep your reply tight, "
+                    "evidence-grounded, and cite sources.\n\n"
+                    + question.strip()
+                ),
+                "agent_reference": {"name": "threat-intel", "type": "agent_reference"},
+            }
+            try:
+                r = requests.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {ai_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=180,
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"threat-intel invoke raised: {e!r}",
+                )
+            if r.status_code >= 400:
+                # Surface the upstream body so the caller can see why
+                # the lookup failed (e.g. agent not deployed, Bing
+                # connection missing).
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"threat-intel returned {r.status_code}: {r.text[:1500]}",
+                )
+
+            try:
+                data = r.json()
+            except Exception:
+                data = {}
+            # Same _response_text logic the orchestrator uses, inlined
+            # here so the runner stays a self-contained module.
+            answer = ""
+            if isinstance(data, dict):
+                if isinstance(data.get("output_text"), str):
+                    answer = data["output_text"]
+                else:
+                    out = data.get("output") or []
+                    pieces: list[str] = []
+                    for item in out:
+                        if not isinstance(item, dict):
+                            continue
+                        content = item.get("content") or []
+                        if not isinstance(content, list):
+                            continue
+                        for block in content:
+                            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                                pieces.append(block["text"])
+                    if pieces:
+                        answer = "\n".join(pieces)
+            if not answer:
+                answer = "(threat-intel returned no usable text)"
+
+            return {"result": {"answer": answer}}
+
         # ── SOC Manager tools (read + propose, all approve-gated) ────
         # These all forward through PixelAgents Web because that's
         # where the Foundry agents-API + the CHANGES store live. The

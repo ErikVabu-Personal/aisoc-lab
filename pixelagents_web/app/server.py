@@ -759,17 +759,35 @@ SHIP_SVG_INLINE = (
 def _render_nav(active: str, current_user: str) -> str:
     """Render the top-nav. ``active`` selects which tab gets highlighted.
 
+    Tabs are role-aware:
+      - "Continuous Improvement" surfaces for detection-engineer +
+        soc-manager (the only roles allowed to act on Proposed
+        Changes anyway).
+      - "Logging & Auditing" is soc-manager only.
+      - "Configuration" stays soc-manager only (already gated server-
+        side; hiding it from non-managers' nav saves them a 403).
+
     Brand mark is composed from the real NVISO wordmark PNG plus an
     inline SVG ship. The PNG must live at /static/nviso-logo.png; if
     it's missing the alt text "NVISO" shows in its place.
     """
-    tabs = (
-        ("live",      "/",          "Live Agent View"),
-        ("dashboard", "/dashboard", "Dashboard"),
-        ("config",    "/config",    "Configuration"),
-    )
+    user_roles = set(_user_roles(current_user))
+    is_soc_manager = ROLE_SOC_MANAGER in user_roles
+    is_detection_engineer = ROLE_DETECTION_ENGINEER in user_roles
+
+    # (key, href, label, visible)
+    tabs = [
+        ("live",      "/",            "Live Agent View",     True),
+        ("dashboard", "/dashboard",   "Dashboard",           True),
+        ("improvements", "/improvements", "Continuous Improvement",
+            is_soc_manager or is_detection_engineer),
+        ("audit",     "/audit",       "Logging & Auditing",  is_soc_manager),
+        ("config",    "/config",      "Configuration",       is_soc_manager),
+    ]
     items = []
-    for key, href, label in tabs:
+    for key, href, label, visible in tabs:
+        if not visible:
+            continue
         cls = "tab active" if key == active else "tab"
         items.append(f'<a class="{cls}" href="{href}">{label}</a>')
     return (
@@ -912,6 +930,107 @@ def config_view(request: Request) -> Response:
         title="NVISO Cruises · Configuration",
         body_html=body,
         scripts=["/static/config.js"],
+    ))
+
+
+@app.get("/audit", response_class=HTMLResponse)
+def audit_view(request: Request) -> Response:
+    """Logging & Auditing — a single timeline of everything that
+    happened in the platform: human and agent activity on incidents,
+    periodic SOC Manager runs, and proposed-change reviews. Soc-
+    manager-only (oversight role)."""
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if not _user_has_role(user, ROLE_SOC_MANAGER):
+        denied = (
+            '<h1>Logging &amp; Auditing — restricted</h1>'
+            '<p class="subtitle">'
+            '  This page exposes a full audit log of platform activity. '
+            '  Your account does not currently hold the '
+            '  <code>soc-manager</code> role.'
+            '</p>'
+        )
+        return HTMLResponse(
+            _render_shell(
+                active="audit",
+                current_user=user,
+                title="NVISO Cruises · Logging & Auditing",
+                body_html=denied,
+                scripts=[],
+            ),
+            status_code=403,
+        )
+    body = (
+        '<h1>Logging &amp; Auditing</h1>'
+        '<p class="subtitle">'
+        '  Combined activity timeline: incident handling (human + agent), '
+        '  periodic SOC Manager runs, and proposed-change reviews.'
+        '</p>'
+        '<div id="aisoc-audit-root"></div>'
+    )
+    return HTMLResponse(_render_shell(
+        active="audit",
+        current_user=user,
+        title="NVISO Cruises · Logging & Auditing",
+        body_html=body,
+        scripts=["/static/audit.js"],
+    ))
+
+
+@app.get("/improvements", response_class=HTMLResponse)
+def improvements_view(request: Request) -> Response:
+    """Continuous Improvement — pending agent proposals (detection
+    rules, agent-instructions edits, knowledge-preamble edits) live
+    here, awaiting human approval. Detection engineers see only
+    detection-rule changes; soc-managers see everything; analysts
+    get a friendly 403 page (the server-side /api/changes/* gate
+    enforces the same rule for the underlying API calls).
+    """
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    user_roles = set(_user_roles(user))
+    if not (ROLE_SOC_MANAGER in user_roles or ROLE_DETECTION_ENGINEER in user_roles):
+        denied = (
+            '<h1>Continuous Improvement — restricted</h1>'
+            '<p class="subtitle">'
+            '  This page lists proposed changes to detection rules, '
+            '  agent instructions, and the shared preamble — material '
+            '  reviewed by detection engineers and SOC managers before '
+            '  it goes live. Your account does not currently hold '
+            '  either role, so the queue is hidden.'
+            '</p>'
+            '<p class="subtitle">'
+            "  Use the Live Agent View / Dashboard nav links above to "
+            "  keep working on incidents."
+            '</p>'
+        )
+        return HTMLResponse(
+            _render_shell(
+                active="improvements",
+                current_user=user,
+                title="NVISO Cruises · Continuous Improvement",
+                body_html=denied,
+                scripts=[],
+            ),
+            status_code=403,
+        )
+    body = (
+        '<h1>Continuous Improvement</h1>'
+        '<p class="subtitle">'
+        '  Pending proposals from the agent fleet. Detection rules go '
+        '  to detection engineers; preamble + agent-instruction edits '
+        '  go to SOC managers; everything goes to SOC managers.'
+        '</p>'
+        '<div id="aisoc-improvements-root"></div>'
+    )
+    return HTMLResponse(_render_shell(
+        active="improvements",
+        current_user=user,
+        title="NVISO Cruises · Continuous Improvement",
+        body_html=body,
+        scripts=["/static/improvements.js"],
     ))
 
 
@@ -1278,7 +1397,29 @@ async def _start_auto_pickup() -> None:
 # Default interval: 1 hour. Set SOC_MANAGER_REVIEW_INTERVAL_SEC to 0
 # to disable the loop entirely (manual /api/soc_manager/review still
 # works). Keep this conservative — every tick spends Foundry tokens.
-SOC_MANAGER_REVIEW_INTERVAL_SEC = float(os.getenv("SOC_MANAGER_REVIEW_INTERVAL_SEC", "3600"))
+#
+# The interval is now mutable at runtime via /api/soc_manager/review_interval
+# (soc-manager only). The env var is the boot-time default; subsequent
+# updates only affect the live loop's next sleep().
+SOC_MANAGER_REVIEW_INTERVAL: dict[str, Any] = {
+    "value_sec": float(os.getenv("SOC_MANAGER_REVIEW_INTERVAL_SEC", "3600")),
+    "last_event": None,
+    "last_event_ts": None,
+}
+
+
+def _soc_manager_review_interval_value() -> float:
+    return float(SOC_MANAGER_REVIEW_INTERVAL.get("value_sec") or 0.0)
+
+
+# Per-tick audit trail of every SOC Manager review (loop + manual).
+# Surfaced on /audit. In-memory only (capped).
+SOC_MANAGER_REVIEW_LOG: list[dict[str, Any]] = []
+_SOC_MANAGER_REVIEW_LOG_CAP = 200
+
+
+# Kept for backward compat with anything reading the old name.
+SOC_MANAGER_REVIEW_INTERVAL_SEC = _soc_manager_review_interval_value()
 # Skip the review when there are fewer than this many runs to look at.
 # A periodic review needs SOMETHING to look at, otherwise the SOC
 # Manager has nothing useful to say.
@@ -1318,7 +1459,7 @@ def _build_soc_manager_review_summary(max_runs: int = 20) -> str:
     return "\n".join(lines)
 
 
-def _soc_manager_review_tick_blocking() -> dict[str, Any]:
+def _soc_manager_review_tick_blocking(trigger: str = "loop") -> dict[str, Any]:
     """One review tick. Sync because requests.post is sync; called
     from the async loop via asyncio.to_thread."""
 
@@ -1376,7 +1517,16 @@ def _soc_manager_review_tick_blocking() -> dict[str, Any]:
         return {"error": f"{r.status_code}: {r.text[:500]}"}
 
     print(f"[soc-manager] review tick completed; runs_summarized={summary.count(chr(10))+1}", flush=True)
-    return {"ok": True, "runs_summarized": summary.count("\n") + 1}
+    runs_count = summary.count("\n") + 1
+    SOC_MANAGER_REVIEW_LOG.append({
+        "ts": time.time(),
+        "trigger": trigger,
+        "runs_summarized": runs_count,
+        "ok": True,
+    })
+    if len(SOC_MANAGER_REVIEW_LOG) > _SOC_MANAGER_REVIEW_LOG_CAP:
+        del SOC_MANAGER_REVIEW_LOG[: len(SOC_MANAGER_REVIEW_LOG) - _SOC_MANAGER_REVIEW_LOG_CAP]
+    return {"ok": True, "runs_summarized": runs_count}
 
 
 async def _soc_manager_review_loop() -> None:
@@ -1387,17 +1537,84 @@ async def _soc_manager_review_loop() -> None:
             await _asyncio.to_thread(_soc_manager_review_tick_blocking)
         except Exception as e:
             print(f"[soc-manager] review loop error: {e!r}", flush=True)
-        await _asyncio.sleep(SOC_MANAGER_REVIEW_INTERVAL_SEC)
+        # Read each iteration so /config edits take effect on the
+        # next sleep without restarting the container. A value <= 0
+        # is treated as "park indefinitely until next live update".
+        interval = _soc_manager_review_interval_value()
+        if interval <= 0:
+            # Idle: re-check every minute in case the operator
+            # turns the loop back on. Cheap and bounded.
+            await _asyncio.sleep(60)
+        else:
+            await _asyncio.sleep(interval)
 
 
 @app.on_event("startup")
 async def _start_soc_manager_review() -> None:
     import asyncio as _asyncio
 
-    if SOC_MANAGER_REVIEW_INTERVAL_SEC <= 0:
-        print("[soc-manager] periodic review disabled (interval <= 0)", flush=True)
-        return
+    # Always start the loop, even if the interval is currently 0 —
+    # the operator may flip it on later via /config. The loop's
+    # idle-check sleep handles the disabled-at-boot case.
     _asyncio.create_task(_soc_manager_review_loop())
+
+
+def _soc_manager_review_interval_public_state() -> dict[str, Any]:
+    return {
+        "value_sec": int(_soc_manager_review_interval_value()),
+        "last_event": SOC_MANAGER_REVIEW_INTERVAL.get("last_event"),
+        "last_event_ts": SOC_MANAGER_REVIEW_INTERVAL.get("last_event_ts"),
+    }
+
+
+@app.get("/api/soc_manager/review_interval")
+def api_soc_manager_review_interval_get(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
+    return _soc_manager_review_interval_public_state()
+
+
+@app.post("/api/soc_manager/review_interval")
+async def api_soc_manager_review_interval_set(
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Update the SOC Manager review interval (seconds). 0 disables.
+    Soc-manager only — same auth gate as /config."""
+    _require_soc_manager(req, x_pixelagents_token)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    raw = body.get("value_sec")
+    try:
+        new_val = int(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="value_sec must be an integer (seconds)")
+    if new_val < 0:
+        raise HTTPException(status_code=400, detail="value_sec must be >= 0")
+    if 0 < new_val < 60:
+        raise HTTPException(
+            status_code=400,
+            detail="value_sec must be either 0 (disabled) or >= 60 (one minute)",
+        )
+    prev = int(_soc_manager_review_interval_value())
+    SOC_MANAGER_REVIEW_INTERVAL["value_sec"] = float(new_val)
+    if new_val != prev:
+        SOC_MANAGER_REVIEW_INTERVAL["last_event"] = (
+            "disabled" if new_val == 0
+            else f"interval set to {new_val // 60}m {new_val % 60}s"
+        )
+        SOC_MANAGER_REVIEW_INTERVAL["last_event_ts"] = time.time()
+        print(
+            f"[soc-manager] review interval: {prev}s -> {new_val}s",
+            flush=True,
+        )
+    return _soc_manager_review_interval_public_state()
 
 
 @app.post("/api/soc_manager/review")
@@ -1410,8 +1627,12 @@ async def api_soc_manager_review(
     operators who want to nudge the agent after a notable incident
     without waiting for the next scheduled tick."""
     _require_auth(request, x_pixelagents_token)
+    me = _session_user(request) or "anonymous"
     import asyncio as _asyncio
-    result = await _asyncio.to_thread(_soc_manager_review_tick_blocking)
+    result = await _asyncio.to_thread(
+        _soc_manager_review_tick_blocking,
+        f"manual:{me}",
+    )
     return {"ok": True, "result": result}
 
 
@@ -3777,6 +3998,135 @@ def api_incident_timeline(
         "incident_number": incident_number,
         "events": events,
         "totals": totals,
+        "ts": time.time(),
+    }
+
+
+# ── Logging & Auditing aggregator ─────────────────────────────────────
+# Combines four sources into one timeline for /audit (soc-manager
+# only): every per-incident audit row, every CHANGES decision +
+# apply outcome, every SOC Manager review tick, and every workflow
+# run. This is the same data the per-incident /api/incidents/{n}/
+# timeline endpoint uses, but unrolled across the whole platform.
+
+
+@app.get("/api/audit")
+def api_audit_aggregator(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+    limit: int = 500,
+) -> dict[str, Any]:
+    """All-platform activity log. Soc-manager only.
+
+    Shape: { events: [ {ts, kind, ...}, ... ] sorted desc by ts }.
+
+    Event kinds:
+      - incident_audit   — human / agent action on an incident
+                           (owner change, status flip, manual run,
+                           hitl reply, re-triage)
+      - workflow_run     — orchestrator pipeline started / ended
+      - change_proposed  — agent submitted a Proposed Change
+      - change_decision  — human approved or rejected a change
+      - soc_manager_review — periodic / manual SOC Manager review tick
+    """
+
+    _require_soc_manager(request, x_pixelagents_token)
+    limit = max(1, min(int(limit or 500), 2000))
+    events: list[dict[str, Any]] = []
+
+    # 1) Per-incident audit rows (human actions, hitl replies, ...).
+    for inc_key, rows in INCIDENT_AUDIT.items():
+        try:
+            inc_num = int(inc_key)
+        except (TypeError, ValueError):
+            inc_num = None
+        for rec in rows or []:
+            events.append({
+                "ts": float(rec.get("ts") or 0),
+                "kind": "incident_audit",
+                "incident_number": inc_num,
+                "action": rec.get("kind"),
+                "actor": rec.get("actor") or "",
+                "details": rec.get("details") or {},
+            })
+
+    # 2) Workflow runs — start + end as separate timeline rows so the
+    #    operator can see how long each took without computing it.
+    for inc_key, runs in WORKFLOW_RUNS.items():
+        try:
+            inc_num = int(inc_key)
+        except (TypeError, ValueError):
+            inc_num = None
+        for r in runs or []:
+            started = float(r.get("started_at") or 0)
+            ended = float(r.get("ended_at") or 0) if r.get("ended_at") else None
+            events.append({
+                "ts": started,
+                "kind": "workflow_run",
+                "phase": "started",
+                "incident_number": inc_num,
+                "run_id": r.get("run_id"),
+                "mode": r.get("mode"),
+            })
+            if ended:
+                events.append({
+                    "ts": ended,
+                    "kind": "workflow_run",
+                    "phase": "ended",
+                    "incident_number": inc_num,
+                    "run_id": r.get("run_id"),
+                    "mode": r.get("mode"),
+                    "status": r.get("status"),
+                    "duration_sec": int(max(0, ended - started)),
+                })
+
+    # 3) CHANGES — proposal + decision rows.
+    for c in CHANGES.values():
+        events.append({
+            "ts": float(c.get("proposed_at") or 0),
+            "kind": "change_proposed",
+            "change_id": c.get("id"),
+            "change_kind": c.get("kind"),
+            "title": c.get("title"),
+            "proposed_by": c.get("proposed_by"),
+            "target": c.get("target") or "",
+        })
+        if c.get("reviewed_at"):
+            events.append({
+                "ts": float(c.get("reviewed_at") or 0),
+                "kind": "change_decision",
+                "change_id": c.get("id"),
+                "change_kind": c.get("kind"),
+                "decision": c.get("status"),  # approved / rejected / failed / applied
+                "reviewer": c.get("reviewer") or "",
+                "review_note": c.get("review_note") or "",
+                "title": c.get("title"),
+            })
+
+    # 4) SOC Manager review ticks.
+    for rec in SOC_MANAGER_REVIEW_LOG:
+        events.append({
+            "ts": float(rec.get("ts") or 0),
+            "kind": "soc_manager_review",
+            "trigger": rec.get("trigger"),
+            "runs_summarized": rec.get("runs_summarized"),
+            "ok": rec.get("ok"),
+        })
+
+    # Sort newest-first. Timeline-style consumers can walk in order.
+    events.sort(key=lambda e: e.get("ts") or 0, reverse=True)
+    events = events[:limit]
+
+    return {
+        "events": events,
+        "totals": {
+            "incident_audit": sum(1 for e in events if e["kind"] == "incident_audit"),
+            "workflow_run":   sum(1 for e in events if e["kind"] == "workflow_run"),
+            "change_proposed": sum(1 for e in events if e["kind"] == "change_proposed"),
+            "change_decision": sum(1 for e in events if e["kind"] == "change_decision"),
+            "soc_manager_review": sum(1 for e in events if e["kind"] == "soc_manager_review"),
+        },
+        "limit": limit,
         "ts": time.time(),
     }
 

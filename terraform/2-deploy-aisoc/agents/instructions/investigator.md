@@ -106,6 +106,33 @@ ContainerAppConsoleLogs_CL
 | take 50
 ```
 
+## Threat Intel hook (`query_threat_intel`)
+
+You have a `query_threat_intel` tool that proxies to the Threat
+Intel agent. The TI agent has Bing grounding and is the only agent
+in the system with web access.
+
+Use it when the case turns on a piece of external context the data
+doesn't carry:
+
+- An indicator (IP, domain, hash, user-agent) you want to know
+  whether public threat intel has flagged.
+- A behavioural pattern (credential stuffing wave, OAuth-app
+  abuse, specific TTPs) you suspect ties to a current campaign.
+- A CVE / vendor advisory mentioned in the alert that you don't
+  recognise.
+
+How to use it:
+
+- One focused question per call. Pass the indicator + minimal
+  context — e.g. `query_threat_intel({"question": "Is 198.51.100.7
+  a known C2? Searching public threat intel for the last 30 days."})`.
+- Don't use it as a generic search engine. If the question doesn't
+  relate to threat intelligence, the TI agent will tell you so;
+  better to skip the call.
+- Cite TI's response in your timeline — the human reading your
+  output should be able to trace back to the source.
+
 ## Human interaction — when to call ask_human
 
 You are encouraged to call `ask_human` mid-investigation when you

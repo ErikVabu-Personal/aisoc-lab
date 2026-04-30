@@ -213,6 +213,57 @@
       color: #9ca3af;
     }
 
+    /* SOC Manager-only review-interval input. Same row layout as
+       .temp-row above. */
+    #${ROOT_ID} .card .interval-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #f3f4f6;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: #1f2937;
+    }
+    #${ROOT_ID} .card .interval-row .interval-label {
+      flex: 0 0 auto;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+    #${ROOT_ID} .card .interval-row .interval-input {
+      width: 70px;
+      padding: 4px 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #1f2937;
+      background: #ffffff;
+    }
+    #${ROOT_ID} .card .interval-row .interval-input:focus {
+      outline: none;
+      border-color: #0099cc;
+      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+    }
+    #${ROOT_ID} .card .interval-row .interval-input:disabled {
+      opacity: 0.55;
+      cursor: wait;
+      background: #f3f4f6;
+    }
+    #${ROOT_ID} .card .interval-row .interval-state {
+      flex: 0 0 auto;
+      color: #6b7280;
+      font-style: italic;
+    }
+    #${ROOT_ID} .card .interval-row .interval-hint {
+      flex: 1 1 100%;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+
     #${ROOT_ID} .card .toggle {
       display: flex;
       justify-content: flex-end;
@@ -361,6 +412,11 @@
   // until the request resolves so a fast double-click can't fire two
   // version creates back-to-back.
   const modelSaving = new Set();
+  // SOC Manager review-interval state. value_sec, the value the user
+  // is currently typing toward, and an in-flight flag.
+  let socMgrIntervalSec = null;
+  let socMgrIntervalPending = null;
+  let socMgrIntervalSaving = false;
   // Per-agent CONFIDENCE_THRESHOLD slider value (0–100). Populated
   // from /api/agent_temperature, written via POST /api/agent_temperature/{slug}.
   const agentTemps = {};
@@ -517,6 +573,28 @@
       html += `<span class="temp-value" data-temp-value="${escapeHtml(slug)}">`
             + `${escapeHtml(String(tempVal))}% · ${escapeHtml(tempBand)}</span>`;
       html += `<span class="temp-hint">Lower = ask humans often · Higher = act on its own</span>`;
+      html += '</div>';
+    }
+
+    // SOC Manager-only: review interval input. Drives the periodic
+    // run loop on the server. 0 disables; minimum non-zero is 60s.
+    if (slug === 'soc-manager') {
+      const intVal = (socMgrIntervalPending != null)
+        ? socMgrIntervalPending
+        : (socMgrIntervalSec != null ? socMgrIntervalSec : 3600);
+      const intMin = Math.floor(intVal / 60);
+      const intBusy = socMgrIntervalSaving;
+      html += '<div class="interval-row">';
+      html += `<label class="interval-label" for="interval-${escapeHtml(slug)}">Review every</label>`;
+      html += `<input type="number" class="interval-input" id="interval-${escapeHtml(slug)}" `
+            + `data-interval-input="soc-manager" min="0" step="1" `
+            + `value="${escapeHtml(String(intMin))}" `
+            + `${intBusy ? 'disabled' : ''}> minutes`;
+      const lbl = (intVal === 0)
+        ? '· disabled'
+        : `· next sleep up to ${Math.round(intVal / 60)}m`;
+      html += `<span class="interval-state">${escapeHtml(lbl)}</span>`;
+      html += `<span class="interval-hint">0 disables the periodic review loop. Manual /api/soc_manager/review still works either way. 60s minimum when enabled.</span>`;
       html += '</div>';
     }
 
@@ -690,6 +768,24 @@
       });
     });
 
+    // SOC Manager review interval — minutes input, commits on blur
+    // or Enter. Empty value = no-op. Keep the UX simple; this isn't
+    // a hot path (operator changes it rarely).
+    root.querySelectorAll('[data-interval-input="soc-manager"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const v = Number(input.value);
+        if (!isFinite(v)) return;
+        onSocMgrIntervalChange(v);
+      });
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          const v = Number(input.value);
+          if (isFinite(v)) onSocMgrIntervalChange(v);
+        }
+      });
+    });
+
     // Per-agent temperature slider — live-update the inline label on
     // `input` (every drag step) but only commit (POST) on `change`
     // (release). Same UX as the global slider was before.
@@ -847,6 +943,9 @@
   // pre-fill correctly.
   fetchAgentTemperatures();
   setInterval(fetchAgentTemperatures, 8000);
+
+  fetchSocMgrInterval();
+  setInterval(fetchSocMgrInterval, 30_000);
 
   // ── User management (soc-manager only on the server side) ─────────
   // Renders into #aisoc-user-management-root. Lets the SOC manager
@@ -1288,6 +1387,54 @@
       };
       // Stay in edit mode so the user can retry.
       renderGenericInstructions();
+    }
+  }
+
+  async function fetchSocMgrInterval() {
+    try {
+      const r = await fetch('/api/soc_manager/review_interval', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const data = await r.json();
+      if (typeof data.value_sec === 'number' && socMgrIntervalPending == null) {
+        socMgrIntervalSec = data.value_sec;
+        render(window.__AISOC_AGENTS_LAST || []);
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  async function onSocMgrIntervalChange(newMinutes) {
+    const newSec = Math.max(0, Math.floor(newMinutes * 60));
+    if (newSec > 0 && newSec < 60) {
+      // Clamp to the server's minimum so we don't ship an obvious
+      // 400 the operator has to read in dev tools.
+      alert('Minimum interval is 1 minute (or 0 to disable).');
+      return;
+    }
+    if (newSec === socMgrIntervalSec) return;
+    if (socMgrIntervalSaving) return;
+    socMgrIntervalSaving = true;
+    socMgrIntervalPending = newSec;
+    render(window.__AISOC_AGENTS_LAST || []);
+    try {
+      const r = await fetch('/api/soc_manager/review_interval', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value_sec: newSec }),
+      });
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        alert(`Failed to update SOC Manager review interval: ${text || r.status}`);
+        return;
+      }
+      const data = await r.json();
+      socMgrIntervalSec = (typeof data.value_sec === 'number') ? data.value_sec : newSec;
+      socMgrIntervalPending = null;
+    } catch (e) {
+      alert(`Network error updating SOC Manager review interval: ${e.message || e}`);
+    } finally {
+      socMgrIntervalSaving = false;
+      render(window.__AISOC_AGENTS_LAST || []);
     }
   }
 

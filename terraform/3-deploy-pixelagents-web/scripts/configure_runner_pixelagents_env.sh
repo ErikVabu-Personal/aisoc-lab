@@ -77,6 +77,13 @@ az containerapp secret set \
   --secrets "pixelagents-token=$PIXEL_TOKEN" \
   >/dev/null
 
+# Foundry project endpoint — needed by the runner's
+# query_threat_intel tool, which invokes the threat-intel agent
+# directly via /openai/v1/responses. Pulled from Phase 2's output;
+# best-effort (the runner's TI tool will surface a clear 503 if it's
+# missing).
+FOUNDRY_ENDPOINT="$(cd "$root/../2-deploy-aisoc" && terraform output -raw foundry_project_endpoint 2>/dev/null || echo)"
+
 az containerapp update \
   -g "$RG" \
   -n "$RUNNER_NAME" \
@@ -84,6 +91,7 @@ az containerapp update \
     PIXELAGENTS_URL="$EVENTS_URL" \
     PIXELAGENTS_TOKEN=secretref:pixelagents-token \
     ${ROSTER:+PIXELAGENTS_AGENT_ROSTER="$ROSTER"} \
+    ${FOUNDRY_ENDPOINT:+AZURE_AI_FOUNDRY_PROJECT_ENDPOINT="$FOUNDRY_ENDPOINT"} \
     RESTART_TS="$(date +%s)" \
   >/dev/null
 

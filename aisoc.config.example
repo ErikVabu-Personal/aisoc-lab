@@ -113,6 +113,24 @@
 # standard3 add capacity + replicas — overkill for a demo.
 # TF_VAR_detection_rules_kb_search_sku="basic"
 
+# ── Threat Intel agent — Bing grounding (optional) ─────────────────
+# When set, the deploy script attaches a Foundry bing_grounding tool
+# to the Threat Intel agent so it can do live web research. The
+# value is the NAME of a project connection (RemoteTool / API key)
+# you've already created in Foundry pointing at a Bing Search v7
+# resource. Leave unset to deploy the agent without web access — it
+# will tell users so when asked.
+#
+# To create the connection once:
+#   az cognitiveservices account project connection create \
+#     -g "$RG" -n "$HUB" --project-name "$PROJ" \
+#     --connection-name "bing-grounding" \
+#     --target "https://api.bing.microsoft.com/" \
+#     --auth-type ApiKey --api-key "<your bing search v7 key>" \
+#     --category ApiKey
+# Then:
+# AISOC_BING_GROUNDING_CONNECTION="bing-grounding"
+
 # ── OpenRouter (optional) ───────────────────────────────────────────
 # Only needed if you've wired the gateway to call OpenRouter as well
 # as Foundry — leave commented for the standard demo.

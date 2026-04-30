@@ -1722,12 +1722,10 @@
     } else {
       for (const u of STATE.users) html += renderDmItem(u);
     }
-    // My queue — splits into two sub-lists:
-    //   - My incidents:    Sentinel-owned, filtered by owner == me.
-    //   - Proposed changes: pending agent proposals (SOC Manager
-    //                preamble + agent-instructions + detection-rule).
-    //                Broadcast — every logged-in human sees them
-    //                until someone approves or rejects.
+    // My queue — incidents Sentinel-owned, filtered by owner == me.
+    // Proposed changes used to live here too; they moved to their own
+    // /improvements page so detection engineers + SOC managers have a
+    // dedicated review surface and analysts don't see the noise.
     html += '<h2 class="section">My queue</h2>';
 
     html += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:8px 12px 4px;font-weight:700;">My incidents</div>';
@@ -1736,13 +1734,6 @@
       html += '<div class="empty-line">No incidents currently assigned to you.</div>';
     } else {
       for (const inc of myInc) html += renderMyQueueItem(inc);
-    }
-
-    html += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:14px 12px 4px;font-weight:700;">Proposed changes</div>';
-    if (!STATE.changes.length) {
-      html += '<div class="empty-line">No pending changes.</div>';
-    } else {
-      for (const c of STATE.changes) html += renderChangeItem(c);
     }
 
     html += '</div>';

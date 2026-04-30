@@ -176,6 +176,7 @@ ROLE_INSTRUCTIONS: Dict[str, str] = {
     "Reporter": "Incident reporter.",
     "Detection Engineer": "Detection engineer.",
     "SOC Manager": "SOC Manager.",
+    "Threat Intel": "Threat intel analyst.",
 }
 
 
@@ -203,6 +204,7 @@ def load_instructions(agent_display_name: str) -> str:
         "Reporter": "reporter.md",
         "Detection Engineer": "detection-engineer.md",
         "SOC Manager": "soc-manager.md",
+        "Threat Intel": "threat-intel.md",
     }
     role_file = role_map.get(agent_display_name)
     role = _read_text(os.path.join(base_dir, role_file)) if role_file else ""
@@ -310,6 +312,16 @@ def main() -> int:
     drk_kb_name    = (os.environ.get("AISOC_DETECTION_RULES_KB_NAME", "") or "").strip()
     drk_conn_name  = (os.environ.get("AISOC_DETECTION_RULES_KB_PROJECT_CONNECTION", "") or "").strip()
     drk_attach     = bool(drk_enabled and drk_search_ep and drk_kb_name and drk_conn_name)
+
+    # Threat Intel agent — Bing grounding wiring. Optional. When the
+    # operator has set up a Bing Grounding connection on the Foundry
+    # project (via the portal or `az cognitiveservices ... connection
+    # create`) and exported the connection name as
+    # AISOC_BING_GROUNDING_CONNECTION, the deploy script attaches a
+    # bing_grounding tool to the threat-intel agent. Otherwise the
+    # agent is created without a search tool — its prompt explicitly
+    # tells it to acknowledge the missing tool to the user.
+    bing_conn_name = (os.environ.get("AISOC_BING_GROUNDING_CONNECTION", "") or "").strip()
 
     if (
         not endpoint
@@ -450,11 +462,49 @@ def main() -> int:
 
         agent_name = slug(name)
 
-        # Tool list always starts with the runner OpenAPI tool. The
-        # Detection Engineer also gets an MCP tool wired to the
-        # detection-rules Foundry IQ knowledge base, when the KB
-        # connection setup above succeeded.
+        # Tool list always starts with the runner OpenAPI tool. Some
+        # agents get extra tools layered on top:
+        #   - Detection Engineer  → MCP tool for the detection-rules KB
+        #   - Threat Intel        → Foundry bing_grounding tool
+        # All conditional on their respective env vars / setup
+        # succeeding earlier in main().
         tools_for_agent = [tool]
+
+        if agent_name == "threat-intel" and bing_conn_name:
+            # Foundry's bing_grounding tool — the project connection
+            # carries the API key to Bing Search. Same general shape
+            # as the OpenAPI tool's auth block.
+            bing_conn_arm_id = (
+                f"/subscriptions/{sub_id}"
+                f"/resourceGroups/{rg}"
+                f"/providers/Microsoft.CognitiveServices/accounts/{hub}"
+                f"/projects/{project}"
+                f"/connections/{bing_conn_name}"
+            )
+            tools_for_agent.append({
+                "type": "bing_grounding",
+                "bing_grounding": {
+                    "search_configurations": [
+                        {
+                            "connection_id": bing_conn_arm_id,
+                            "count": 7,
+                            "freshness": "Week",
+                        }
+                    ],
+                },
+            })
+            print(
+                f"INFO: attaching bing_grounding tool to {name} "
+                f"(conn={bing_conn_name})"
+            )
+        elif agent_name == "threat-intel":
+            print(
+                f"WARN: AISOC_BING_GROUNDING_CONNECTION not set — "
+                f"{name} will be deployed without a web-search tool. "
+                f"Set the env var (and create the connection in "
+                f"Foundry) to enable live research.",
+                file=sys.stderr,
+            )
         if drk_attach and drk_conn_arm_id and agent_name == "detection-engineer":
             mcp_tool = {
                 "type": "mcp",

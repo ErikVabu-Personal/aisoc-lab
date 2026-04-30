@@ -23,5 +23,10 @@
     "display": "SOC Manager",
     "slug": "soc-manager",
     "description": "Reviews patterns, proposes preamble + agent-instructions changes."
+  },
+  {
+    "display": "Threat Intel",
+    "slug": "threat-intel",
+    "description": "Outward-looking research — surfaces new CVEs, campaigns, IOCs relevant to the environment via Bing grounding."
   }
 ]
