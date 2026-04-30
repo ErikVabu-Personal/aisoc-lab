@@ -262,14 +262,39 @@ def _load_users() -> dict[str, str]:
                 for k, v in data.items()
             }
 
+    all_roles = ["soc-manager", "detection-engineer", "soc-analyst"]
     return {
         "erik.vanbuggenhout@nviso.eu": {
             "password": "admin123",
-            "roles": ["soc-manager", "detection-engineer", "soc-analyst"],
+            "roles": list(all_roles),
         },
         "jeroen.laureys@nviso.eu": {
             "password": "saleswarmachine",
             "roles": ["soc-analyst"],
+        },
+        "arne.magnus@nviso.eu": {
+            "password": "sales123",
+            "roles": list(all_roles),
+        },
+        "julian.obenlandrecker@nviso.eu": {
+            "password": "sales123",
+            "roles": list(all_roles),
+        },
+        "maxim.deweerdt@nviso.eu": {
+            "password": "needsmorecowbell",
+            "roles": list(all_roles),
+        },
+        "jeroen.vandeleur@nviso.eu": {
+            "password": "hardcorevibes",
+            "roles": list(all_roles),
+        },
+        "daan.raman@nviso.eu": {
+            "password": "ClasseAffaires",
+            "roles": list(all_roles),
+        },
+        "kurt.ceuppens@nviso.eu": {
+            "password": "iamtheboss",
+            "roles": list(all_roles),
         },
     }
 
