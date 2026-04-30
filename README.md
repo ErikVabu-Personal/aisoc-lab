@@ -1,660 +1,445 @@
-# AI SOC Lab (Sentinel + Azure AI SOC Gateway)
+# NVISO Cruiseways — Agentic SOC Demo
 
-This repository deploys a small **Microsoft Sentinel lab** plus an **AI/SOC tool gateway** (Azure Function) that can:
+An end-to-end demo of an **AI-powered Security Operations Center**, built
+on top of Microsoft Sentinel and Azure AI Foundry. The fictional NVISO
+Cruiseways fleet runs a "Ship Control Panel" web app (a small auth
+surface that emits structured login + admin events to Sentinel); a
+roster of Foundry agents triages, investigates, reports on, and
+proposes improvements to the analytic rules that catch attacks
+against it.
 
-- Run **KQL** queries against Log Analytics
-- List / get / update **Sentinel incidents** via ARM
+The whole stack — Sentinel workspace, lab VM, the gateway Functions,
+the agent runner, and the operator-facing PixelAgents web — comes up
+from a single command. One operator, one Azure subscription, one
+laptop's worth of CLI tools. Everything is Terraform; no portal
+clicks required.
 
-It is split into two Terraform phases:
+## What you get
 
-- **Phase 1**: Sentinel + VM + AMA + DCR (+ optional MDE onboarding)
-- **Phase 2**: SOC Gateway Function + Key Vault + RBAC
+When the deploy finishes you have:
 
-> Notes from the build:
-> - App Service quota constraints are common (especially in West US). Phase 2 supports a region override.
-> - Python Azure Functions packaging needs dependencies to be built on Linux; we use a GitHub Action to build+deploy.
+- **A Microsoft Sentinel workspace** with three pre-loaded analytic
+  rules covering the Ship Control Panel's login surface (failed-
+  login bursts, password spray, user-agent anomalies).
+- **A lab Windows 11 VM** wired into the workspace so you can
+  generate "real" telemetry by RDPing in.
+- **The Ship Control Panel** running as a public Container App so
+  you can hit `/login` from anywhere and watch alerts fire.
+- **A six-agent Foundry roster** (Triage, Investigator, Reporter,
+  Detection Engineer, SOC Manager, Threat Intel) with shared and
+  role-specific prompts, all wired through an authenticated runner
+  to Sentinel + ARM.
+- **PixelAgents Web** — the operator UI: a Live Agent View
+  (sidebar with chats, HITL questions, your incident queue), a
+  Sentinel-backed Dashboard, a per-agent `/config` page, a
+  Continuous Improvement queue for proposed rule / prompt edits,
+  and a Logging & Auditing page that combines every action across
+  agents and humans into one timeline.
+- **A Foundry IQ knowledge base** seeded for the Detection
+  Engineer agent so it can ground new-rule proposals in your
+  existing detection corpus.
+
+The roles model (`soc-manager` / `detection-engineer` / `soc-analyst`)
+gates every page — analysts see incidents, detection engineers see
+rule proposals, SOC managers see everything plus user management
+and audit.
 
 ---
 
-## Prerequisites
+## Quick start
 
-- Terraform >= 1.6
-- Azure CLI (`az`) logged in to the target subscription
-- Git
+```bash
+# 1. Clone this repo + copy the config template
+cp aisoc.config.example aisoc.config
+$EDITOR aisoc.config            # set RG name, region, demo roster
 
-Optional but recommended:
-- GitHub CLI (`gh`)
+# 2. Make sure you're logged in to Azure + GitHub
+az login
+gh auth login
+
+# 3. Deploy
+./aisoc_demo.sh deploy --resource-group=rg-aisoc-demo --azure-location=westus
+
+# … 15-20 minutes later, the script prints the URL of the operator UI
+# plus the lab-VM admin credentials.
+
+# 4. When you're done
+./aisoc_demo.sh destroy
+```
+
+`aisoc_demo.sh` is the only entry point you need. It walks the three
+Terraform phases in order, drives the post-apply Foundry / Function-
+App / Container-App configuration scripts, and at the end prints the
+admin URLs + credentials.
+
+### `./aisoc_demo.sh --help`
+
+```
+Usage: ./aisoc_demo.sh <command> [options]
+
+Commands:
+  deploy    Walk Phases 1 → 2 → 3 — Terraform applies, function-app
+            code workflows, Foundry bootstrap, smoke-test print.
+            Idempotent; safe to re-run.
+  destroy   Tear down all phases (Phase 3 → 2 → 1) via terraform
+            destroy. Leaves the OIDC trust and AZURE_* repo
+            variables in place so the next `deploy` is one command.
+            5-second countdown before applying.
+
+Common Terraform variables:
+  --resource-group=...    Resource group to create / use in Azure
+                          (default: rg-sentinel-test). Phase 1 creates
+                          the RG with this name; Phases 2 & 3 deploy
+                          into it.
+  --azure-location=...    Azure region for Sentinel + lab VM
+                          (default: westus). Phase 2 deploys to
+                          westcentralus by default — those two
+                          together are the empirically-validated
+                          combo for new subs whose other regions
+                          have zero App Service / EP-series quota.
+  --location-override=... Region for Phase 2 (App Service / Function
+                          Apps). Default: westcentralus.
+  --foundry-location=...  Region for Foundry hub/project/model
+                          (default: eastus2 — Model Router is
+                          region-gated to East US 2 / Sweden Central).
+  --vm-size=...           Lab VM size (default: Standard_D2s_v3)
+
+  (Lab VM admin password is auto-generated by Terraform — printed
+   at the end of the run. It's stored in Terraform state and stays
+   stable across re-applies. To force your own value, pre-set
+   TF_VAR_admin_password in the env.
+
+   RDP is open from any source — this is a throwaway test box.)
+
+Common Terraform variables (Phase 2):
+  --location-override=...     Region for Function Apps (default: westcentralus)
+  --foundry-location=...      Region for Foundry hub/project (default: eastus2)
+  --foundry-model-choice=...  Model name (default: gpt-4.1-mini)
+  --runner-image=...          Override runner image tag (default: :latest)
+
+Other:
+  --subscription=...          Azure subscription to deploy into
+                              (defaults to current `az account show` selection)
+  --skip-oidc-bootstrap       Skip the GitHub→Azure federated-credential setup
+                              (use if you've already bootstrapped or are
+                              re-running from a fresh shell). Only meaningful
+                              for the `deploy` command.
+  -h, --help                  show this help
+
+Config file:
+  ./aisoc.config (gitignored, optional). Sourced before CLI parsing so
+  it acts as your baseline; --flag values override for the current run.
+  Copy ./aisoc.config.example to get started — everything documented
+  there: RG, regions, VM password, Foundry model, demo user roster, etc.
+
+Generic pass-through:
+  Any unrecognized --key=value is forwarded as TF_VAR_<key>=<value>.
+  Dashes in <key> are converted to underscores (--foo-bar -> TF_VAR_foo_bar).
+
+Sensitive values:
+  For passwords / API keys, prefer pre-setting TF_VAR_<name> in the
+  environment so the value never lands in shell history or process
+  listings. Pre-set env vars take precedence over --flag values.
+
+Examples:
+  # Minimal first-time deploy (admin password auto-generated):
+  ./aisoc_demo.sh deploy \
+      --resource-group=rg-aisoc-demo --azure-location=westus
+
+  # Override Foundry region:
+  ./aisoc_demo.sh deploy \
+      --resource-group=rg-aisoc-demo \
+      --azure-location=westus --foundry-location=swedencentral
+
+  # Tear it all down:
+  ./aisoc_demo.sh destroy
+```
+
+Configuration precedence: **shell-preset env vars > CLI flags >
+`aisoc.config` > Terraform variable defaults**. Anything sensitive
+(passwords, API keys) should be pre-exported in your shell so it
+never lands in CLI history or `aisoc.config`.
+
+### Prerequisites
+
+- `az` CLI, logged in (`az login`) on the target subscription.
+- `gh` CLI, authenticated (`gh auth login`). Used to bootstrap an
+  OIDC federated credential so the CI workflows that ship the
+  Container Apps and Function Apps can authenticate to Azure
+  without long-lived secrets.
+- `terraform` ≥ 1.6.
+- `jq`. Used by Phase 1 to deploy Sentinel analytic rules.
+- `python3` ≥ 3.10. Used for the Foundry agent deploy script.
+
+---
+
+## Architecture
+
+The demo is split into **three Terraform phases** plus a stack of
+runtime components. The three phases are independent state files
+that depend on each other through `terraform_remote_state`.
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│ Phase 1 — Sentinel + Ship Control Panel + lab VM                  │
+│   Microsoft Sentinel workspace │ analytic rules │ Win11 lab VM    │
+│   Ship Control Panel (Container App, public)                      │
+│   Shared Key Vault │ App Insights                                 │
+└───────────────────────────────────────────────────────────────────┘
+                              ▲ remote-state outputs
+                              │
+┌───────────────────────────────────────────────────────────────────┐
+│ Phase 2 — Agentic SOC core                                        │
+│   Foundry hub + project (model deployments)                       │
+│   SOC Gateway Function (ARM writes to Sentinel)                   │
+│   AISOC Orchestrator Function (triage→investigator→reporter)      │
+│   AISOC Runner Container App (broker between Foundry + Gateway)   │
+│   Detection Rules KB (Storage + AI Search + Foundry IQ)           │
+└───────────────────────────────────────────────────────────────────┘
+                              ▲ remote-state outputs
+                              │
+┌───────────────────────────────────────────────────────────────────┐
+│ Phase 3 — Operator UI                                             │
+│   PixelAgents Web (FastAPI Container App)                         │
+│   Auto-pickup loop, HITL routing, Foundry agent invocation,       │
+│   /dashboard, /improvements, /audit, /config, /                   │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### Agents
+
+Six Foundry prompt-agents, each with a role-specific instruction file
+and the right runner tools attached:
+
+| Agent | Role | Pipeline? |
+|-------|------|-----------|
+| **Triage** | L1 first pass — frames the question, escalates. Never asks humans, never closes. | Yes |
+| **Investigator** | KQL-driven analysis, builds the timeline, can ask the human or Threat Intel agent mid-flow. | Yes |
+| **Reporter** | Drafts the case note, decides to close / get sign-off / re-investigate. Free-text human reply. | Yes |
+| **Detection Engineer** | On-demand. Drafts new analytic rules, grounded in the rule library KB. | No (chat-only) |
+| **SOC Manager** | On-demand + periodic. Reviews recent runs, proposes preamble + agent-prompt edits. | No (chat-only) |
+| **Threat Intel** | On-demand + investigator hook. Web research via Bing grounding. | No |
+
+Behaviour is controlled per-agent on `/config`: the LLM deployment,
+the `CONFIDENCE_THRESHOLD` slider (how readily it asks humans), and
+the role-specific instruction text are all editable live.
 
 ---
 
 ## Repo layout
 
-- `terraform/1-deploy-sentinel/` — Phase 1
-- `terraform/2-deploy-aisoc/` — Phase 2
-- `.github/workflows/deploy-soc-gateway.yml` — builds and deploys the Function code (Linux build)
+```
+.
+├─ aisoc_demo.sh              # one-shot deploy / destroy driver
+├─ aisoc.config.example       # baseline config (copy → aisoc.config)
+├─ terraform/                 # 3 Terraform phases + scripts
+├─ pixelagents_web/           # operator-facing FastAPI app + UI
+├─ runner/                    # AISOC Runner Container App
+├─ ship-control-panel/        # the lab "victim" web auth surface
+└─ scripts/                   # cross-phase Python helpers
+```
+
+### `terraform/`
+
+Three independent stacks. Always apply in order; destroy in reverse.
+
+| Folder | What it builds |
+|--------|----------------|
+| `1-deploy-sentinel/` | Microsoft Sentinel workspace, three analytic rules (`sentinel_rules.tf`), the Ship Control Panel Container App (`ship_control_panel.tf`), the lab VM (`main.tf`), shared Key Vault (`aisoc_kv.tf`), App Insights (`appinsights_shipcp.tf`), Defender for Endpoint onboarding (`mde_kv.tf`). README + PHASES + MDE + SECURITY docs sit alongside. |
+| `2-deploy-aisoc/` | Foundry hub + project (`foundry.tf`) + a primary model deployment + zero-or-more extras (`foundry_deployments.tf`). The SOC Gateway Function (`main.tf`), the AISOC Orchestrator Function (`orchestrator.tf` + `orchestrator/`), the Runner Container App (`runner.tf`). The Detection Rules knowledge base (`detection_rules_kb.tf`): Storage + Azure AI Search + Foundry IQ KB. The Foundry agents themselves (`agents/agents.json` + `agents/instructions/*.md`) are deployed by `scripts/deploy_prompt_agents_with_runner_tools.py`. |
+| `3-deploy-pixelagents-web/` | Just the PixelAgents Web Container App + its env-var wiring. |
+
+Each phase has its own `scripts/` folder for post-apply work that
+Terraform itself can't model cleanly (function host keys, Container
+App secrets that depend on runtime state).
+
+### `pixelagents_web/`
+
+The operator UI. Single FastAPI app, server-rendered HTML + small
+inline JS modules, no React build step.
+
+```
+pixelagents_web/
+├─ Dockerfile
+├─ pyproject.toml
+├─ app/
+│   ├─ server.py             # the whole backend (~5k lines, intentional monolith)
+│   └─ static/               # one .js per page
+│       ├─ agent_comm.js     # Live Agent View sidebar (chats + DM panels)
+│       ├─ dashboard.js      # /dashboard table + draggable incident-detail panels
+│       ├─ config.js         # /config — per-agent model + temperature + users + interval
+│       ├─ improvements.js   # /improvements queue
+│       ├─ audit.js          # /audit timeline
+│       ├─ chat_popup.js     # iframe-embedded standalone chat surface
+│       └─ auto_pickup_badge.js  # Live View status pill
+└─ ui/                       # vendored Pixel Agents office bundle (the "live view")
+```
+
+Pages and their role gates:
+
+| Path | Visible to | Purpose |
+|------|------------|---------|
+| `/` | everyone | "Live Agent View" — the pixel office + the right-hand sidebar with HITL, chats, queue. |
+| `/dashboard` | everyone | Sentinel incidents table, click-through to a draggable per-incident timeline panel. |
+| `/improvements` | detection-engineer + soc-manager | Proposed Changes queue. Detection-engineers see only detection-rule items. |
+| `/audit` | soc-manager | All-platform timeline (incidents, runs, change decisions, SOC-Manager reviews). |
+| `/config` | soc-manager | Per-agent dials, user management, periodic-review interval. |
+| `/login`, `/logout`, `/chat-popup` | session-bound | Auth + the iframe payload for in-page chat panels. |
+
+### `runner/`
+
+A small FastAPI app that brokers tool calls between Foundry agents
+and Sentinel/ARM. Foundry can't directly call ARM with a customer
+identity; the runner uses a managed identity to do so on the
+agent's behalf.
+
+```
+runner/
+├─ Dockerfile
+├─ pyproject.toml
+├─ aisoc_runner/
+│   └─ server.py             # tool dispatcher
+└─ openapi*.yaml             # tool schemas published to Foundry
+```
+
+Tools the runner exposes: `kql_query`, `list_incidents`,
+`get_incident`, `update_incident`, `add_incident_comment`,
+`ask_human`, `create_analytic_rule`, the SOC Manager change-
+proposal family (`get_agent_role_instructions`,
+`propose_change_to_preamble`, `propose_change_to_agent_instructions`,
+`propose_change_to_detection_rule`), and `query_threat_intel`
+(invokes the Threat Intel agent for the Investigator).
+
+### `ship-control-panel/`
+
+The "victim" web app — a small Next.js auth surface for a fictional
+fleet ops portal. Logs structured JSON events (`auth.login.failure`,
+`auth.login.success`, `admin.action`, …) to stdout, which Container
+Apps ships to a Log Analytics workspace via the configured
+diagnostic settings, where Sentinel's analytic rules pick them up.
+Hitting `/login` repeatedly with bad credentials is the demo's
+"attack" trigger.
+
+### `scripts/`
+
+Cross-phase Python helpers. The big ones:
+
+- `deploy_foundry_project.py` — creates the Foundry project (kept
+  out of Terraform because the AzAPI provider's read flow is flaky
+  for `Microsoft.CognitiveServices/projects`).
+- `sync_github_repo_var.sh` — pushes the per-deploy resource names
+  into GitHub repo variables so the per-image deploy workflows know
+  where to ship the new container.
+
+Each Terraform phase also has its own `scripts/` for post-apply
+work that depends on runtime state (function host keys, Container
+App env-var wiring after a Phase-2 redeploy, the Foundry agent
+deploy).
 
 ---
 
-## Phase 1 — Deploy Sentinel baseline
+## Configuration (`aisoc.config`)
 
-### 1) Configure tfvars
+Anything you'd normally pass on the CLI can go in `aisoc.config` at
+the repo root (gitignored). Copy `aisoc.config.example` to start.
+The file is `bash`-sourced, so it just exports `TF_VAR_*` and
+`AISOC_*` env vars.
 
-Copy the example file:
+The example documents every supported knob. Highlights:
 
-```bash
-cd terraform/1-deploy-sentinel
-cp terraform.tfvars.example terraform.tfvars
-```
+- **`TF_VAR_resource_group_name`**, **`TF_VAR_azure_location`**,
+  **`TF_VAR_foundry_location`**, **`TF_VAR_location_override`** —
+  the four region / RG knobs that matter on a fresh subscription.
+- **`TF_VAR_pixelagents_users`** — JSON `{email: {password, roles}}`.
+  Roles are `soc-manager`, `detection-engineer`, `soc-analyst`.
+  The example file ships the full demo roster.
+- **`TF_VAR_foundry_additional_model_deployments`** — JSON list
+  of extra model deployments to surface on `/config`'s per-agent
+  dropdown. Defaults to `gpt-4.1` and `gpt-4o-mini` alongside the
+  primary `gpt-4.1-mini`.
+- **`TF_VAR_detection_rules_kb_enabled`** — flips the Foundry IQ
+  rule-library subsystem on or off.
+- **`AISOC_BING_GROUNDING_CONNECTION`** — name of a project
+  connection that holds a Bing Search v7 API key. When set, the
+  Threat Intel agent gets a `bing_grounding` tool. Setup steps in
+  the example file.
 
-Edit at minimum:
-
-- `admin_password`
-- `allowed_rdp_cidr` (or leave auto-detect on)
-
-### 2) Apply
-
-```bash
-terraform init
-terraform apply
-```
-
-### 3) Verify logs arrive
-
-In Log Analytics (or Sentinel → Logs), validate:
-
-```kusto
-Heartbeat | take 5
-
-Event
-| where TimeGenerated > ago(1h)
-| summarize count() by EventLog
-```
-
-> Tip: Security events require Level 4 (Information). Phase 1 DCR is configured to include it.
+Sensitive values (admin password, API keys) should ideally be
+exported in your shell rather than written to `aisoc.config` —
+the precedence rules in `aisoc_demo.sh` honor pre-shell env vars
+above everything else.
 
 ---
 
-## Optional — MDE onboarding (lab)
+## Operating the demo
 
-Phase 1 supports automated **MDE onboarding** using:
+### Generating an incident
 
-- a Key Vault secret (created by Terraform)
-- VM Run Command (PowerShell)
+The Sentinel analytic rules fire on the Ship Control Panel's
+auth telemetry. Easiest demo trigger: hit `/login` from a
+browser and try a few wrong passwords. Within ~5 minutes a
+Sentinel incident will pop up in the workspace.
 
-### How it works
+If `Auto-pickup` is on (the toggle on `/config`, default ON), the
+orchestrator runs Triage → Investigator → Reporter automatically,
+the agents annotate the incident in Sentinel, and the case ends in
+either an autonomous closure or a hand-off to a human (depending on
+the per-agent CONFIDENCE_THRESHOLD).
 
-1) Download `onboarding.cmd` from the Defender portal (tenant specific)
-2) Place it next to the Phase 1 Terraform:
-   - `terraform/1-deploy-sentinel/onboarding.cmd`
-3) Point Terraform at it:
+### Roles you'll need
 
-In `terraform/1-deploy-sentinel/terraform.tfvars`:
+The demo's role model:
 
-```hcl
-enable_defender_for_endpoint = true
-mde_onboarding_secret_name   = "MDE-ONBOARD"
-mde_onboarding_script_path   = "./onboarding.cmd"
-```
+| Role | Sees |
+|------|------|
+| `soc-analyst` | Incident queue, HITL questions from triage / investigator / reporter, can pick up cases. |
+| `detection-engineer` | Continuous Improvement (filtered to detection-rule changes only). HITL questions from the Detection Engineer agent. |
+| `soc-manager` | Everything. `/config`, `/audit`, full Continuous Improvement queue, user management. |
 
-Then:
+A user can hold multiple roles. The first user in the bootstrap
+fallback (`erik.vanbuggenhout@nviso.eu`) holds all three.
+
+### Tearing down
 
 ```bash
-terraform apply
+./aisoc_demo.sh destroy
 ```
 
-### Confirm MDE on the VM
+The script tears down Phase 3 → 2 → 1 in reverse order, with two
+small safeguards baked in:
 
-Run on the VM:
+1. The Foundry hub can't be deleted while it has child projects, so
+   the script makes a direct ARM `DELETE` on the project before
+   `terraform destroy` reaches the hub.
+2. The Phase 1 lab VM auto-shuts down on a schedule, and Azure won't
+   let extensions be modified on a deallocated VM. Before destroying
+   Phase 1 the script `az vm start`s the VM and polls for `running`,
+   then if it didn't come up in time, falls back to
+   `terraform state rm`'ing each `azurerm_virtual_machine_extension`
+   — Azure cleans those up automatically when the parent VM is
+   deleted further down the destroy.
 
-```powershell
-Get-Service Sense
-Test-Path "HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection"
-```
-
-### Confirm MDE in portal
-
-- Devices inventory: https://security.microsoft.com/machines
-- Onboarding page: https://security.microsoft.com/securitysettings/endpoints/onboarding
-
-> Note: Sentinel's Defender connector can require tenant consent/licensing.
+OIDC trust + AZURE_* repo variables stay in place; the next
+`deploy` is one command from a fresh teardown.
 
 ---
 
-## Phase 2 — Deploy SOC Gateway + Foundry Hub/Project (Terraform)
-
-Phase 2 reads Phase 1 outputs from local state (`../1-deploy-sentinel/terraform.tfstate`).
-
-Phase 2 provisions:
-
-- SOC Gateway **Azure Function App** + supporting resources (Storage, App Service Plan)
-- **Key Vault** (for provider secrets)
-- RBAC for the Function MI to query Log Analytics and interact with Sentinel
-- Azure AI Foundry **Hub/Account** (via AzAPI)
-
-> Note: Foundry *Project* creation is performed via a script (below) to match Azure Portal behavior.
-> Terraform can attempt project creation via AzAPI, but it is **disabled by default** because it can
-> fail with misleading managed identity errors.
-
-### 1) Configure tfvars
-
-Copy:
-
-```bash
-cd terraform/2-deploy-aisoc
-cp terraform.tfvars.example terraform.tfvars
-```
-
-Important settings:
-
-- `function_plan_sku` — pick a SKU you have quota for (e.g. `EP1`)
-- `location_override` — optional: deploy Phase 2 in another region if App Service quota is blocked
-- `foundry_location` — **recommended** to set explicitly (Foundry enablement differs by region)
-
-Example (common in restricted subscriptions):
-
-```hcl
-# App Service / Functions region (quota-driven)
-location_override = "westcentralus"
-function_plan_sku = "EP1"
-
-# Foundry region (capability-driven)
-foundry_location = "westus"
-```
-
-Model settings (used later by agent deployment scripts):
-
-```hcl
-foundry_model_choice          = "gpt-4.1-mini"
-foundry_model_deployment_name = "gpt-4.1-mini"
-```
-
-> Note: `foundry_hub_name` and `foundry_project_name` are optional and will auto-generate with a random suffix.
-
-### 2) Apply
-
-```bash
-terraform init
-terraform apply
-```
-
-> Note: If you pulled new changes to this repo (or switched branches), re-run `terraform init`
-> to pick up any new providers (Phase 2 uses password generation for gateway keys).
-
-Terraform outputs include:
-
-- `soc_gateway_function_name`
-- `key_vault_uri`
-- `foundry_hub_name`, `foundry_project_name`
-- `foundry_account_id`
-
-### 3) Create/update the Foundry Project (recommended)
-
-In some tenants, creating Foundry Projects via Terraform/AzAPI can fail with a misleading
-managed identity error even when identity is enabled. The Azure Portal succeeds because it uses
-API version `2026-01-15-preview` and includes additional required fields.
-
-To keep Phase 2 reliable, use the helper script after `terraform apply`.
-
-First, set the Phase 1 resource group name (Phase 2 uses the same RG as Phase 1):
-
-```bash
-RG=$(terraform -chdir=../1-deploy-sentinel output -raw resource_group 2>/dev/null || echo "rg-sentinel-test")
-```
-
-Then run:
-
-```bash
-python3 scripts/deploy_foundry_project.py \
-  --tfstate terraform/2-deploy-aisoc/terraform.tfstate \
-  --resource-group "$RG"
-```
-
-What it does:
-- Uses ARM `Microsoft.CognitiveServices/accounts/projects` with `api-version=2026-01-15-preview`
-- Sends required fields: `location`, `identity=SystemAssigned`, `properties.displayName/description`
-
-### 4) Verify Project provisioning
-
-```bash
-SUB=$(az account show --query id -o tsv)
-RG=rg-sentinel-test
-HUB=$(terraform -chdir=terraform/2-deploy-aisoc output -raw foundry_hub_name)
-PROJ=$(terraform -chdir=terraform/2-deploy-aisoc output -raw foundry_project_name)
-
-az rest --method get \
-  --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.CognitiveServices/accounts/$HUB/projects/$PROJ?api-version=2026-01-15-preview" \
-  -o jsonc | jq -r '.properties.provisioningState'
-```
-
-Expected: `Succeeded`
-
----
-
-## Phase 3 — Deploy the SOCGateway Function code (GitHub Actions)
-
-Phase 2 creates the **Function App infrastructure**, but the app will have **no functions** until you deploy
-code.
-
-We deploy the Python Function code via GitHub Actions because the dependencies must be built on Linux.
-
-### 1) Create an Azure service principal for GitHub Actions
-
-Run (example scope: subscription):
-
-```bash
-SUB=$(az account show --query id -o tsv)
-
-az ad sp create-for-rbac \
-  --name "aisoc-lab-gha" \
-  --role Contributor \
-  --scopes "/subscriptions/$SUB" \
-  --sdk-auth
-```
-
-Copy the JSON output.
-
-### 2) Add GitHub secret
-
-Repo → Settings → Secrets and variables → Actions → **New repository secret**:
-
-- Name: `AZURE_CREDENTIALS`
-- Value: the JSON from above
-
-### 3) Run the workflow
-
-First, confirm whether code is already deployed. If this returns no rows, you must deploy:
-
-```bash
-RG=$(terraform -chdir=terraform/1-deploy-sentinel output -raw resource_group 2>/dev/null || echo "rg-sentinel-test")
-FUNC=$(terraform -chdir=terraform/2-deploy-aisoc output -raw soc_gateway_function_name)
-
-az functionapp function list -g "$RG" -n "$FUNC" -o table
-```
-
-Then deploy:
-
-GitHub → Actions → **Deploy SOC Gateway Function** → Run workflow:
-
-Inputs:
-
-- `function_app_name`: (Terraform output) e.g. `func-foundry-soc-vhbk75`
-- `resource_group`: e.g. `rg-sentinel-test`
-
----
-
-## Smoke tests (Gateway)
-
-### Gateway auth keys (read vs write)
-
-The SOC gateway supports a simple extra auth layer on top of the Function key:
-
-- `AISOC_READ_KEY` — required for read endpoints (KQL + incident list/get)
-- `AISOC_WRITE_KEY` — required for write endpoints (incident update)
-
-**Default behavior (recommended):** Phase 2 Terraform generates random keys, stores them in **Key Vault**,
-and injects them into the Function App via **Key Vault references**.
-
-Terraform outputs the secret names:
-
-- `aisoc_read_key_secret_name`
-- `aisoc_write_key_secret_name`
-
-To retrieve a key value (example):
-
-```bash
-KV_URI=$(terraform -chdir=terraform/2-deploy-aisoc output -raw key_vault_uri)
-az keyvault secret show --id "${KV_URI}secrets/$(terraform -chdir=terraform/2-deploy-aisoc output -raw aisoc_read_key_secret_name)" --query value -o tsv
-```
-
-Pass them on requests as:
-
-- header: `x-aisoc-key: <key>`
-  -or-
-- query param: `?aisoc_key=<key>`
-
-You still need the standard Function key (`?code=<function-key>`).
-
-Get a **Function key**:
-
-Function App → Functions → `SOCGateway` → Function Keys
-
-### KQL
-
-```bash
-curl -sS -X POST \
-  "https://<FUNCTION_APP>.azurewebsites.net/api/kql/query?code=<KEY>" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"Heartbeat | take 5","timespan":"PT1H"}'
-```
-
-### Sentinel incidents
-
-```bash
-curl -sS \
-  "https://<FUNCTION_APP>.azurewebsites.net/api/sentinel/incidents?code=<KEY>"
-```
-
----
-
-## Destroy / recreate notes (important)
-
-Azure AI / Cognitive Services resources can be "soft-deleted" and/or reserve certain names for a period
-of time. If you `terraform destroy` and immediately recreate:
-
-- You may hit errors requiring **restore** of a deleted account name.
-- You may hit `CustomDomainInUse` for `customSubDomainName`.
-
-This repo avoids most of that by generating a unique `customSubDomainName`, but if you still get stuck,
-force new random names by tainting the random generators in Phase 2:
-
-```bash
-cd terraform/2-deploy-aisoc
-terraform taint random_string.suffix
-terraform taint random_string.cs_subdomain
-terraform apply
-```
-
----
-
-## Troubleshooting
-
-### App Service Plan quota errors
-
-If Phase 2 fails creating the App Service Plan with a quota error:
-
-- Pick a different SKU (`function_plan_sku`) and/or
-- Deploy Phase 2 to a region where App Service quota is available (`location_override`)
-
-### Function returns 404
-
-The gateway uses a catch-all route: `/api/{*route}`.
-Verify the function exists:
-
-```bash
-az functionapp function list -g rg-sentinel-test -n <FUNCTION_APP> -o table
-```
-
-### Function returns 500 (ImportError / GLIBC)
-
-This typically means dependencies were built on an incompatible runtime.
-Use the GitHub Action (Linux build).
-
----
-
-## Phase 4 — Deploy AISOC Runner (Azure Container Apps) + Foundry Tool (manual)
-
-This phase deploys the **AISOC Runner** (a small FastAPI service) to Azure Container Apps.
-Foundry uses the runner as an **OpenAPI Tool**, and the runner calls the SOCGateway Function.
-
-**Why it exists:** Foundry Agent Service won’t reliably execute arbitrary HTTP tools the way MCP would.
-The runner provides a stable tool surface (OpenAPI) and performs the outbound calls.
-
-### 4.1 Build & publish the runner image (GitHub Actions)
-
-The workflow **Build + Publish AISOC Runner (GHCR)** builds/pushes a container image to GHCR.
-It does **not** deploy/update your Container App automatically.
-
-It publishes two tags:
-- `ghcr.io/erikvabu-personal/aisoc-runner:latest`
-- `ghcr.io/erikvabu-personal/aisoc-runner:<GITHUB_SHA>`
-
-To build/publish:
-- GitHub → Actions → **Build + Publish AISOC Runner (GHCR)** → Run workflow
-
-### 4.2 Deploy runner infrastructure (Terraform)
-
-Runner infrastructure is deployed as part of **Phase 2** (`terraform/2-deploy-aisoc/runner.tf`).
-
-Terraform outputs:
-- `runner_url`
-- `runner_name`
-- `runner_bearer_token_secret_name` (stored in Key Vault)
-
-### 4.3 Deploy/update the running Container App to a specific image tag (manual)
-
-**Important:** Azure Container Apps may keep running an older image behind `:latest`.
-For demos, deploy by **commit SHA tag** (recommended).
-
-```bash
-RG=$(terraform -chdir=terraform/2-deploy-aisoc output -raw resource_group)
-APP=$(terraform -chdir=terraform/2-deploy-aisoc output -raw runner_name)
-SHA=<GITHUB_SHA>
-
-az containerapp update -g "$RG" -n "$APP" \
-  --image "ghcr.io/erikvabu-personal/aisoc-runner:${SHA}"
-```
-
-Or latest:
-
-```bash
-az containerapp update -g "$RG" -n "$APP" \
-  --image "ghcr.io/erikvabu-personal/aisoc-runner:latest"
-```
-
-### 4.4 Create the Foundry OpenAPI Tool(s) (manual)
-
-In Azure AI Foundry, create **three** OpenAPI tools (one per agent) so PixelAgents can attribute events correctly.
-
-Use these schema files:
-- Triage tool: `runner/openapi.triage.yaml`
-- Investigator tool: `runner/openapi.investigator.yaml`
-- Reporter tool: `runner/openapi.reporter.yaml`
-
-Each schema includes a required header `x-aisoc-agent` with a default value (triage/investigator/reporter).
-
-For each tool:
-1) Go to **Tools** → **Create tool** → **OpenAPI**
-2) Paste the OpenAPI spec (YAML format)
-3) Replace the server URL:
-   - `https://REPLACE_ME` → your `runner_url` (Terraform output)
-4) Configure authentication:
-   - Type: **API key**
-   - Location: **Header**
-   - Header name: `x-aisoc-runner-key`
-   - Value: the runner token (from Key Vault secret `runner_bearer_token_secret_name`)
-
-Notes:
-- Foundry requires `operationId` for each endpoint (included in these schemas).
-- You do not need to re-import the tool for every runner code change unless endpoints/auth changed.
-
-### 4.5 Validate the tool end-to-end (manual)
-
-With the tool attached to an agent, run:
-- `POST /tools/execute` with:
-
-```json
-{ "tool_name": "list_incidents", "arguments": {} }
-```
-
-Then:
-
-```json
-{ "tool_name": "get_incident", "arguments": { "incidentNumber": 1 } }
-```
-
-And (writes enabled):
-
-```json
-{ "tool_name": "update_incident", "arguments": { "incidentNumber": 1, "properties": { "status": "Closed" } } }
-```
-
----
-
-## Phase 5 — Deploy Foundry Agents (Agent Service)
-
-> Note: The legacy Terraform phase folder `terraform/5-deploy-ship-control-panel/` has been removed.
-> Ship Control Panel is deployed as part of Phase 1 (`terraform/1-deploy-sentinel/ship_control_panel.tf`).
-
-If you want the agents to run inside **Azure AI Foundry Agent Service**, deploy them with the script below.
-
-Prereqs:
-- Azure CLI logged in
-- Foundry project exists
-- Model deployment exists (deployment name)
-- SOCGateway deployed and working
-- Runner deployed and Foundry Tool created
-
-Load gateway/function keys into your shell:
-
-```bash
-eval "$(./scripts/aisoc_env.sh)"
-```
-
-Deploy agents:
-
-```bash
-python3 scripts/deploy_foundry_agents.py \
-  --project-url "https://<your-host>.services.ai.azure.com/api/projects/<projectName>" \
-  --model-deployment "gpt-5.4-mini"
-```
-
-Attach write tool (dangerous) only when you explicitly enable it:
-
-```bash
-python3 scripts/deploy_foundry_agents.py \
-  --project-url "https://<your-host>.services.ai.azure.com/api/projects/<projectName>" \
-  --model-deployment "gpt-5.4-mini" \
-  --enable-writes
-```
-
-By default, agents are named with prefix `foundry-aisoc-*`.
-
----
-
-## Phase 6 — PixelAgents Web (Foundry/Runner telemetry → Pixel Agents UI)
-
-This repo deploys a standalone Pixel Agents-style web UI (Azure Container Apps) that is driven by AISOC Runner telemetry.
-
-Current implementation notes:
-- PixelAgents Web is a FastAPI service (`pixelagents_web/`) deployed to ACA.
-- It serves the Pixel Agents webview UI build (vendored into `pixelagents_web/app/ui_dist/`).
-- A small adapter polls `GET /api/agents/state` and dispatches Pixel Agents-style `postMessage` events.
-- Movement/seat behavior is still WIP (desk ↔ lounge anchoring); see "Known issues" below.
-
-Pixel Agents (upstream) is a VS Code extension today. For this demo we deploy a minimal **PixelAgents-style web app**
-that visualizes AISOC agent activity based on **runner telemetry only**.
-
-### 6.1 Build & publish the PixelAgents Web image (GitHub Actions)
-
-A GitHub Actions job builds/pushes the container image:
-- `ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:latest`
-- `ghcr.io/erikvabu-personal/aisoc-lab-pixelagents-web:<GITHUB_SHA>`
-
-Run:
-- GitHub → Actions → **Build + Publish AISOC Runner (GHCR)**
-
-Important:
-- Because we vendor the UI build output into `pixelagents_web/app/ui_dist/`, any UI changes require:
-  1) running `npm run build` in `pixelagents_web/ui`
-  2) copying output from `pixelagents_web/dist/webview/` → `pixelagents_web/app/ui_dist/`
-  3) committing the updated `ui_dist/`
-  4) rebuilding the container image
-
-### 6.2 Deploy PixelAgents Web (Terraform)
-
-```bash
-cd terraform/3-deploy-pixelagents-web
-terraform init
-terraform apply
-```
-
-Outputs:
-- `pixelagents_url`
-- `pixelagents_token` (sensitive)
-
-### 6.3 Wire AISOC Runner → PixelAgents Web (manual)
-
-Set these environment variables on the **AISOC Runner** Container App:
-
-- `PIXELAGENTS_URL` = `${pixelagents_url}/events`
-- `PIXELAGENTS_TOKEN` = `${pixelagents_token}`
-
-Now, every call to `POST /tools/execute` will emit:
-- `tool.call.start`
-- `tool.call.end`
-
-Open the UI:
-- `${pixelagents_url}/`
-
-### 6.4 Troubleshooting PixelAgents Web
-
-- If the UI is blank and DevTools shows 404s under `/assets/...`:
-  - ensure you deployed a recent image (deploy by SHA tag)
-  - PixelAgents Web serves UI assets at `/assets` and `/fonts`
-
-- If you see tool events but agents do not appear:
-  - verify `/api/agents/state` returns JSON with `triage/investigator/reporter`
-
-### Known issues / WIP
-
-- Lounge seating is not fully deterministic yet: triage reliably anchors to a sofa seat; investigator/reporter may still remain at desks.
-  This is due to Pixel Agents seat assignment contention and timing; we have debug logs in recent builds.
-
----
-
-## Demo runbook (Foundry triage → investigator → reporter)
-
-This is a practical checklist to run the demo live.
-
-### A) One-time setup (before demo day)
-
-1) Deploy Phase 1 + Phase 2 + SOCGateway code (above)
-2) Deploy runner (Phase 4) and create the Foundry OpenAPI Tool
-3) Create (or deploy) three Foundry agents:
-   - **Triage**
-   - **Investigator**
-   - **Reporter**
-4) Attach the **AISOC Runner Tool** to all three agents
-5) Decide whether you allow writes:
-   - For a closure demo: set runner `ENABLE_WRITES=1`
-
-### B) Configure “scheduled triage” (manual)
-
-Foundry UI varies, but the concept is the same: configure a schedule/job that runs the triage agent prompt every minute.
-
-1) Open the **Triage agent**
-2) Find **Schedule / Job / Automations** (depending on your Foundry build)
-3) Create a schedule:
-   - Frequency: **every 1 minute**
-   - Prompt:
-
-> "Check the Sentinel incident queue. Call the tool to list incidents. If there is a New incident, select the newest one, then call the tool to get full details for that incident (use incidentNumber or id). Summarize initial triage and hand off as suspicious to the Investigator agent with 2-3 concrete questions and suggested KQL. If there are no New incidents, output exactly: NO_NEW_INCIDENTS."
-
-4) Save and enable the schedule
-
-**Tip:** For demos, consider disabling the schedule right before presenting, then enabling it on stage so the audience sees it “come alive”.
-
-### C) Live demo flow
-
-1) Trigger / wait for triage to pick up an incident
-2) Triage produces:
-   - short summary
-   - why suspicious
-   - the incident identifier (incidentNumber or GUID)
-   - 2–3 suggested KQL checks
-3) Investigator agent:
-   - fetches incident details
-   - runs up to 3 KQL queries
-   - produces a conclusion (TP/FP/inconclusive)
-   - if inconclusive: asks the human for a decision
-4) Reporter agent:
-   - drafts the ticket in a structured format
-   - writes a closure/update back to Sentinel via `update_incident`
-
-### D) Verification checklist (right before demo)
-
-- Runner reachable:
-  - `GET $RUNNER_URL/healthz` returns `{"ok":"true"}`
-- Tool auth works:
-  - `POST /tools/execute` with `list_incidents` succeeds
-- Deep incident fetch works:
-  - `get_incident` works with both `incidentNumber` and a full ARM resource id
-- Writes (if enabled):
-  - `update_incident` can set `status` to `Closed`
-
----
-
-## Next step
-
-- Add a "Reporter" patch template (exact Sentinel fields) once we standardize which properties are writable in your tenant.
-- Add Foundry/Runner telemetry extraction for PixelAgents.
+## Pointers
+
+- **Phase 1** = `terraform/1-deploy-sentinel/README.md` for Sentinel-
+  workspace specifics + the analytic rules.
+- **Phase 3** = `terraform/3-deploy-pixelagents-web/README.md` for the
+  Container App side.
+- **MDE / Defender for Endpoint** onboarding is documented in
+  `terraform/1-deploy-sentinel/MDE.md`.
+- **Phase ordering + remote-state contracts** are in
+  `terraform/1-deploy-sentinel/PHASES.md` and
+  `terraform/2-deploy-aisoc/PHASES.md`.
+- **Agent prompts** live in
+  `terraform/2-deploy-aisoc/agents/instructions/*.md`. Editing them
+  + re-running the deploy script (or saving via `/config`) is the
+  way to change agent behaviour.
+- **The single source of truth for the agent roster** is
+  `terraform/2-deploy-aisoc/agents/agents.json`. Adding an agent
+  means: edit that file, write an `agents/instructions/<slug>.md`,
+  re-deploy.
