@@ -362,9 +362,90 @@ if [[ "$ACTION" == "destroy" ]]; then
     fi
   }
 
+  # Phase 1 lab VM has an auto-shutdown schedule and runs the
+  # AzureMonitorWindowsAgent extension. If the VM is deallocated when
+  # `terraform destroy` reaches the extension resource, Azure rejects
+  # the delete with:
+  #   OperationNotAllowed: Cannot modify extensions in the VM when
+  #   the VM is not running.
+  # Two complementary fixes here:
+  #   1. Try `az vm start` first — wakes the VM long enough for the
+  #      extension teardown to succeed. Idempotent.
+  #   2. If start fails (quota / region issue / VM already deleted),
+  #      fall back to `terraform state rm` on each extension. Azure
+  #      cleans them up automatically when the VM itself is deleted,
+  #      so removing them from state lets the rest of the destroy
+  #      proceed.
+  pre_destroy_phase1_cleanup() {
+    local p1=terraform/1-deploy-sentinel
+    if [[ ! -d "$p1/.terraform" ]]; then
+      return 0  # nothing to do
+    fi
+
+    local rg vm
+    rg="$( cd "$p1" && terraform output -raw resource_group 2>/dev/null || true )"
+    vm="$( cd "$p1" && terraform output -json 2>/dev/null \
+            | python3 -c 'import sys,json; d=json.load(sys.stdin); print((d.get("vm_name") or {}).get("value") or "")' \
+            2>/dev/null || true )"
+    # Phase 1's main.tf default name is "win11-test" — fall back to
+    # that when the output isn't exposed.
+    [[ -z "$vm" ]] && vm="win11-test"
+
+    if [[ -n "$rg" ]]; then
+      say "Pre-destroy: ensuring Phase 1 VM '$vm' is running so extensions can be torn down"
+      if az vm start -g "$rg" -n "$vm" --no-wait --only-show-errors >/dev/null 2>&1; then
+        # --no-wait kicked off; give Azure a moment to flip state to
+        # "running" so the extension delete sees a live VM. Up to
+        # ~3 minutes is enough for a Windows 11 cold start; we cap
+        # at 90s and fall through to the state-rm rescue if it's
+        # still not up.
+        local i=0
+        while (( i < 18 )); do
+          local ps
+          ps="$(az vm get-instance-view -g "$rg" -n "$vm" \
+                --query 'instanceView.statuses[?starts_with(code,`PowerState/`)].code | [0]' \
+                -o tsv 2>/dev/null || true)"
+          if [[ "$ps" == "PowerState/running" ]]; then
+            ok "Phase 1 VM is running"
+            break
+          fi
+          sleep 5
+          i=$((i + 1))
+        done
+      else
+        warn "az vm start failed (vm may already be deleted) — will rely on state-rm fallback if needed"
+      fi
+    fi
+
+    # Belt-and-braces: even if the VM is now running, the extension
+    # delete can still race on a slow region. Strip extensions from
+    # state UNCONDITIONALLY when the VM is currently deallocated.
+    # Costs nothing — Azure will sweep them with the VM itself.
+    local ps_now
+    ps_now="$(az vm get-instance-view -g "$rg" -n "$vm" \
+              --query 'instanceView.statuses[?starts_with(code,`PowerState/`)].code | [0]' \
+              -o tsv 2>/dev/null || true)"
+    if [[ "$ps_now" != "PowerState/running" ]]; then
+      warn "VM is not running — pruning extension resources from Phase 1 state so destroy doesn't trip on them"
+      # Discover extension resources currently in state and pop each.
+      local ext_addrs
+      ext_addrs="$(cd "$p1" && terraform state list 2>/dev/null \
+                   | grep -E 'azurerm_virtual_machine_extension(\.|\[)' || true)"
+      if [[ -n "$ext_addrs" ]]; then
+        while IFS= read -r addr; do
+          [[ -z "$addr" ]] && continue
+          (cd "$p1" && terraform state rm "$addr") >/dev/null 2>&1 \
+            && echo "  pruned $addr" >&2 \
+            || warn "  state rm failed for $addr"
+        done <<< "$ext_addrs"
+      fi
+    fi
+  }
+
   destroy_phase terraform/3-deploy-pixelagents-web
   pre_destroy_phase2_cleanup
   destroy_phase terraform/2-deploy-aisoc
+  pre_destroy_phase1_cleanup
   destroy_phase terraform/1-deploy-sentinel
 
   printf '\n%s%s═════════════════════════ Demo torn down ═════════════════════════%s\n' "$BOLD" "$GREEN" "$NC"
