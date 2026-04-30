@@ -399,6 +399,16 @@
       .replace(/'/g, '&#039;');
   }
 
+  // Strip the @domain suffix for tight UI rows (reassign dropdown,
+  // owner cell). Every NVISO user shares @nviso.eu so the suffix
+  // adds width without disambiguation. The full email goes into
+  // title="" for hover. Returns input unchanged when there's no '@'.
+  function shortEmail(email) {
+    if (typeof email !== 'string') return '';
+    const at = email.indexOf('@');
+    return at > 0 ? email.slice(0, at) : email;
+  }
+
   function fmtEur(eur) {
     if (eur == null) return '€ 0.0000';
     return '€ ' + Number(eur).toFixed(4);
@@ -442,7 +452,12 @@
   }
   function ownerLabel(ownerRaw) {
     const s = String(ownerRaw || '').trim();
-    return s || 'Unassigned';
+    if (!s) return 'Unassigned';
+    // Shorten email-shaped owners to local-part only — every NVISO
+    // user has the same @nviso.eu suffix and showing it on every row
+    // squeezes the rest of the table. Non-email owners (agent slugs,
+    // "Triage Agent", etc.) pass through unchanged.
+    return shortEmail(s);
   }
 
   function isRunning(incidentNumber) {
@@ -651,7 +666,10 @@
           body += '<td>';
           if (isEditingThis && !running) {
             const userOpts = userRoster
-              .map((u) => `<option value="${escapeHtml(u.email)}"${(inc.owner || '').toLowerCase() === u.email.toLowerCase() ? ' disabled' : ''}>${escapeHtml(u.email)}${u.is_self ? ' (you)' : ''}</option>`)
+              .map((u) => `<option value="${escapeHtml(u.email)}"`
+                        + `${(inc.owner || '').toLowerCase() === u.email.toLowerCase() ? ' disabled' : ''}`
+                        + ` title="${escapeHtml(u.email)}">`
+                        + `${escapeHtml(shortEmail(u.email))}${u.is_self ? ' (you)' : ''}</option>`)
               .join('');
             body += `<select class="cell-edit" data-edit-owner="${num}" autofocus>`
                   + `<option value="">Cancel…</option>`

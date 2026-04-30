@@ -1076,8 +1076,9 @@
       for (const u of STATE.users) allHumans.push(u);
       const userOpts = allHumans
         .map((u) => `<option value="${escapeHtml(u.email)}"`
-                  + `${(inc.owner || '').toLowerCase() === u.email.toLowerCase() ? ' disabled' : ''}>`
-                  + `${escapeHtml(u.email)}${u.is_self ? ' (you)' : ''}</option>`)
+                  + `${(inc.owner || '').toLowerCase() === u.email.toLowerCase() ? ' disabled' : ''}`
+                  + ` title="${escapeHtml(u.email)}">`
+                  + `${escapeHtml(shortEmail(u.email))}${u.is_self ? ' (you)' : ''}</option>`)
         .join('');
       trailing = `
         <select class="qreassign" data-queue-reassign="${numStr}" autofocus>
@@ -1521,6 +1522,19 @@
     })[role] || role;
   }
 
+  // Render only the local part of an email for tight sidebar rows.
+  // Every NVISO user has the same @nviso.eu suffix — repeating it on
+  // every row burns ~45% of the available horizontal space without
+  // adding any disambiguation. The full email stays in the title=""
+  // attr for accessibility / hover, and self-rows keep the "(you)"
+  // suffix from the caller. Returns the input unchanged when there's
+  // no '@' so non-email peer strings (legacy) aren't mangled.
+  function shortEmail(email) {
+    if (typeof email !== 'string') return '';
+    const at = email.indexOf('@');
+    return at > 0 ? email.slice(0, at) : email;
+  }
+
   function rolePillsHtml(roles) {
     if (!Array.isArray(roles) || !roles.length) return '';
     let html = '';
@@ -1553,7 +1567,7 @@
             <span class="dot online" title="You"></span>
             <div class="hum-info">
               <span class="name email" title="${escapeHtml(peer)}">`
-              + `${escapeHtml(peer)} `
+              + `${escapeHtml(shortEmail(peer))} `
               + `<em style="font-style:italic;opacity:0.6;font-weight:500;">(you)</em>`
               + `</span>
               ${pills ? `<div class="role-pills-row">${pills}</div>` : ''}
@@ -1578,7 +1592,7 @@
         <div class="head head-stacked" data-popup-human="${escapeHtml(peer)}">
           <span class="${dotCls}" title="${escapeHtml(dotTitle)}"></span>
           <div class="hum-info">
-            <span class="name email" title="${escapeHtml(peer)}">${escapeHtml(peer)}</span>
+            <span class="name email" title="${escapeHtml(peer)}">${escapeHtml(shortEmail(peer))}</span>
             ${pills ? `<div class="role-pills-row">${pills}</div>` : ''}
             <span class="preview">${escapeHtml(dmPreviewFor(peer))}</span>
           </div>
