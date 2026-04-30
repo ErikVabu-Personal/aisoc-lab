@@ -262,6 +262,69 @@
       color: #6b7280;
       margin: 12px 12px 6px;
     }
+    /* Per-section wrapper. Header (title + filter) sits above an
+       internally-scrollable items container so each section has a
+       bounded height — keeps the sidebar usable as the agent / human
+       / queue counts grow. */
+    #${ROOT_ID} .sec {
+      margin-bottom: 4px;
+    }
+    #${ROOT_ID} .sec .sec-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 12px;
+      margin: 12px 0 6px;
+    }
+    #${ROOT_ID} .sec .sec-head h2.section {
+      margin: 0;
+      flex: 0 0 auto;
+    }
+    #${ROOT_ID} .sec .sec-search {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 22px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: #1f2937;
+      background: rgba(255,255,255,0.85);
+      border: 1px solid rgba(107,114,128,0.30);
+      border-radius: 4px;
+      outline: none;
+    }
+    #${ROOT_ID} .sec .sec-search:focus {
+      border-color: rgba(0,153,204,0.65);
+      background: #fff;
+    }
+    #${ROOT_ID} .sec .sec-search::placeholder {
+      color: rgba(107,114,128,0.65);
+    }
+    /* Items container — bounded height with its own scroll. The
+       max-height is generous enough that small sections never
+       actually scroll; it kicks in once the roster / agent count
+       grows past ~6 rows. */
+    #${ROOT_ID} .sec .sec-items {
+      max-height: 260px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      /* Thin scroll-bar so the inner scroll doesn't visually compete
+         with the outer .body scroll. */
+      scrollbar-width: thin;
+    }
+    #${ROOT_ID} .sec .sec-items::-webkit-scrollbar {
+      width: 6px;
+    }
+    #${ROOT_ID} .sec .sec-items::-webkit-scrollbar-thumb {
+      background: rgba(107,114,128,0.35);
+      border-radius: 3px;
+    }
+    /* Empty-state line + filter-no-match line live inside .sec-items
+       and get a touch less padding than the standalone .empty-line so
+       they don't look like the section is exploded. */
+    #${ROOT_ID} .sec .sec-items .empty-line {
+      padding: 10px 18px;
+      font-size: 12px;
+    }
     /* Active-incident banner at the very top of the sidebar body.
        Shown only when /api/current_incident reports a non-null
        incident_number. Click → /dashboard. The whole card pulses
@@ -895,6 +958,11 @@
     dmErrors: {},                // peer_email -> string
     historyLoaded: new Set(),    // agents whose history we've fetched at least once
     historyPolling: new Set(),   // agents we're actively re-polling (in-flight on server)
+    // Per-section search filters. Each gets its own scrollable
+    // container with a small filter input — keeps the sidebar usable
+    // as the agent + human + incident counts grow. Empty string means
+    // no filter active.
+    secFilters: { agents: '', humans: '', queue: '' },
   };
 
   // ── Helpers ─────────────────────────────────────────────────────────
@@ -1600,6 +1668,72 @@
       </div>`;
   }
 
+  // ── Bounded sections with per-section filters ─────────────────────
+  // Each filterable section (Agents / Humans / My queue) gets its
+  // own scrollable container plus a small filter input. The filter
+  // value lives in STATE.secFilters[name] so it survives the
+  // poll-driven re-renders. We DON'T re-render the whole sidebar on
+  // every keystroke — that would lose focus and selection. Instead
+  // the input handler updates STATE and toggles display:none on
+  // mismatching items via applySecFilter.
+  function buildSecHtml(name, title, itemsHtml) {
+    const filterValue = STATE.secFilters[name] || '';
+    return `
+      <div class="sec" data-sec="${escapeHtml(name)}">
+        <div class="sec-head">
+          <h2 class="section">${escapeHtml(title)}</h2>
+          <input type="text"
+                 class="sec-search"
+                 data-sec-search="${escapeHtml(name)}"
+                 placeholder="Filter…"
+                 value="${escapeHtml(filterValue)}"
+                 aria-label="Filter ${escapeHtml(title)}">
+        </div>
+        <div class="sec-items" data-sec-items="${escapeHtml(name)}">
+          ${itemsHtml}
+        </div>
+      </div>`;
+  }
+
+  // Hide/show items inside a section's items container by substring-
+  // matching the filter against each item's textContent. Empty filter
+  // shows everything. Items that don't match get display:none so the
+  // visible list compacts without leaving gaps.
+  function applySecFilter(name) {
+    const root = ensureRoot();
+    const wrapper = root.querySelector(`[data-sec-items="${name}"]`);
+    if (!wrapper) return;
+    const q = (STATE.secFilters[name] || '').toLowerCase().trim();
+    let visibleCount = 0;
+    wrapper.querySelectorAll(':scope > .item').forEach((el) => {
+      if (!q) {
+        el.style.display = '';
+        visibleCount += 1;
+        return;
+      }
+      const text = (el.textContent || '').toLowerCase();
+      const match = text.includes(q);
+      el.style.display = match ? '' : 'none';
+      if (match) visibleCount += 1;
+    });
+    // Show "no matches" placeholder when filter hides everything but
+    // the section itself has items. We only manage a placeholder we
+    // own (data-sec-empty), not the renderer's own .empty-line.
+    const totalItems = wrapper.querySelectorAll(':scope > .item').length;
+    let placeholder = wrapper.querySelector(':scope > [data-sec-empty]');
+    if (q && totalItems > 0 && visibleCount === 0) {
+      if (!placeholder) {
+        placeholder = document.createElement('div');
+        placeholder.className = 'empty-line';
+        placeholder.setAttribute('data-sec-empty', '1');
+        placeholder.textContent = 'No matches.';
+        wrapper.appendChild(placeholder);
+      }
+    } else if (placeholder) {
+      placeholder.remove();
+    }
+  }
+
   function render() {
     const root = ensureRoot();
 
@@ -1625,6 +1759,13 @@
       else if (ck) { focusKind = 'chat'; focusKey = ck; }
       else if (dk) { focusKind = 'dm'; focusKey = dk; }
       else if (nk) { focusKind = 'change'; focusKey = nk; }
+      try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
+    } else if (active && active.tagName === 'INPUT' && active.hasAttribute('data-sec-search')) {
+      // Section filter inputs are also wiped by innerHTML replacement.
+      // Track which one had focus so we can restore after the new
+      // markup lands; the input's value comes back from STATE.
+      focusKind = 'sec';
+      focusKey = active.getAttribute('data-sec-search');
       try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
     }
 
@@ -1721,34 +1862,42 @@
       html += '<h2 class="section">Pending requests</h2>';
       for (const q of hitlOther) html += renderHitlItem(q);
     }
-    html += '<h2 class="section">Agents</h2>';
+    // ---- Filterable sections (Agents / Humans / My queue) ----
+    // Each gets a bounded scrollable container plus a small filter
+    // input. See buildSecHtml + applySecFilter (declared below
+    // function render) for the wiring; we just feed it the items.
+    let agentsHtml = '';
     if (!STATE.agents.length) {
-      html += '<div class="empty-line">No agents reporting yet.</div>';
+      agentsHtml = '<div class="empty-line">No agents reporting yet.</div>';
     } else {
-      for (const a of STATE.agents) html += renderChatItem(a);
+      for (const a of STATE.agents) agentsHtml += renderChatItem(a);
     }
+    html += buildSecHtml('agents', 'Agents', agentsHtml);
+
     // Humans — full configured roster (online sorted first, then
     // offline). Status dot reflects online/offline, same affordance
     // as the agents above.
-    html += '<h2 class="section">Humans</h2>';
+    let humansHtml = '';
     if (!STATE.users.length) {
-      html += '<div class="empty-line">No other humans configured.</div>';
+      humansHtml = '<div class="empty-line">No other humans configured.</div>';
     } else {
-      for (const u of STATE.users) html += renderDmItem(u);
+      for (const u of STATE.users) humansHtml += renderDmItem(u);
     }
+    html += buildSecHtml('humans', 'Humans', humansHtml);
+
     // My queue — incidents Sentinel-owned, filtered by owner == me.
     // Proposed changes used to live here too; they moved to their own
     // /improvements page so detection engineers + SOC managers have a
     // dedicated review surface and analysts don't see the noise.
-    html += '<h2 class="section">My queue</h2>';
-
-    html += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:8px 12px 4px;font-weight:700;">My incidents</div>';
+    let queueHtml = '';
+    queueHtml += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:8px 12px 4px;font-weight:700;">My incidents</div>';
     const myInc = myQueueIncidents();
     if (!myInc.length) {
-      html += '<div class="empty-line">No incidents currently assigned to you.</div>';
+      queueHtml += '<div class="empty-line">No incidents currently assigned to you.</div>';
     } else {
-      for (const inc of myInc) html += renderMyQueueItem(inc);
+      for (const inc of myInc) queueHtml += renderMyQueueItem(inc);
     }
+    html += buildSecHtml('queue', 'My queue', queueHtml);
 
     html += '</div>';
     root.innerHTML = html;
@@ -1778,12 +1927,31 @@
           ? `[data-dm-textarea="${CSS.escape(focusKey)}"]`
           : focusKind === 'change'
             ? `[data-change-note="${CSS.escape(focusKey)}"]`
-            : `[data-chat-textarea="${CSS.escape(focusKey)}"]`;
+            : focusKind === 'sec'
+              ? `[data-sec-search="${CSS.escape(focusKey)}"]`
+              : `[data-chat-textarea="${CSS.escape(focusKey)}"]`;
       const el = root.querySelector(sel);
       if (el) {
         try { el.focus(); el.setSelectionRange(selStart, selEnd); } catch (_) {}
       }
     }
+
+    // ── Section filter inputs: wire input handlers + apply filters ──
+    // The handlers DON'T re-render — they only mutate STATE and toggle
+    // display:none on items. That avoids losing focus on every keystroke
+    // and keeps polling-driven re-renders cheap.
+    root.querySelectorAll('[data-sec-search]').forEach((inp) => {
+      inp.addEventListener('input', () => {
+        const sec = inp.getAttribute('data-sec-search');
+        STATE.secFilters[sec] = inp.value;
+        applySecFilter(sec);
+      });
+    });
+    // Initial filter pass after render — needed because polling
+    // re-renders rebuild the items but the filter lives in STATE.
+    applySecFilter('agents');
+    applySecFilter('humans');
+    applySecFilter('queue');
 
     // Click handlers on heads (toggle).
     root.querySelectorAll('[data-toggle]').forEach((el) => {
