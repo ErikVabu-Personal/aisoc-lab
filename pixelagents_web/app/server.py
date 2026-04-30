@@ -2477,11 +2477,19 @@ def api_foundry_agent_instructions(
     block. Used by /config to render the "Generic instructions /
     context" card and the per-agent instruction expanders.
 
-    Restricted to soc-managers — these payloads are only useful inside
-    the /config surface, which is itself soc-manager-only.
+    Restricted to soc-managers when called from a browser session —
+    these payloads are only useful inside the /config surface, which
+    is itself soc-manager-only.
+
+    Server-to-server (token-only) callers ARE allowed: the SOC Manager
+    Foundry agent's `get_agent_role_instructions` MCP tool routes
+    through the runner, which authenticates with the shared
+    PIXELAGENTS_TOKEN. The SOC Manager agent's whole job is reading
+    other agents' prompts to propose improvements — denying it
+    here defeats the feature.
     """
 
-    _require_soc_manager(request, x_pixelagents_token)
+    _require_soc_manager(request, x_pixelagents_token, allow_token=True)
 
     now = time.time()
     cached = _FOUNDRY_INSTRUCTIONS_CACHE.get("payload")
