@@ -296,6 +296,10 @@ def _load_users() -> dict[str, str]:
             "password": "iamtheboss",
             "roles": list(all_roles),
         },
+        "jan.deblauwe@nviso.eu": {
+            "password": "ebitda",
+            "roles": list(all_roles),
+        },
     }
 
 
