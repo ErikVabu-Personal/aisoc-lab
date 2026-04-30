@@ -176,9 +176,17 @@ echo "=== Knowledge base: ${KNOWLEDGE_BASE_NAME} ==="
 # to "knowledge bases" and reshaped the body. retrievalParameters is
 # gone — it now lives on the retrieve action, not the resource. The
 # reasoning effort is a top-level retrievalReasoningEffort object with
-# {"kind": "low"|"minimal"|"medium"}.  models[] is optional; we skip
-# it because the demo doesn't need LLM-driven query planning at create
-# time — the agent supplies prompts itself when calling the KB.
+# {"kind": "low"|"minimal"|"medium"}.
+#
+# We omit BOTH models[] AND retrievalInstructions. The API enforces
+# that retrievalInstructions are only valid when models[] is present
+# (instructions are an LLM prompt; with no LLM in the KB pipeline
+# there's nothing to read them). Wiring an LLM at the KB level would
+# require a Cognitive Services User role assignment from the Search
+# service MI to the Foundry account plus a models[] block — for the
+# AISOC demo that's redundant work, since the Detection Engineer agent
+# does its own reasoning and supplies queries directly when calling
+# the KB. The KB just retrieves; the agent does the thinking.
 put "knowledgeBases/${KNOWLEDGE_BASE_NAME}" "${KB_API_VERSION}" "$(cat <<JSON
 {
   "name": "${KNOWLEDGE_BASE_NAME}",
@@ -186,7 +194,6 @@ put "knowledgeBases/${KNOWLEDGE_BASE_NAME}" "${KB_API_VERSION}" "$(cat <<JSON
   "knowledgeSources": [
     { "name": "${KNOWLEDGE_SOURCE_NAME}" }
   ],
-  "retrievalInstructions": "Detection rule corpus — Sigma rules, KQL queries, written analytic playbooks. When asked about analytics, prefer rules that already exist over inventing new ones.",
   "retrievalReasoningEffort": { "kind": "low" }
 }
 JSON
