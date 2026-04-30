@@ -123,8 +123,8 @@ put "indexes/${INDEX_NAME}" "${DP_API_VERSION}" "$(cat <<JSON
       {
         "name": "default",
         "prioritizedFields": {
-          "titleField":    { "fieldName": "metadata_storage_name" },
-          "contentFields": [ { "fieldName": "content" } ]
+          "titleField":               { "fieldName": "metadata_storage_name" },
+          "prioritizedContentFields": [ { "fieldName": "content" } ]
         }
       }
     ]
