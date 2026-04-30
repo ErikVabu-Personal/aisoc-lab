@@ -559,14 +559,27 @@ print_plan_summary() {
   printf '  OIDC              : %s\n' "$OIDC_STATUS"
   printf '%s%s─────────────────────────────────────────────────────────────────────%s\n' "$BOLD" "$CYAN" "$NC"
 
-  # Detect any per-phase tfvars files; their values silently override the
-  # banner above. Call them out explicitly so users aren't surprised.
+  # Detect any per-phase var files Terraform auto-loads (all four
+  # variants — terraform.tfvars, terraform.tfvars.json, *.auto.tfvars,
+  # *.auto.tfvars.json). With the apply path now passing every
+  # TF_VAR_* as an explicit -var flag, these can't silently override
+  # the banner anymore — but listing them keeps the user informed
+  # about what variables are still being layered in for everything
+  # NOT covered by an env var.
   local tfvars_files=()
   for d in terraform/1-deploy-sentinel terraform/2-deploy-aisoc terraform/3-deploy-pixelagents-web; do
-    [[ -f "$d/terraform.tfvars" ]] && tfvars_files+=("$d/terraform.tfvars")
+    while IFS= read -r -d '' f; do
+      tfvars_files+=("$f")
+    done < <(find "$d" -maxdepth 1 -type f \( \
+                -name "terraform.tfvars" \
+                -o -name "terraform.tfvars.json" \
+                -o -name "*.auto.tfvars" \
+                -o -name "*.auto.tfvars.json" \
+              \) -print0 2>/dev/null)
   done
   if [[ ${#tfvars_files[@]} -gt 0 ]]; then
-    warn "These terraform.tfvars files exist and will OVERRIDE the values shown above:"
+    warn "These per-phase var files are present and will be auto-loaded by Terraform"
+    warn "(values from --flags / aisoc.config / shell env take precedence — these layer in below them):"
     for f in "${tfvars_files[@]}"; do printf '  - %s\n' "$f" >&2; done
   fi
   printf '\n'
@@ -575,11 +588,24 @@ print_plan_summary
 
 apply_phase() {
   local dir="$1"
-  # Vars come from (in priority order):
-  #   1. Pre-set TF_VAR_* env vars and --flag args (already exported above)
-  #   2. terraform.tfvars in $dir (if present — optional)
-  #   3. variable defaults in the module
-  ( cd "$dir" && terraform init -upgrade -input=false && terraform apply -auto-approve -input=false )
+  # Build a -var arg for every TF_VAR_* in the env. Why explicit
+  # -var instead of relying on TF_VAR_*? Terraform's precedence is
+  # (lowest to highest):
+  #   variable defaults < terraform.tfvars < *.auto.tfvars
+  #     < TF_VAR_* env vars < -var / -var-file (CLI)
+  # …so a stale terraform.tfvars in the phase dir SILENTLY OVERRIDES
+  # an env var. Promoting the env vars to -var puts them at the top
+  # of the chain and matches what print_plan_summary tells the user.
+  local -a var_args=()
+  while IFS='=' read -r _name _value; do
+    if [[ "$_name" == TF_VAR_* ]]; then
+      var_args+=("-var" "${_name#TF_VAR_}=${_value}")
+    fi
+  done < <(env)
+
+  ( cd "$dir" \
+      && terraform init -upgrade -input=false \
+      && terraform apply -auto-approve -input=false "${var_args[@]}" )
 }
 
 # Trigger a GHA workflow and wait for the resulting run to finish.
