@@ -134,8 +134,13 @@ function setState(next: AppState) {
 
 function reqMeta(req: Request) {
   const h = req.headers;
+  // Field name is `client` (not `clientIp`) to stay consistent with
+  // the auth events — Sentinel rules + agent KQL all read
+  // j.detail.client. The state events end up in the same logs and
+  // diverging here would force consumers to extract two field names
+  // for the same concept.
   return {
-    clientIp: h.get('x-forwarded-for') ?? h.get('x-real-ip') ?? null,
+    client: h.get('x-forwarded-for') ?? h.get('x-real-ip') ?? null,
     userAgent: h.get('user-agent') ?? null,
   };
 }

@@ -26,13 +26,18 @@ export async function loginAction(formData: FormData): Promise<void> {
 
   if (username === DEMO_USER && password === DEMO_PASS) {
     await setAuthed();
-    logEvent('auth.login.success', { username, clientIp, userAgent });
+    // NB: emit the field as `client` not `clientIp` — every consumer
+    // (Sentinel analytic rule, investigator.md KQL examples,
+    // detection-engineer.md sample queries, common.md docs) reads
+    // `j.detail.client`. Drift here silently breaks the rule's
+    // per-IP grouping (every event collapses into the empty bucket).
+    logEvent('auth.login.success', { username, client: clientIp, userAgent });
     redirect('/');
   }
 
   // ensure logged out
   await clearAuthed();
-  logEvent('auth.login.failure', { username, clientIp, userAgent });
+  logEvent('auth.login.failure', { username, client: clientIp, userAgent });
   redirect('/login?error=1');
 }
 
@@ -42,6 +47,6 @@ export async function logoutAction(): Promise<void> {
   const userAgent = h.get('user-agent') ?? null;
 
   await clearAuthed();
-  logEvent('auth.logout', { clientIp, userAgent });
+  logEvent('auth.logout', { client: clientIp, userAgent });
   redirect('/login');
 }
