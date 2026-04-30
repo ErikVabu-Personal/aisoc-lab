@@ -172,6 +172,13 @@ JSON
 )"
 
 echo "=== Knowledge base: ${KNOWLEDGE_BASE_NAME} ==="
+# Note: 2025-11-01-preview RENAMED 2025-08-01-preview "knowledge agents"
+# to "knowledge bases" and reshaped the body. retrievalParameters is
+# gone — it now lives on the retrieve action, not the resource. The
+# reasoning effort is a top-level retrievalReasoningEffort object with
+# {"kind": "low"|"minimal"|"medium"}.  models[] is optional; we skip
+# it because the demo doesn't need LLM-driven query planning at create
+# time — the agent supplies prompts itself when calling the KB.
 put "knowledgeBases/${KNOWLEDGE_BASE_NAME}" "${KB_API_VERSION}" "$(cat <<JSON
 {
   "name": "${KNOWLEDGE_BASE_NAME}",
@@ -180,9 +187,7 @@ put "knowledgeBases/${KNOWLEDGE_BASE_NAME}" "${KB_API_VERSION}" "$(cat <<JSON
     { "name": "${KNOWLEDGE_SOURCE_NAME}" }
   ],
   "retrievalInstructions": "Detection rule corpus — Sigma rules, KQL queries, written analytic playbooks. When asked about analytics, prefer rules that already exist over inventing new ones.",
-  "retrievalParameters": {
-    "reasoningEffort": "low"
-  }
+  "retrievalReasoningEffort": { "kind": "low" }
 }
 JSON
 )"
