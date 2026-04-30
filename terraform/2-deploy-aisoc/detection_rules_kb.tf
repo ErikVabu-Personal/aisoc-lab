@@ -46,16 +46,22 @@ locals {
   drk_project_connection_name = "detection-rules-kb"
   drk_search_endpoint         = local.drk_enabled ? "https://${azurerm_search_service.detection_rules[0].name}.search.windows.net" : ""
 
-  # Stable ARM API version for Microsoft.Search/searchServices/* —
-  # confirmed in the Azure RP supported-versions list. Older preview
-  # versions like "2025-08-01-preview" don't exist for this RP and
-  # fail at apply with NoRegisteredProviderFound.
-  drk_search_api_version    = "2025-05-01"
-  # Knowledge bases / knowledge sources are preview features. The
-  # latest preview that the searchServices RP actually advertises
-  # (per a 400 NoRegisteredProviderFound list, May 2026) is
-  # 2026-03-01-Preview.
-  drk_kb_api_version        = "2026-03-01-Preview"
+  # Search data-plane API versions used by the seeder script.
+  #
+  # Microsoft.Search exposes only the searchServices resource through
+  # ARM; sub-resources (datasources, indexes, indexers, knowledgeSources,
+  # knowledgeBases) are data-plane only at every API version. We used
+  # to declare them as azapi_resource against ARM and got 404 from the
+  # management plane because those URLs simply don't exist (see the
+  # seeder script header comment for the full diagnosis). The seeder
+  # script PUTs each one to the data plane instead.
+  #
+  # 2024-07-01 is the current GA data-plane API and covers
+  # datasources/indexes/indexers. 2025-11-01-preview is required for
+  # knowledgeSources/knowledgeBases, which are still preview features
+  # of the agentic-retrieval service.
+  drk_search_dp_api_version = "2024-07-01"
+  drk_search_kb_api_version = "2025-11-01-preview"
 }
 
 
@@ -147,164 +153,69 @@ resource "azurerm_role_assignment" "drk_search_self_contributor" {
 }
 
 
-# ── Knowledge source, knowledge base, and project connection ────────
+# ── Search sub-resources via the data-plane API ─────────────────────
 #
-# These are preview Foundry IQ resources, all created via azapi against
-# the Azure AI Search management plane. They depend on the role
-# assignments landing first so the indexer can read the corpus.
+# Microsoft.Search exposes ONLY the searchServices resource itself
+# through ARM. Every sub-resource — datasources, indexes, indexers,
+# knowledgeSources, knowledgeBases — must be created via the data
+# plane (https://<service>.search.windows.net/...). An earlier
+# revision tried azapi_resource against
+# Microsoft.Search/searchServices/dataSources@2025-05-01 and got
+# 404 from ARM with no body — those URLs simply don't exist at any
+# API version. Confirmed against the official ARM template docs for
+# both 2025-05-01 (stable) and 2026-03-01-preview (latest preview).
+#
+# We use a single null_resource that invokes the seeder script.
+# Each PUT is idempotent so re-runs are safe; `triggers` re-runs the
+# seeder when any of the wire-arguments change.
 
-# Data source for the Blob container (consumed by the indexer below).
-resource "azapi_resource" "drk_data_source" {
-  count                     = local.drk_enabled ? 1 : 0
-  type                      = "Microsoft.Search/searchServices/dataSources@${local.drk_search_api_version}"
-  parent_id                 = azurerm_search_service.detection_rules[0].id
-  name                      = local.drk_data_source_name
-  schema_validation_enabled = false
+resource "null_resource" "drk_search_seed" {
+  count = local.drk_enabled ? 1 : 0
 
-  body = {
-    properties = {
-      type = "azureblob"
-      credentials = {
-        # ResourceId form lets the search service authenticate to the
-        # storage account via its system-assigned MI (no key needed).
-        connectionString = "ResourceId=${azurerm_storage_account.detection_rules[0].id};"
-      }
-      container = {
-        name = azurerm_storage_container.detection_rules[0].name
-      }
+  # Re-run the seeder on any change to the wire-args. Hash via
+  # jsonencode so re-runs are deterministic and stable across plans.
+  triggers = {
+    inputs_hash = sha256(jsonencode({
+      endpoint           = local.drk_search_endpoint
+      storage_account_id = azurerm_storage_account.detection_rules[0].id
+      container          = azurerm_storage_container.detection_rules[0].name
+      index              = local.drk_index_name
+      data_source        = local.drk_data_source_name
+      indexer            = local.drk_indexer_name
+      knowledge_source   = local.drk_knowledge_source
+      knowledge_base     = local.drk_knowledge_base_name
+      dp_api             = local.drk_search_dp_api_version
+      kb_api             = local.drk_search_kb_api_version
+    }))
+  }
+
+  provisioner "local-exec" {
+    # Path is relative to the Terraform working directory
+    # (terraform/2-deploy-aisoc) so this works whether plan/apply is
+    # invoked from there directly or from the repo-root deploy script.
+    command = "${path.module}/scripts/seed_detection_rules_search.sh"
+
+    environment = {
+      SEARCH_ENDPOINT       = local.drk_search_endpoint
+      SEARCH_ADMIN_KEY      = azurerm_search_service.detection_rules[0].primary_key
+      STORAGE_ACCOUNT_ID    = azurerm_storage_account.detection_rules[0].id
+      STORAGE_CONTAINER     = azurerm_storage_container.detection_rules[0].name
+      INDEX_NAME            = local.drk_index_name
+      DATA_SOURCE_NAME      = local.drk_data_source_name
+      INDEXER_NAME          = local.drk_indexer_name
+      KNOWLEDGE_SOURCE_NAME = local.drk_knowledge_source
+      KNOWLEDGE_BASE_NAME   = local.drk_knowledge_base_name
+      DP_API_VERSION        = local.drk_search_dp_api_version
+      KB_API_VERSION        = local.drk_search_kb_api_version
     }
   }
 
   depends_on = [
+    # Indexer needs Blob read RBAC to be in place before its first run.
     azurerm_role_assignment.drk_search_to_storage,
-  ]
-}
-
-# Index that the indexer fills + the knowledge source queries.
-resource "azapi_resource" "drk_index" {
-  count                     = local.drk_enabled ? 1 : 0
-  type                      = "Microsoft.Search/searchServices/indexes@${local.drk_search_api_version}"
-  parent_id                 = azurerm_search_service.detection_rules[0].id
-  name                      = local.drk_index_name
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      fields = [
-        { name = "id",            type = "Edm.String", key = true,        searchable = false, filterable = true,  retrievable = true },
-        { name = "content",       type = "Edm.String", key = false,       searchable = true,  filterable = false, retrievable = true,  analyzer = "standard.lucene" },
-        { name = "metadata_storage_name", type = "Edm.String", searchable = true,  filterable = true,  retrievable = true },
-        { name = "metadata_storage_path", type = "Edm.String", searchable = false, filterable = true,  retrievable = true, sortable = false },
-        { name = "metadata_storage_last_modified", type = "Edm.DateTimeOffset", searchable = false, filterable = true, sortable = true, retrievable = true },
-      ]
-      semantic = {
-        configurations = [{
-          name = "default"
-          prioritizedFields = {
-            titleField = { fieldName = "metadata_storage_name" }
-            contentFields = [{ fieldName = "content" }]
-          }
-        }]
-      }
-    }
-  }
-
-  depends_on = [
+    # Knowledge base writes back into the index for agentic-retrieval
+    # rerank state — needs Search Index Data Contributor on self.
     azurerm_role_assignment.drk_search_self_contributor,
-  ]
-}
-
-# Indexer pulls Blob contents into the index. fieldMapping handles the
-# default Blob → index field rename for the document key.
-resource "azapi_resource" "drk_indexer" {
-  count                     = local.drk_enabled ? 1 : 0
-  type                      = "Microsoft.Search/searchServices/indexers@${local.drk_search_api_version}"
-  parent_id                 = azurerm_search_service.detection_rules[0].id
-  name                      = local.drk_indexer_name
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      dataSourceName = azapi_resource.drk_data_source[0].name
-      targetIndexName = azapi_resource.drk_index[0].name
-      schedule = {
-        # Pull from blob every 30m; each pull is incremental (Blob
-        # change-detection is built into the data source).
-        interval = "PT30M"
-      }
-      parameters = {
-        configuration = {
-          # Pull text out of common rule formats. Sigma .yml, KQL .kql
-          # (treated as text), .md writeups all index cleanly.
-          parsingMode = "default"
-          dataToExtract = "contentAndMetadata"
-          indexedFileNameExtensions = ".yml,.yaml,.kql,.md,.txt,.json"
-        }
-      }
-      fieldMappings = [
-        { sourceFieldName = "metadata_storage_path", targetFieldName = "id", mappingFunction = { name = "base64Encode" } },
-      ]
-    }
-  }
-
-  depends_on = [
-    azapi_resource.drk_data_source,
-    azapi_resource.drk_index,
-  ]
-}
-
-# Knowledge source — references the search index above and tells
-# Foundry IQ how to query it (semantic + vector hybrid is the default).
-resource "azapi_resource" "drk_knowledge_source" {
-  count                     = local.drk_enabled ? 1 : 0
-  type                      = "Microsoft.Search/searchServices/knowledgeSources@${local.drk_kb_api_version}"
-  parent_id                 = azurerm_search_service.detection_rules[0].id
-  name                      = local.drk_knowledge_source
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      kind = "searchIndex"
-      searchIndexParameters = {
-        searchIndexName = azapi_resource.drk_index[0].name
-      }
-      description = "NVISO Cruiseways detection rule library — Sigma / KQL / writeups."
-    }
-  }
-
-  depends_on = [
-    azapi_resource.drk_indexer,
-  ]
-}
-
-# Knowledge base — top-level Foundry IQ resource the agent connects to.
-# Agentic retrieval planner runs over this with the configured
-# reasoningEffort.
-resource "azapi_resource" "drk_knowledge_base" {
-  count                     = local.drk_enabled ? 1 : 0
-  type                      = "Microsoft.Search/searchServices/knowledgeBases@${local.drk_kb_api_version}"
-  parent_id                 = azurerm_search_service.detection_rules[0].id
-  name                      = local.drk_knowledge_base_name
-  schema_validation_enabled = false
-
-  body = {
-    properties = {
-      description    = "Detection rule library for the AISOC Detection Engineer agent."
-      knowledgeSources = [
-        { name = azapi_resource.drk_knowledge_source[0].name }
-      ]
-      retrievalInstructions = "Detection rule corpus — Sigma rules, KQL queries, written analytic playbooks. When asked about analytics, prefer rules that already exist over inventing new ones."
-      # "low" keeps the planner cheap; "medium" would decompose more
-      # aggressively at higher token cost. Both work; revisit when the
-      # corpus gets big.
-      retrievalParameters = {
-        reasoningEffort = "low"
-      }
-    }
-  }
-
-  depends_on = [
-    azapi_resource.drk_knowledge_source,
   ]
 }
 
