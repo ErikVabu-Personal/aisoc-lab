@@ -1888,9 +1888,10 @@
     // My queue — incidents Sentinel-owned, filtered by owner == me.
     // Proposed changes used to live here too; they moved to their own
     // /improvements page so detection engineers + SOC managers have a
-    // dedicated review surface and analysts don't see the noise.
+    // dedicated review surface and analysts don't see the noise. Now
+    // that the queue holds only one kind of row, the section title
+    // "My queue" stands on its own — no internal subhead needed.
     let queueHtml = '';
-    queueHtml += '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin:8px 12px 4px;font-weight:700;">My incidents</div>';
     const myInc = myQueueIncidents();
     if (!myInc.length) {
       queueHtml += '<div class="empty-line">No incidents currently assigned to you.</div>';
