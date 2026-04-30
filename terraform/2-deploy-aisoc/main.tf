@@ -245,6 +245,22 @@ output "foundry_project_endpoint" {
   description = "Foundry AI API endpoint for the project. Constructed from the account's custom subdomain and the project name; safe to consume before the project resource itself has been created."
 }
 
+# ── Agent roster (single source of truth) ──────────────────────────
+# agents/agents.json holds the canonical list of {display, slug,
+# description} for every agent. The deploy script reads the same
+# file. Phase 3 reads the comma-joined slugs as the
+# PIXELAGENTS_AGENT_ROSTER env var so PA-Web inits state for exactly
+# the agents that Phase 2 actually deployed.
+locals {
+  agents_manifest = jsondecode(file("${path.module}/agents/agents.json"))
+  agent_slugs     = [for a in local.agents_manifest : a.slug]
+}
+
+output "agent_roster_slugs" {
+  description = "Comma-joined slugs of every agent created by Phase 2. Phase 3 wires this into PixelAgents Web as PIXELAGENTS_AGENT_ROSTER so the server inits state for the right agents."
+  value       = join(",", local.agent_slugs)
+}
+
 output "key_vault_name" {
   value       = local.shared_kv_name
   description = "Key Vault name (from Phase 1) storing AISOC shared secrets."

@@ -208,6 +208,18 @@ resource "azurerm_container_app" "pixelagents" {
         name  = "AZURE_AI_MODEL_DEPLOYMENT"
         value = try(data.terraform_remote_state.aisoc.outputs.foundry_model_deployment_name, "")
       }
+
+      # Agent roster — single source of truth lives in
+      # terraform/2-deploy-aisoc/agents/agents.json (read by both the
+      # Phase 2 deploy script and Terraform's jsondecode). Wiring the
+      # slug list through here as PIXELAGENTS_AGENT_ROSTER means PA-Web
+      # initialises state for exactly the agents that Phase 2 actually
+      # deployed, instead of relying on a hardcoded fallback that can
+      # drift.
+      env {
+        name  = "PIXELAGENTS_AGENT_ROSTER"
+        value = try(data.terraform_remote_state.aisoc.outputs.agent_roster_slugs, "")
+      }
     }
   }
 

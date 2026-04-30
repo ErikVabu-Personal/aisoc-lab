@@ -1,0 +1,27 @@
+[
+  {
+    "display": "Triage",
+    "slug": "triage",
+    "description": "L1 triage analyst — first-pass review and escalation."
+  },
+  {
+    "display": "Investigator",
+    "slug": "investigator",
+    "description": "Validates hypotheses, runs KQL, builds the timeline."
+  },
+  {
+    "display": "Reporter",
+    "slug": "reporter",
+    "description": "Summarises, drafts the case note, and writes back to Sentinel."
+  },
+  {
+    "display": "Detection Engineer",
+    "slug": "detection-engineer",
+    "description": "Designs and tunes analytic rules; consults the rule library."
+  },
+  {
+    "display": "SOC Manager",
+    "slug": "soc-manager",
+    "description": "Reviews patterns, proposes preamble + agent-instructions changes."
+  }
+]

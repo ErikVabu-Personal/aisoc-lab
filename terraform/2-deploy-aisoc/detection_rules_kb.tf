@@ -38,14 +38,16 @@ locals {
   drk_knowledge_source     = "detection-rules-source"
   drk_knowledge_base_name  = "detection-rules"
 
-  # MCP tool wiring.
+  # MCP tool wiring. drk_mcp_endpoint isn't built here anymore — the
+  # agent deploy script (scripts/deploy_prompt_agents_with_runner_tools.py)
+  # constructs it from the search-endpoint output and its own
+  # KB_MCP_API_VERSION constant. Centralising the version in one
+  # place (the script) means a future GA bump is a single-line edit.
   drk_project_connection_name = "detection-rules-kb"
   drk_search_endpoint         = local.drk_enabled ? "https://${azurerm_search_service.detection_rules[0].name}.search.windows.net" : ""
-  drk_mcp_endpoint            = local.drk_enabled ? "${local.drk_search_endpoint}/knowledgebases/${local.drk_knowledge_base_name}/mcp?api-version=2025-11-01-preview" : ""
 
   drk_search_api_version    = "2025-08-01-preview"
   drk_kb_api_version        = "2025-11-01-preview"
-  drk_conn_api_version      = "2025-10-01-preview"
 }
 
 

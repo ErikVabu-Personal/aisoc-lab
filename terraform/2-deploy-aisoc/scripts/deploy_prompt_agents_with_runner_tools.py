@@ -55,7 +55,7 @@ def _ensure_project_connection_remote_tool(
     cred = DefaultAzureCredential()
     token = cred.get_token("https://management.azure.com/.default").token
 
-    api_version = "2025-10-01-preview"
+    api_version = PROJECT_CONNECTION_API_VERSION
     url = (
         f"https://management.azure.com/subscriptions/{sub_id}"
         f"/resourceGroups/{rg}"
@@ -94,21 +94,71 @@ def _ensure_project_connection_remote_tool(
 
 import jsonref
 
-AGENTS = [
-    "Triage",
-    "Investigator",
-    "Reporter",
-    "Detection Engineer",
-    "SOC Manager",
-]
+
+# ── Single source of truth for the agent roster ────────────────────
+# agents/agents.json holds {display, slug, description} for every
+# agent. Phase 2 Terraform reads the same file via jsondecode(file(...))
+# so the roster never drifts between the deploy script, the Foundry
+# agents themselves, and PixelAgents Web's PIXELAGENTS_AGENT_ROSTER
+# env var. To add or remove an agent, edit ONLY agents/agents.json.
+
+def _load_agents_manifest() -> List[Dict[str, str]]:
+    here = os.path.dirname(os.path.abspath(__file__))
+    manifest_path = os.path.normpath(os.path.join(here, "..", "agents", "agents.json"))
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(
+            f"FATAL: agents manifest missing: {manifest_path}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    except json.JSONDecodeError as e:
+        print(
+            f"FATAL: agents manifest is not valid JSON ({manifest_path}): {e}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if not isinstance(data, list) or not data:
+        print(
+            f"FATAL: agents manifest must be a non-empty array of objects",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return data
+
+
+_AGENT_MANIFEST = _load_agents_manifest()
+AGENTS: List[str] = [str(a["display"]).strip() for a in _AGENT_MANIFEST]
+
+
+# Foundry IQ MCP api-version. Bumped here when Microsoft GAs the
+# preview API; the Terraform side reads the same string indirectly
+# via the search endpoint URL we hand to Foundry.
+KB_MCP_API_VERSION = "2025-11-01-preview"
+
+# Foundry project-connection ARM api-version (used by the helper
+# below that PUTs the RemoteTool connection). One edit when MSFT
+# bumps it.
+PROJECT_CONNECTION_API_VERSION = "2025-10-01-preview"
 
 
 def write_slug_roster(out_path: str) -> None:
-    """Write a stable, slug-form roster for downstream components (e.g. PixelAgents Web)."""
+    """Write a stable, slug-form roster for downstream components (e.g.
+    PixelAgents Web). Failures here are treated as fatal — Phase 3
+    config scripts depend on this file being current."""
     roster = [slug(a) for a in AGENTS]
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(",".join(roster) + "\n")
+    try:
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(",".join(roster) + "\n")
+    except OSError as e:
+        print(
+            f"FATAL: could not write agent roster to {out_path}: {e}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
 
 def slug(s: str) -> str:
@@ -291,6 +341,54 @@ def main() -> int:
 
     client = AIProjectClient(endpoint=endpoint, credential=DefaultAzureCredential())
 
+    # Failures collected across the loop. Printed + raised at the end
+    # so one bad agent doesn't block the others, but the operator
+    # still gets a non-zero exit code + a clear summary.
+    deploy_failures: list[str] = []
+
+    # Detection Rules KB project connection — created lazily so that
+    # the Foundry project (which lives outside Terraform) is in place
+    # by the time we try. We do it ONCE up front (outside the per-
+    # agent loop) so every dependent agent shares the result.
+    drk_conn_arm_id: str | None = None
+    if drk_attach:
+        drk_mcp_endpoint = (
+            f"{drk_search_ep}/knowledgebases/{drk_kb_name}"
+            f"/mcp?api-version={KB_MCP_API_VERSION}"
+        )
+        try:
+            _ensure_project_connection_remote_tool(
+                sub_id=sub_id,
+                rg=rg,
+                hub=hub,
+                project=project,
+                connection_name=drk_conn_name,
+                target_url=drk_mcp_endpoint,
+                audience="https://search.azure.com/",
+            )
+            print(
+                f"INFO: project connection {drk_conn_name!r} ready "
+                f"(RemoteTool / ProjectManagedIdentity)"
+            )
+            # Foundry's tool-validator wants an ARM-id-shaped string for
+            # project_connection_id (same gotcha the OpenAPI tool path
+            # already documented). Build it deterministically.
+            drk_conn_arm_id = (
+                f"/subscriptions/{sub_id}"
+                f"/resourceGroups/{rg}"
+                f"/providers/Microsoft.CognitiveServices/accounts/{hub}"
+                f"/projects/{project}"
+                f"/connections/{drk_conn_name}"
+            )
+        except Exception as e:
+            msg = (
+                f"detection-rules KB: could not create / verify project "
+                f"connection {drk_conn_name!r}: {e!r}"
+            )
+            print(f"ERROR: {msg}", file=sys.stderr)
+            deploy_failures.append(msg)
+            drk_attach = False  # don't try to attach the MCP tool below
+
     for name in AGENTS:
         spec = render_openapi(runner_url, name)
 
@@ -354,52 +452,22 @@ def main() -> int:
 
         # Tool list always starts with the runner OpenAPI tool. The
         # Detection Engineer also gets an MCP tool wired to the
-        # detection-rules Foundry IQ knowledge base, when the kb has
-        # been provisioned by Phase 2 Terraform.
+        # detection-rules Foundry IQ knowledge base, when the KB
+        # connection setup above succeeded.
         tools_for_agent = [tool]
-        if drk_attach and agent_name == "detection-engineer":
-            # Ensure the project connection exists (idempotent). This
-            # can't be done in Terraform because the Foundry project
-            # itself is created post-apply, so we lazily make the
-            # connection right before we need it for the tool wiring.
-            drk_mcp_endpoint = (
-                f"{drk_search_ep}/knowledgebases/{drk_kb_name}"
-                f"/mcp?api-version=2025-11-01-preview"
-            )
-            try:
-                _ensure_project_connection_remote_tool(
-                    sub_id=sub_id,
-                    rg=rg,
-                    hub=hub,
-                    project=project,
-                    connection_name=drk_conn_name,
-                    target_url=drk_mcp_endpoint,
-                    audience="https://search.azure.com/",
-                )
-                print(
-                    f"INFO: project connection {drk_conn_name!r} ready "
-                    f"(RemoteTool / ProjectManagedIdentity)"
-                )
-            except Exception as e:
-                print(
-                    f"WARN: could not create / verify project connection "
-                    f"{drk_conn_name!r}: {e!r}. Skipping MCP-tool attach for "
-                    f"{name}.",
-                    file=sys.stderr,
-                )
-                drk_attach = False  # don't try again on this run
-
-        if drk_attach and agent_name == "detection-engineer":
+        if drk_attach and drk_conn_arm_id and agent_name == "detection-engineer":
             mcp_tool = {
                 "type": "mcp",
                 "server_label": "detection-rules",
                 "server_url": (
                     f"{drk_search_ep}/knowledgebases/{drk_kb_name}"
-                    f"/mcp?api-version=2025-11-01-preview"
+                    f"/mcp?api-version={KB_MCP_API_VERSION}"
                 ),
                 "require_approval": "never",
                 "allowed_tools": ["knowledge_base_retrieve"],
-                "project_connection_id": drk_conn_name,
+                # ARM id, not bare name — same shape as the OpenAPI
+                # tool's auth.security_scheme.project_connection_id.
+                "project_connection_id": drk_conn_arm_id,
             }
             tools_for_agent.append(mcp_tool)
             print(
@@ -407,22 +475,38 @@ def main() -> int:
                 f"(kb={drk_kb_name}, conn={drk_conn_name})"
             )
 
-        agent = client.agents.create_version(
-            agent_name=agent_name,
-            definition=PromptAgentDefinition(
-                model=model,
-                instructions=load_instructions(name),
-                tools=tools_for_agent,
-            ),
-            description=f"AISOC demo agent: {name}",
-        )
-
-        print(f"OK: {name} (agent_name={agent_name}) published version={getattr(agent, 'version', None)}")
+        try:
+            agent = client.agents.create_version(
+                agent_name=agent_name,
+                definition=PromptAgentDefinition(
+                    model=model,
+                    instructions=load_instructions(name),
+                    tools=tools_for_agent,
+                ),
+                description=f"AISOC demo agent: {name}",
+            )
+            print(f"OK: {name} (agent_name={agent_name}) published version={getattr(agent, 'version', None)}")
+        except Exception as e:
+            msg = f"agent {name!r} (slug={agent_name}): create_version raised: {e!r}"
+            print(f"ERROR: {msg}", file=sys.stderr)
+            deploy_failures.append(msg)
+            # Continue with the next agent so a Detection Engineer
+            # tool-shape problem doesn't take the whole roster down.
+            continue
 
     # Write a slug roster that other phases/scripts can consume.
     roster_path = os.path.join(os.path.dirname(__file__), "..", "agents", "roster.slugs.txt")
     write_slug_roster(roster_path)
     print(f"Wrote agent roster: {roster_path}")
+
+    if deploy_failures:
+        print("", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        print(f"DEPLOY FINISHED WITH {len(deploy_failures)} FAILURE(S):", file=sys.stderr)
+        for i, msg in enumerate(deploy_failures, 1):
+            print(f"  {i}. {msg}", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        return 1
 
     return 0
 
