@@ -172,15 +172,48 @@ SUBSCRIPTION_OVERRIDE=""
 SKIP_OIDC=0
 ACTION=""
 
+# Snapshot which TF_VAR_* the operator had set in their shell BEFORE
+# this script ran, AND what value each one held. These are the
+# highest-precedence values: nothing CLI or aisoc.config can override
+# them. The classic pattern is:
+#
+#   TF_VAR_admin_password=xxx ./aisoc_demo.sh deploy --resource-group=rg
+#
+# where the password is set in the shell (kept out of CLI history /
+# aisoc.config) and the CLI sets the rest.
+#
+# Why we capture VALUES not just names: aisoc.config below uses
+# `source`, which lets a `TF_VAR_x=...` line in the file silently
+# overwrite the shell-preset value. After sourcing we restore the
+# snapshotted values, so the shell wins regardless of what
+# aisoc.config tries to do.
+declare -A PRE_SHELL_TF_VARS=()
+while IFS='=' read -r _name _value; do
+  if [[ "$_name" == TF_VAR_* ]]; then
+    PRE_SHELL_TF_VARS["$_name"]="$_value"
+  fi
+done < <(env)
+unset _name _value
+
 # Source aisoc.config (gitignored) if present, so the user can keep
 # their TF_VAR_* + AISOC_* defaults in one place at the repo root
-# instead of scattered tfvars files. CLI flags parsed below still
-# override these values for the current run.
+# instead of scattered tfvars files. CLI flags parsed below override
+# these values for the current run; pre-shell env vars (snapshot
+# above) still win over both.
 if [[ -f "$ROOT/aisoc.config" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/aisoc.config"
   echo "Loaded $ROOT/aisoc.config" >&2
 fi
+
+# Restore shell-preset TF_VAR_* values that aisoc.config might have
+# clobbered during `source`. After this, anything left in the env is
+# either shell-preset (= the snapshotted value) or aisoc.config-set
+# (= up for grabs by the CLI loop below).
+for _name in "${!PRE_SHELL_TF_VARS[@]}"; do
+  export "$_name=${PRE_SHELL_TF_VARS[$_name]}"
+done
+unset _name
 # aisoc.config can set its own deploy-script-level knobs:
 #   AISOC_SKIP_OIDC=1                 -> skip OIDC bootstrap
 #   AISOC_GITHUB_REPO=<owner>/<repo>  -> override the GitHub repo
@@ -240,14 +273,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Export each as TF_VAR_<name>, but never clobber a value already set in
-# the env (so users can pre-set sensitive values without putting them on
-# the command line).
+# Export each CLI-supplied value as TF_VAR_<name>. Precedence:
+#   1. (highest) Pre-shell env vars — captured in PRE_SHELL_TF_VARS
+#      above. We never clobber these so sensitive values can stay
+#      out of CLI history / aisoc.config.
+#   2. CLI flags — override aisoc.config (this loop).
+#   3. (lowest) aisoc.config — applied via `source` above.
+#
+# Anything in the env that's NOT in PRE_SHELL_TF_VARS came from
+# sourcing aisoc.config — those should yield to the CLI value. The
+# bare `${!envvar:-}` check we used to do conflated the two,
+# accidentally letting aisoc.config beat the CLI.
 for k in "${!USER_VARS[@]}"; do
   envvar="TF_VAR_$k"
-  if [[ -z "${!envvar:-}" ]]; then
-    export "$envvar=${USER_VARS[$k]}"
+  if [[ -n "${PRE_SHELL_TF_VARS[$envvar]:-}" ]]; then
+    continue  # operator's shell wins
   fi
+  export "$envvar=${USER_VARS[$k]}"
 done
 
 # Optional subscription switch (must happen before any az/terraform calls).
