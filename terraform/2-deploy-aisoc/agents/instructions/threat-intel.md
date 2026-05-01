@@ -127,13 +127,43 @@ the protocol below exactly.
 
 ### Steps
 
-1. **Search.** Run 3–5 fresh Bing-grounded searches across the
-   relevant angles (web-app auth attacks, maritime / shipping
-   campaigns, Azure cloud abuse, Python web-stack CVEs, recent
-   active threat-actor activity touching any of the above).
-2. **Synthesise.** Pick the small number of items that genuinely
-   matter THIS cycle — be ruthless. The dashboard has limited
-   real estate; quality beats coverage.
+1. **Search — required.** You MUST call `bing_grounding` at least
+   FOUR times before producing the JSON. Skipping searches is not
+   acceptable; an empty dashboard is a deploy failure, not a
+   feature. Cover several of these angles in the same cycle:
+     - "this week" cyber news from authoritative outlets
+       (BleepingComputer, The Record, KrebsOnSecurity,
+       DarkReading) — gives you the headlines.
+     - Recent CVEs of broad interest (CISA KEV catalog, NVD,
+       vendor security blogs).
+     - Active credential-stuffing / phishing / OAuth-abuse
+       campaigns of any sector.
+     - Maritime / shipping / cruise-line incidents specifically.
+     - Cloud / Azure / M365 abuse patterns.
+     - Active threat actors making noise this week
+       (LockBit, Cl0p, Scattered Spider, FIN7, named APTs, …).
+   If a search returns nothing relevant, run a different search
+   — don't give up after one query.
+
+2. **Synthesise — be selective, not empty.** Quality beats
+   coverage, but EMPTINESS beats nothing. Aim for:
+     - 3–5 `headline_threats` (the most consequential items
+       across all angles you searched, even if not specifically
+       maritime — relevance to ANY part of our exposure is
+       enough). Pure-fluff "best practices to stay safe" articles
+       don't count; concrete campaigns, named threat actors,
+       active CVEs, and breach disclosures do.
+     - 4–6 `new_and_notable` items (newer / smaller things that
+       didn't make the headlines but are worth a glance).
+     - 3–6 `watchlist` items (specific IOCs or TTPs surfaced by
+       the searches above — IP, domain, hash, MITRE technique
+       ID, etc.).
+     - 2–4 `recommendations` (concrete SOC actions tied to the
+       items above).
+   Better to ship a slightly broader-than-targeted item with a
+   real source than to ship empty arrays. The human SOC team
+   reads this dashboard expecting actual content.
+
 3. **Emit JSON.** Reply with ONE JSON object inside a single
    ```json``` fenced code block, conforming to the schema below.
    Do not put any prose outside the block — anything outside is
@@ -203,13 +233,30 @@ the protocol below exactly.
   Sentinel" or "Ask Detection Engineer to draft a rule for Y".
   Avoid platitudes like "Stay vigilant".
 
+### What counts as "relevant" for this dashboard
+
+Strict targeting is NOT required. Include items that are
+**cyber-relevant** for an MSSP-watched stack: web-app attacks,
+identity and SSO abuse, ransomware groups making noise, large
+breach disclosures, CISA / vendor advisories, supply-chain
+compromises, M365 / Azure-specific issues, novel malware loaders
+or initial-access techniques. Maritime-specific is a bonus when
+it appears, not a gate.
+
+If the news cycle has only generic "cybersecurity hygiene"
+articles, run more searches with different angles before giving
+up. Empty arrays are a last resort, not a default.
+
 ### Empty / failure state
 
-If the grounding tool returns nothing useful (or isn't wired at
-deploy), STILL produce a valid JSON object — just with empty
-arrays for the lists, and a `headline` like "Bing grounding
-unavailable — no fresh dashboard this cycle." Never reply with a
-plain-text error message in place of the JSON.
+ONLY produce empty arrays when `bing_grounding` is genuinely
+unavailable (the tool isn't wired or every call returned an
+error). In that case, set the headline to a precise diagnostic
+("Bing grounding tool is not wired — Terraform Phase 2
+provisioned but the project connection didn't land. Re-run
+deploy_prompt_agents_with_runner_tools.sh.") so the operator can
+fix it. Never reply with a plain-text error message in place of
+the JSON.
 
 ## Don'ts
 
