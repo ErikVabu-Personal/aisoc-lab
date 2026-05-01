@@ -74,7 +74,8 @@ try {
         Invoke-WebRequest -Uri $configUrl -OutFile $cfgFile -UseBasicParsing -TimeoutSec 60
     }
 
-    Log "Sysmon config: $cfgFile ($([math]::Round((Get-Item $cfgFile).Length/1KB,1)) KB)"
+    $cfgKb = [math]::Round((Get-Item $cfgFile).Length / 1KB, 1)
+    Log ("Sysmon config: {0} ({1} KB)" -f $cfgFile, $cfgKb)
 
     # Decide whether to install or just reload the config.
     $sysmonService = Get-Service -Name 'Sysmon64' -ErrorAction SilentlyContinue
@@ -86,7 +87,8 @@ try {
         Log "Sysmon not installed — downloading + installing"
         $sysmonUrl = 'https://download.sysinternals.com/files/Sysmon.zip'
         Invoke-WebRequest -Uri $sysmonUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 120
-        Log "Downloaded $zipPath ($([math]::Round((Get-Item $zipPath).Length/1MB,1)) MB)"
+        $zipMb = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+        Log ("Downloaded {0} ({1} MB)" -f $zipPath, $zipMb)
 
         Expand-Archive -Path $zipPath -DestinationPath $workDir -Force
         $stagedExe = Join-Path $workDir 'Sysmon64.exe'
@@ -112,16 +114,26 @@ try {
     }
 
     # Sanity check — query a couple of recent Sysmon events to confirm
-    # the channel is producing.
+    # the channel is producing. Wrapped in its own try/catch so a
+    # parser oddity here can never fail the whole install (Windows
+    # PowerShell 5.1 is touchy about deeply-nested sub-expressions
+    # inside double-quoted strings; use the -f format operator + the
+    # -split operator instead of "$($x.y.z)").
     Start-Sleep -Seconds 5
-    $recent = Get-WinEvent -LogName 'Microsoft-Windows-Sysmon/Operational' -MaxEvents 3 -ErrorAction SilentlyContinue
-    if ($recent) {
-        Log "Sysmon channel alive — $($recent.Count) recent events"
-        foreach ($e in $recent) {
-            Log "  EID $($e.Id) @ $($e.TimeCreated): $($e.Message.Split([Environment]::NewLine)[0])"
+    try {
+        $recent = Get-WinEvent -LogName 'Microsoft-Windows-Sysmon/Operational' -MaxEvents 3 -ErrorAction SilentlyContinue
+        if ($recent) {
+            $count = ($recent | Measure-Object).Count
+            Log ("Sysmon channel alive - {0} recent events" -f $count)
+            foreach ($e in $recent) {
+                $firstLine = ($e.Message -split "`r?`n")[0]
+                Log ("  EID {0} @ {1}: {2}" -f $e.Id, $e.TimeCreated, $firstLine)
+            }
+        } else {
+            Log "WARN: no Sysmon events visible yet - channel will populate as the host generates activity"
         }
-    } else {
-        Log "WARN: no Sysmon events visible yet — channel will populate as the host generates activity"
+    } catch {
+        Log ("WARN: sanity-check query failed (non-fatal): {0}" -f $_.Exception.Message)
     }
 
     Log "=== install_sysmon.ps1 done (success) ==="
