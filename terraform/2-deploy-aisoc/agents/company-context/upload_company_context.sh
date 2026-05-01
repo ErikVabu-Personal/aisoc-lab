@@ -79,6 +79,19 @@ SEARCH_NAME="$(echo "$SEARCH_EP" | sed 's|https://||' | sed 's|\.search\.windows
 RG="$(terraform output -raw resource_group)"
 
 if [[ -n "$SEARCH_NAME" && -n "$RG" ]]; then
+  # Reset clears the high-water-mark so the next run is a from-
+  # scratch enumeration. Without reset, blobs uploaded "in time"
+  # with the indexer's first run may fall on the wrong side of
+  # the watermark and never get picked up — that's the failure
+  # mode we hit on the May 2026 redeploy. Best-effort.
+  ADMIN_KEY="$(az search admin-key show --resource-group "$RG" \
+    --service-name "$SEARCH_NAME" --query primaryKey -o tsv 2>/dev/null || echo "")"
+  if [[ -n "$ADMIN_KEY" ]]; then
+    curl -s -o /dev/null -X POST \
+      -H "api-key: ${ADMIN_KEY}" -H "Content-Length: 0" \
+      "https://${SEARCH_NAME}.search.windows.net/indexers/company-context-indexer/reset?api-version=2024-07-01" \
+      && echo "  reset (clear watermark) ok"
+  fi
   az search indexer run \
     --service-name "$SEARCH_NAME" \
     --name company-context-indexer \

@@ -114,7 +114,18 @@ upload_dir "rules-threat-hunting"   "sigma/rules-threat-hunting"
 # Trigger the Search indexer so the new blobs are searchable now,
 # rather than waiting up to 30 min for the scheduled run.
 echo
-echo "Triggering detection-rules-indexer…"
+echo "Resetting + triggering detection-rules-indexer (clears the high-"
+echo "water-mark so a from-scratch indexing pass picks up everything)…"
+ADMIN_KEY="$(az search admin-key show \
+    --resource-group "$RG" \
+    --service-name "$SEARCH_NAME" \
+    --query primaryKey -o tsv 2>/dev/null || echo "")"
+if [[ -n "$ADMIN_KEY" ]]; then
+  curl -s -o /dev/null -X POST \
+    -H "api-key: ${ADMIN_KEY}" -H "Content-Length: 0" \
+    "https://${SEARCH_NAME}.search.windows.net/indexers/detection-rules-indexer/reset?api-version=2024-07-01" \
+    && echo "  reset ok"
+fi
 if az search indexer run \
     --service-name "$SEARCH_NAME" \
     --name detection-rules-indexer \
