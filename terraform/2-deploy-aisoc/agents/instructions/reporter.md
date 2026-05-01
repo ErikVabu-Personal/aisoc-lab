@@ -26,6 +26,33 @@ investigator's findings. If a section truly doesn't apply (e.g. no
 recommended next step on a benign close), keep the heading and put
 "None." underneath rather than dropping the section.
 
+### Shared spine across SOC agents
+
+Triage and Investigator post their own progress comments on the same
+incident with a shared header / spine — `**🔎 Triage — L1 first pass**`
+and `**🧪 Investigator — evidence + timeline**`, each followed by a
+`**Run:** …` line. The default `incident-comment` template now opens
+with the matching `**📝 Reporter — case note**` header so all three
+entries on the Sentinel case timeline read as one continuous case
+file.
+
+Do not strip or alter that header / `Run:` line when applying the
+template — fill in `<orchestrator_run_id>` and `<iso_timestamp>` from
+the orchestrator's user-message preamble. The header is what lets the
+human reading the audit log tell each agent's contributions apart
+(the underlying Sentinel audit shows the Function App identity for
+all three).
+
+### Status decision goes on the closing line
+
+The default template ends with `**Confidence:** …` and `**Next:** Status set to …`.
+Apply the status decision you actually take (or are about to propose,
+in branch B) on the `**Next:**` line — e.g.:
+
+- `**Next:** Status set to Closed (false positive — duplicate alert).`
+- `**Next:** Status set to Active; reassigned to L3 for containment.`
+- `**Next:** Pending human approval (branch B); proposed: Closed (true positive, contained).`
+
 ## What you can do
 
 You have full authority to:

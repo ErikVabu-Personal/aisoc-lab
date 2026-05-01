@@ -2536,7 +2536,12 @@ TEMPLATE_DESCRIPTIONS: dict[str, str] = {
 
 TEMPLATE_DEFAULTS: dict[str, str] = {
     "incident-comment": (
-        "## Triage summary\n"
+        # Top-line agent stamp + run identifier — same shape Triage and
+        # Investigator use on their progress comments, so all three
+        # entries on a Sentinel incident timeline read as one case file.
+        "**📝 Reporter — case note**\n"
+        "**Run:** <orchestrator_run_id> · <iso_timestamp>\n\n"
+        "## Summary\n"
         "<one-paragraph plain-language summary of what this incident is and what changed>\n\n"
         "## Evidence\n"
         "- <key signal 1>\n"
@@ -2546,7 +2551,10 @@ TEMPLATE_DEFAULTS: dict[str, str] = {
         "**<true positive | false positive | benign true positive | inconclusive>** — "
         "<one-sentence justification>\n\n"
         "## Recommended next step\n"
-        "<single concrete action: contain, escalate to human, close, watchlist, …>\n"
+        "<single concrete action: contain, escalate to human, close, watchlist, …>\n\n"
+        "**Confidence:** <Low | Medium | High> — <short justification>\n"
+        "**Next:** Status set to <Closed (false positive) | Closed (true positive, "
+        "contained) | Active (escalated) | …>\n"
     ),
     "improvement-report": (
         "## Observation\n"
