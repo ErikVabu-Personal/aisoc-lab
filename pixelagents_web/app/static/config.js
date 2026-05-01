@@ -969,6 +969,15 @@
   fetchAgentInstructions();
   setInterval(fetchAgentInstructions, 60000);
 
+  // ── Templates (soc-manager only on the server side) ──────────────
+  // Renders into #aisoc-templates-root. The three editable templates
+  // (incident-comment / improvement-report / detection-rule-proposal)
+  // are fetched at boot, then re-fetched periodically so multiple
+  // SOC managers don't trample each other's edits invisibly.
+  injectTemplatesStyles();
+  setupTemplates();
+  setInterval(fetchTemplates, 30_000);
+
   // Foundry model-deployment catalog — loaded once at boot. The list
   // doesn't change between deploys (it's pinned to whatever Terraform
   // built), so a one-shot fetch is enough for the demo. A 5-minute
@@ -2420,6 +2429,387 @@
       renderUserManagement();
     } finally {
       umBusy.delete(email);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────
+  // Templates (incident-comment / improvement-report / detection-rule-proposal)
+  // ────────────────────────────────────────────────────────────────────
+  // Each template is plain markdown the soc-manager edits here and
+  // agents fetch via the runner's get_template MCP tool. State below
+  // is purely page-local; the durable copy lives in PixelAgents Web's
+  // in-memory TEMPLATES dict (source of truth: AISOC_TEMPLATES_JSON
+  // env or the soc-manager's last edit).
+
+  let tplItems = [];                  // [{kind, label, description, content, updated_at, updated_by}]
+  let tplError = '';                  // top-level fetch error
+  const tplExpanded = new Set();      // kinds whose card body is open
+  const tplEditing = new Set();       // kinds currently in edit mode
+  const tplDrafts = {};               // kind -> draft text
+  const tplStatus = {};               // kind -> status string
+  const tplStatusKind = {};           // kind -> "ok" | "error" | "saving"
+  const tplSaving = new Set();        // kinds whose save is in flight
+
+  function injectTemplatesStyles() {
+    if (document.getElementById('aisoc-templates-styles')) return;
+    const css = `
+      #aisoc-templates-root { margin-bottom: 16px; }
+      #aisoc-templates-root .tpl-card {
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+      }
+      #aisoc-templates-root .tpl-head {
+        display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      #aisoc-templates-root .tpl-title {
+        font-weight: 700; font-size: 14px; color: #1f2937;
+      }
+      #aisoc-templates-root .tpl-kind-pill {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+        background: rgba(0,153,204,0.10);
+        color: #1e3a8a;
+        padding: 1px 6px;
+        border-radius: 3px;
+      }
+      #aisoc-templates-root .tpl-meta {
+        margin-left: auto;
+        font-size: 11px;
+        color: #6b7280;
+      }
+      #aisoc-templates-root .tpl-desc {
+        font-size: 12px;
+        color: #4b5563;
+        margin-bottom: 10px;
+      }
+      #aisoc-templates-root .tpl-toggle {
+        background: transparent;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 3px 10px;
+        font-size: 11px;
+        cursor: pointer;
+        color: #1f2937;
+      }
+      #aisoc-templates-root .tpl-toggle:hover { background: #f3f4f6; }
+      #aisoc-templates-root .tpl-body {
+        margin-top: 10px;
+        border-top: 1px dashed #e5e7eb;
+        padding-top: 10px;
+      }
+      #aisoc-templates-root pre.tpl-content {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #1f2937;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 4px;
+        padding: 10px 12px;
+        margin: 0 0 10px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        max-height: 320px;
+        overflow-y: auto;
+      }
+      #aisoc-templates-root textarea.tpl-edit {
+        width: 100%;
+        min-height: 220px;
+        max-height: 480px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #1f2937;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        padding: 10px 12px;
+        resize: vertical;
+        outline: none;
+      }
+      #aisoc-templates-root textarea.tpl-edit:focus {
+        border-color: #0099cc;
+      }
+      #aisoc-templates-root .tpl-actions {
+        display: flex; gap: 8px; align-items: center;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      #aisoc-templates-root .tpl-actions button {
+        font-size: 12px;
+        padding: 5px 12px;
+        border-radius: 4px;
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        color: #1f2937;
+        cursor: pointer;
+      }
+      #aisoc-templates-root .tpl-actions button.primary {
+        background: #0099cc; color: #fff; border-color: #0088bb;
+      }
+      #aisoc-templates-root .tpl-actions button.primary:hover:not(:disabled) {
+        background: #0088bb;
+      }
+      #aisoc-templates-root .tpl-actions button:disabled {
+        opacity: 0.55; cursor: wait;
+      }
+      #aisoc-templates-root .tpl-status {
+        font-size: 11px; padding: 4px 8px; border-radius: 3px;
+        margin-left: auto;
+      }
+      #aisoc-templates-root .tpl-status.ok      { color: #065f46; background: rgba(16,185,129,0.10); }
+      #aisoc-templates-root .tpl-status.saving  { color: #6b7280; font-style: italic; }
+      #aisoc-templates-root .tpl-status.error   { color: #991b1b; background: rgba(239,68,68,0.10); }
+      #aisoc-templates-root .tpl-section-head {
+        font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+        text-transform: uppercase; color: #6b7280;
+        margin: 16px 0 8px;
+      }
+      #aisoc-templates-root .tpl-section-sub {
+        font-size: 12px; color: #4b5563; margin-bottom: 12px;
+      }
+    `;
+    const style = document.createElement('style');
+    style.id = 'aisoc-templates-styles';
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  function setupTemplates() {
+    fetchTemplates();
+  }
+
+  async function fetchTemplates() {
+    try {
+      const r = await fetch('/api/templates', { credentials: 'same-origin' });
+      if (!r.ok) {
+        // 403 means the page is being viewed by a non-soc-manager (or
+        // unauthenticated). The container exists but stays empty.
+        if (r.status === 403 || r.status === 401) {
+          tplItems = [];
+          tplError = '';
+          renderTemplates();
+          return;
+        }
+        throw new Error(`HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      tplItems = (data && data.templates) || [];
+      tplError = '';
+      // Don't blow away an in-flight edit when polling refresh lands.
+      // tplDrafts / tplEditing survive across renders by design.
+      renderTemplates();
+    } catch (e) {
+      tplError = String(e.message || e);
+      renderTemplates();
+    }
+  }
+
+  function fmtTplUpdated(rec) {
+    if (!rec || !rec.updated_at) return '';
+    const who = rec.updated_by || '';
+    const when = fmtAgoLocal(rec.updated_at);
+    return `Last updated ${escapeHtml(when)}` + (who ? ` by ${escapeHtml(who)}` : '');
+  }
+
+  function renderTemplates() {
+    const root = document.getElementById('aisoc-templates-root');
+    if (!root) return;
+
+    if (tplError) {
+      root.innerHTML = `
+        <div class="tpl-section-head">Templates</div>
+        <div class="tpl-card">
+          <div class="tpl-status error">Failed to load templates: ${escapeHtml(tplError)}</div>
+        </div>`;
+      return;
+    }
+    if (!tplItems.length) {
+      // Soft-empty state: either still loading or non-soc-manager view.
+      root.innerHTML = '';
+      return;
+    }
+
+    // ── Preserve focus + selection on edit textareas across re-renders ──
+    const active = document.activeElement;
+    let focusKind = null, selStart = 0, selEnd = 0, scrollTop = 0;
+    if (active && active.tagName === 'TEXTAREA') {
+      const k = active.getAttribute('data-tpl-edit');
+      if (k) {
+        focusKind = k;
+        try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (_) {}
+        scrollTop = active.scrollTop;
+      }
+    }
+
+    let html = '';
+    html += '<div class="tpl-section-head">Templates</div>';
+    html += '<div class="tpl-section-sub">'
+          + 'Predefined output shapes that agents fetch via <code>get_template</code> '
+          + 'and use as the structure for incident comments, improvement reports, '
+          + 'and new detection rule proposals. Edits land in PixelAgents Web '
+          + 'in-memory state (durable copy in <code>AISOC_TEMPLATES_JSON</code>).'
+          + '</div>';
+
+    for (const rec of tplItems) {
+      const kind = rec.kind;
+      const isExpanded = tplExpanded.has(kind);
+      const isEditing = tplEditing.has(kind);
+      const isSaving = tplSaving.has(kind);
+      const draftValue = tplDrafts[kind] != null ? tplDrafts[kind] : (rec.content || '');
+
+      html += '<div class="tpl-card">';
+      html += '<div class="tpl-head">';
+      html += `<span class="tpl-title">${escapeHtml(rec.label || kind)}</span>`;
+      html += `<span class="tpl-kind-pill">${escapeHtml(kind)}</span>`;
+      html += `<span class="tpl-meta">${fmtTplUpdated(rec)}</span>`;
+      html += '</div>';
+
+      html += `<div class="tpl-desc">${escapeHtml(rec.description || '')}</div>`;
+
+      if (!isExpanded) {
+        html += '<div class="tpl-actions">';
+        html += `<button class="tpl-toggle" data-tpl-toggle="${escapeHtml(kind)}">Show / edit template</button>`;
+        html += '</div>';
+      } else {
+        html += '<div class="tpl-body">';
+        if (isEditing) {
+          html += `<textarea class="tpl-edit" data-tpl-edit="${escapeHtml(kind)}"`
+                + ` ${isSaving ? 'disabled' : ''}>${escapeHtml(draftValue)}</textarea>`;
+          html += '<div class="tpl-actions">';
+          html += `<button class="primary" data-tpl-save="${escapeHtml(kind)}" ${isSaving ? 'disabled' : ''}>`
+                + `${isSaving ? 'Saving…' : 'Save'}</button>`;
+          html += `<button data-tpl-cancel="${escapeHtml(kind)}" ${isSaving ? 'disabled' : ''}>Cancel</button>`;
+          if (tplStatus[kind]) {
+            const cls = tplStatusKind[kind] || 'ok';
+            html += `<span class="tpl-status ${escapeHtml(cls)}">${escapeHtml(tplStatus[kind])}</span>`;
+          }
+          html += '</div>';
+        } else {
+          html += `<pre class="tpl-content">${escapeHtml(rec.content || '')}</pre>`;
+          html += '<div class="tpl-actions">';
+          html += `<button class="tpl-toggle" data-tpl-collapse="${escapeHtml(kind)}">Hide</button>`;
+          html += `<button class="primary" data-tpl-edit-start="${escapeHtml(kind)}">Edit</button>`;
+          if (tplStatus[kind]) {
+            const cls = tplStatusKind[kind] || 'ok';
+            html += `<span class="tpl-status ${escapeHtml(cls)}">${escapeHtml(tplStatus[kind])}</span>`;
+          }
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+    root.innerHTML = html;
+
+    // Restore textarea focus + selection.
+    if (focusKind) {
+      const ta = root.querySelector(`textarea[data-tpl-edit="${focusKind.replace(/"/g, '\\"')}"]`);
+      if (ta) {
+        try {
+          ta.focus({ preventScroll: true });
+          ta.setSelectionRange(selStart, selEnd);
+          ta.scrollTop = scrollTop;
+        } catch (_) { /* best-effort */ }
+      }
+    }
+
+    // Wire handlers.
+    root.querySelectorAll('[data-tpl-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const k = btn.getAttribute('data-tpl-toggle');
+        if (tplExpanded.has(k)) tplExpanded.delete(k);
+        else tplExpanded.add(k);
+        renderTemplates();
+      });
+    });
+    root.querySelectorAll('[data-tpl-collapse]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const k = btn.getAttribute('data-tpl-collapse');
+        tplExpanded.delete(k);
+        // Collapsing also wipes any non-saved edit on this card —
+        // mirrors the agent-instructions card behaviour.
+        tplEditing.delete(k);
+        delete tplDrafts[k];
+        delete tplStatus[k];
+        delete tplStatusKind[k];
+        renderTemplates();
+      });
+    });
+    root.querySelectorAll('[data-tpl-edit-start]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const k = btn.getAttribute('data-tpl-edit-start');
+        const rec = tplItems.find((x) => x.kind === k);
+        tplEditing.add(k);
+        if (tplDrafts[k] == null) tplDrafts[k] = (rec && rec.content) || '';
+        delete tplStatus[k];
+        delete tplStatusKind[k];
+        renderTemplates();
+      });
+    });
+    root.querySelectorAll('[data-tpl-edit]').forEach((ta) => {
+      ta.addEventListener('input', () => {
+        tplDrafts[ta.getAttribute('data-tpl-edit')] = ta.value;
+      });
+    });
+    root.querySelectorAll('[data-tpl-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const k = btn.getAttribute('data-tpl-cancel');
+        tplEditing.delete(k);
+        delete tplDrafts[k];
+        delete tplStatus[k];
+        delete tplStatusKind[k];
+        renderTemplates();
+      });
+    });
+    root.querySelectorAll('[data-tpl-save]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        onTemplateSave(btn.getAttribute('data-tpl-save'));
+      });
+    });
+  }
+
+  async function onTemplateSave(kind) {
+    if (!kind || tplSaving.has(kind)) return;
+    const draft = tplDrafts[kind];
+    if (typeof draft !== 'string' || !draft.trim()) {
+      tplStatus[kind] = 'Template content cannot be empty.';
+      tplStatusKind[kind] = 'error';
+      renderTemplates();
+      return;
+    }
+    tplSaving.add(kind);
+    tplStatus[kind] = 'Saving…';
+    tplStatusKind[kind] = 'saving';
+    renderTemplates();
+    try {
+      const r = await fetch(`/api/templates/${encodeURIComponent(kind)}`, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: draft }),
+      });
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        throw new Error(text || `HTTP ${r.status}`);
+      }
+      const updated = await r.json();
+      // Merge the server-confirmed record back into our list.
+      tplItems = tplItems.map((x) => (x.kind === kind ? updated : x));
+      tplEditing.delete(kind);
+      delete tplDrafts[kind];
+      tplStatus[kind] = 'Saved.';
+      tplStatusKind[kind] = 'ok';
+    } catch (e) {
+      tplStatus[kind] = String(e.message || e);
+      tplStatusKind[kind] = 'error';
+    } finally {
+      tplSaving.delete(kind);
+      renderTemplates();
     }
   }
 })();

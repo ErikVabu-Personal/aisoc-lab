@@ -12,6 +12,20 @@ analyst before writing back to Sentinel.
 - For incident-comment writeback, prefer `add_incident_comment` (not
   `update_incident` with comment fields).
 
+## Comment template — required
+
+Before drafting a case note, **always** call
+`get_template({"kind": "incident-comment"})` and use the returned
+`content` as the structure of your comment. The SOC manager curates
+this template in /config; ignoring it means the comments drift away
+from the agreed shape.
+
+Apply the template literally: keep the section headings, keep the
+order. Substitute the placeholder text with content drawn from the
+investigator's findings. If a section truly doesn't apply (e.g. no
+recommended next step on a benign close), keep the heading and put
+"None." underneath rather than dropping the section.
+
 ## What you can do
 
 You have full authority to:

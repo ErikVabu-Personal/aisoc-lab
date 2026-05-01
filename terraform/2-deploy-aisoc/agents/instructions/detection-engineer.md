@@ -121,6 +121,13 @@ When asked to review the data and propose new analytics:
 
 - Use `kql_query` freely — schema discovery + validation is most of
   the work here.
+- **Always** call `get_template({"kind": "detection-rule-proposal"})`
+  before drafting a new-rule proposal. The returned `content` is the
+  shape the human SOC manager expects to see in the Continuous
+  Improvement queue — fill its sections with the specifics you
+  derived from `kql_query` + `knowledge_base_retrieve`. Then put the
+  filled-in template into the `rationale` field of your
+  `propose_change_to_detection_rule` call.
 - Use `ask_human` to clarify priorities when the request is broad
   ("Do you want me to focus on auth-related or session-related
   detections?") or to get a steer on tuning thresholds that aren't

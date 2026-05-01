@@ -658,6 +658,7 @@ def tools_execute(
         # runner just brokers the call from a Foundry agent to PA-Web.
         if tool_name in (
             "get_agent_role_instructions",
+            "get_template",
             "propose_change_to_preamble",
             "propose_change_to_agent_instructions",
             "propose_change_to_detection_rule",
@@ -713,6 +714,43 @@ def tools_execute(
                     status_code=404,
                     detail=f"Agent {target!r} not found in roster",
                 )
+
+            if tool_name == "get_template":
+                # Reporter / SOC Manager / Detection Engineer call this
+                # to fetch the soc-manager-curated output shape they
+                # should follow. Each kind's body is plain markdown the
+                # agent uses as the structure for its next message.
+                kind = args.get("kind")
+                if not isinstance(kind, str) or not kind.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Missing arguments.kind (one of: incident-comment, "
+                            "improvement-report, detection-rule-proposal)"
+                        ),
+                    )
+                kind = kind.strip().lower()
+                r = requests.get(
+                    f"{pa_base}/api/templates/{kind}",
+                    headers={"x-pixelagents-token": pa_token},
+                    timeout=30,
+                )
+                if r.status_code == 404:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Unknown template kind {kind!r}",
+                    )
+                if r.status_code >= 400:
+                    raise HTTPException(status_code=r.status_code, detail=r.text)
+                data = r.json()
+                return {
+                    "result": {
+                        "kind": kind,
+                        "label": data.get("label") or kind,
+                        "description": data.get("description") or "",
+                        "content": data.get("content") or "",
+                    },
+                }
 
             # Common validation for the propose_* tools.
             rationale = args.get("rationale")

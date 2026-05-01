@@ -273,6 +273,7 @@ def render_openapi(runner_url: str, agent_name: str) -> Dict[str, Any]:
                                                 "update_incident",
                                                 "ask_human",
                                                 "get_agent_role_instructions",
+                                                "get_template",
                                                 "propose_change_to_preamble",
                                                 "propose_change_to_agent_instructions",
                                                 "propose_change_to_detection_rule",

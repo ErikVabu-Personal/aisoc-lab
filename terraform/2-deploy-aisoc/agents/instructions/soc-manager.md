@@ -103,7 +103,7 @@ Arguments:
   why this rule is worth standing up.
 - `title` (string, optional).
 
-## Your read tool
+## Your read tools
 
 ### get_agent_role_instructions
 
@@ -114,6 +114,27 @@ change to that agent.
 Arguments:
 - `agent` (string, required): one of `triage`, `investigator`,
   `reporter`, `detection-engineer`.
+
+### get_template
+
+Returns a soc-manager-curated output template the agents are
+expected to follow. Three kinds:
+
+- `incident-comment` — Reporter agent's Sentinel comment shape.
+- `improvement-report` — the structure for **your own**
+  improvement proposals (call this whenever you're about to write
+  one, periodic review or analyst-driven, so the human SOC manager
+  sees a consistent format).
+- `detection-rule-proposal` — Detection Engineer agent's new-rule
+  shape.
+
+Arguments:
+- `kind` (string, required).
+
+Always fetch `improvement-report` before writing the `rationale`
+field of any `propose_change_to_*` call — the template is the
+shape the human SOC manager expects in the Continuous Improvement
+queue.
 
 You can also use `ask_human(question, target=<email>)` to clarify
 intent with the analyst before proposing.

@@ -951,6 +951,7 @@ def config_view(request: Request) -> Response:
         '<div id="aisoc-auto-pickup-root"></div>'
         '<div id="aisoc-user-management-root"></div>'
         '<div id="aisoc-generic-instructions-root"></div>'
+        '<div id="aisoc-templates-root"></div>'
         '<div id="aisoc-config-root"></div>'
     )
     return HTMLResponse(_render_shell(
@@ -1807,6 +1808,227 @@ async def api_agent_temperature_set_one(
             f"set to {new_val}% ({_agent_temperature_band(new_val)})",
         )
     return _agent_temperature_public_state(slug)
+
+
+# ── Agent-facing templates ────────────────────────────────────────────
+#
+# Soc-manager-editable templates that agents fetch at runtime via the
+# runner's get_template MCP tool. Each template is plain markdown/text
+# that the agent uses as the structure for a particular kind of output:
+#
+#   incident-comment        — Reporter agent's Sentinel comment shape
+#   improvement-report      — SOC Manager agent's improvement proposals
+#   detection-rule-proposal — Detection Engineer agent's new-rule shape
+#
+# Storage is in-memory + bootstrapped from AISOC_TEMPLATES_JSON. The
+# durable source of truth is whatever the soc-manager last set via
+# /config — restarts wipe edits unless persisted out of band.
+
+TEMPLATE_KINDS: tuple[str, ...] = (
+    "incident-comment",
+    "improvement-report",
+    "detection-rule-proposal",
+)
+
+TEMPLATE_LABELS: dict[str, str] = {
+    "incident-comment":        "Incident comment",
+    "improvement-report":      "Improvement report",
+    "detection-rule-proposal": "Detection rule proposal",
+}
+
+TEMPLATE_DESCRIPTIONS: dict[str, str] = {
+    "incident-comment": (
+        "Used by the Reporter agent every time it posts a comment back "
+        "to a Sentinel incident. The template is the canonical structure; "
+        "the agent fills in the variable parts."
+    ),
+    "improvement-report": (
+        "Used by the SOC Manager agent when it proposes an improvement "
+        "(prompt edit, new detection idea, process change) for the human "
+        "SOC manager to approve in the Continuous Improvement queue."
+    ),
+    "detection-rule-proposal": (
+        "Used by the Detection Engineer agent when it proposes a new "
+        "Sentinel analytic rule. Drives the rationale + KQL framing the "
+        "human reviewer sees in the Continuous Improvement queue."
+    ),
+}
+
+TEMPLATE_DEFAULTS: dict[str, str] = {
+    "incident-comment": (
+        "## Triage summary\n"
+        "<one-paragraph plain-language summary of what this incident is and what changed>\n\n"
+        "## Evidence\n"
+        "- <key signal 1>\n"
+        "- <key signal 2>\n"
+        "- <key signal 3>\n\n"
+        "## Verdict\n"
+        "**<true positive | false positive | benign true positive | inconclusive>** — "
+        "<one-sentence justification>\n\n"
+        "## Recommended next step\n"
+        "<single concrete action: contain, escalate to human, close, watchlist, …>\n"
+    ),
+    "improvement-report": (
+        "## Observation\n"
+        "<what behaviour was noticed across recent incidents — be specific: agent, "
+        "rule, or process>\n\n"
+        "## Why it matters\n"
+        "<impact: false-positive rate, MTTR, missed detections, analyst load, …>\n\n"
+        "## Proposed change\n"
+        "<exact edit. If a prompt change, quote the current text and the proposed "
+        "text. If a new rule, point at the detection-rule-proposal template.>\n\n"
+        "## Expected effect\n"
+        "<what the change should achieve, and how we'll know it worked "
+        "(metric, before/after sample, …)>\n\n"
+        "## Risk &amp; rollback\n"
+        "<what could go wrong, how to revert>\n"
+    ),
+    "detection-rule-proposal": (
+        "## Display name\n"
+        "<short, scannable rule title>\n\n"
+        "## Description\n"
+        "<one paragraph: what this rule detects, why it matters>\n\n"
+        "## Severity\n"
+        "<Informational | Low | Medium | High>\n\n"
+        "## KQL\n"
+        "```kql\n"
+        "<the analytic query>\n"
+        "```\n\n"
+        "## Tactics &amp; techniques\n"
+        "<MITRE ATT&amp;CK tactics + techniques (e.g. Initial Access / T1078)>\n\n"
+        "## Tuning notes\n"
+        "<known false positives, allow-listing guidance, suppression window>\n\n"
+        "## Why a new rule (vs. tuning an existing one)\n"
+        "<reference the existing rule library; explain why this is genuinely new>\n"
+    ),
+}
+
+# Live store. Populated lazily on first read so a fresh container can
+# bootstrap from AISOC_TEMPLATES_JSON (override) → TEMPLATE_DEFAULTS.
+TEMPLATES: dict[str, dict[str, Any]] = {}
+
+
+def _load_templates_bootstrap() -> dict[str, str]:
+    """Read AISOC_TEMPLATES_JSON if set, otherwise fall through to the
+    built-in defaults. Unknown kinds in the env JSON are ignored — only
+    the three known kinds are honoured. Missing kinds inherit defaults."""
+    raw = (os.getenv("AISOC_TEMPLATES_JSON") or "").strip()
+    out = {k: TEMPLATE_DEFAULTS[k] for k in TEMPLATE_KINDS}
+    if not raw:
+        return out
+    try:
+        parsed = json.loads(raw)
+    except Exception as e:
+        print(f"[templates] AISOC_TEMPLATES_JSON parse error: {e}", flush=True)
+        return out
+    if not isinstance(parsed, dict):
+        print("[templates] AISOC_TEMPLATES_JSON must be a JSON object", flush=True)
+        return out
+    for k in TEMPLATE_KINDS:
+        v = parsed.get(k)
+        if isinstance(v, str) and v.strip():
+            out[k] = v
+    return out
+
+
+def _ensure_templates_loaded() -> None:
+    if TEMPLATES:
+        return
+    bootstrap = _load_templates_bootstrap()
+    now = time.time()
+    for k in TEMPLATE_KINDS:
+        TEMPLATES[k] = {
+            "kind": k,
+            "label": TEMPLATE_LABELS.get(k, k),
+            "description": TEMPLATE_DESCRIPTIONS.get(k, ""),
+            "content": bootstrap.get(k, TEMPLATE_DEFAULTS.get(k, "")),
+            "updated_at": now,
+            "updated_by": "<bootstrap>",
+        }
+
+
+def _template_public_record(kind: str) -> dict[str, Any]:
+    _ensure_templates_loaded()
+    rec = TEMPLATES.get(kind) or {}
+    return {
+        "kind": kind,
+        "label": rec.get("label") or TEMPLATE_LABELS.get(kind, kind),
+        "description": rec.get("description") or TEMPLATE_DESCRIPTIONS.get(kind, ""),
+        "content": rec.get("content") or "",
+        "updated_at": rec.get("updated_at"),
+        "updated_by": rec.get("updated_by"),
+    }
+
+
+@app.get("/api/templates")
+def api_templates_list(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """All templates. Any authenticated session OR token-only caller —
+    the runner's get_template tool fetches by token; the /config UI
+    fetches by browser session."""
+    _require_auth(request, x_pixelagents_token)
+    _ensure_templates_loaded()
+    return {
+        "templates": [_template_public_record(k) for k in TEMPLATE_KINDS],
+        "ts": time.time(),
+    }
+
+
+@app.get("/api/templates/{kind}")
+def api_templates_get_one(
+    kind: str,
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Single template body. Same auth as the list endpoint."""
+    _require_auth(request, x_pixelagents_token)
+    if kind not in TEMPLATE_KINDS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown template kind {kind!r}. Valid: {list(TEMPLATE_KINDS)}",
+        )
+    return _template_public_record(kind)
+
+
+@app.put("/api/templates/{kind}")
+async def api_templates_put_one(
+    kind: str,
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Update one template. Soc-manager only — writes flow from the
+    /config Templates card."""
+    user = _require_soc_manager(req, x_pixelagents_token)
+    if kind not in TEMPLATE_KINDS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown template kind {kind!r}. Valid: {list(TEMPLATE_KINDS)}",
+        )
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    content = body.get("content")
+    if not isinstance(content, str):
+        raise HTTPException(status_code=400, detail="content must be a string")
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+    if len(content) > 100_000:
+        raise HTTPException(status_code=400, detail="content too large (>100KB)")
+    _ensure_templates_loaded()
+    rec = TEMPLATES.setdefault(kind, {})
+    rec["kind"] = kind
+    rec["label"] = TEMPLATE_LABELS.get(kind, kind)
+    rec["description"] = TEMPLATE_DESCRIPTIONS.get(kind, "")
+    rec["content"] = content
+    rec["updated_at"] = time.time()
+    rec["updated_by"] = user or "<token>"
+    print(f"[templates] {kind!r} updated by {rec['updated_by']} ({len(content)} chars)", flush=True)
+    return _template_public_record(kind)
 
 
 @app.post("/api/auto_pickup")
