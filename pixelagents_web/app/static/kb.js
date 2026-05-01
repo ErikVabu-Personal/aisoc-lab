@@ -168,10 +168,26 @@
     root.innerHTML = '';
 
     const meta = el('div', { class: 'kb-meta' },
-      el('div', null,
+      el('div', { class: 'kb-meta-info' },
         el('span', { class: 'kb-meta-label' }, 'Search service:'),
         ' ',
         el('span', { class: 'kb-mono' }, payload.service || payload.endpoint || '—'),
+        // Diagnostic hints — small, muted. Surfaces whether the page
+        // is reading env vars or falling back. If something looks
+        // off (no docs, no service), this tells you which side of
+        // the pipeline to check.
+        ...(payload.descriptors_source === 'builtin'
+          ? [el('span', { class: 'kb-meta-hint' },
+              ' · descriptors: builtin defaults (env var unset or empty)')]
+          : []),
+        ...(payload.endpoint_source === 'arm-fallback'
+          ? [el('span', { class: 'kb-meta-hint' },
+              ' · endpoint resolved via ARM (env var unset)')]
+          : []),
+        ...(payload.endpoint_source === 'missing'
+          ? [el('span', { class: 'kb-meta-hint kb-meta-warn' },
+              ' · WARNING: Search endpoint not found (env var unset, ARM lookup failed)')]
+          : []),
       ),
       el('button', {
         type: 'button',
@@ -223,7 +239,10 @@
       border-radius: 3px;
       font-size: 13px;
     }
+    #aisoc-kb-root .kb-meta-info { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
     #aisoc-kb-root .kb-meta-label { color: #6a7e94; }
+    #aisoc-kb-root .kb-meta-hint { color: #6a7e94; font-size: 11.5px; }
+    #aisoc-kb-root .kb-meta-warn { color: #a63427; font-weight: 600; }
     #aisoc-kb-root .kb-mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }

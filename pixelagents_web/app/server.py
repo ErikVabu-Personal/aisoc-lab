@@ -6323,24 +6323,145 @@ def rules_view(request: Request) -> Response:
 # later means editing that JSON in TF; nothing in this Python file
 # enumerates the KBs by name.
 
+_KB_DESCRIPTORS_BUILTIN: list[dict[str, Any]] = [
+    {
+        "name":        "detection-rules",
+        "label":       "Detection Rules",
+        "description": (
+            "Sigma / KQL / writeups for the Detection Engineer agent. "
+            "Auto-refreshed daily from the SigmaHQ/sigma upstream by the "
+            "refresh-detection-rules workflow."
+        ),
+        "index":       "detection-rules-idx",
+        "indexer":     "detection-rules-indexer",
+        "agents":      ["detection-engineer"],
+    },
+    {
+        "name":        "company-context",
+        "label":       "Company Context (SOC-curated)",
+        "description": (
+            "Fleet, subsystems, account naming, IR runbooks, glossary, "
+            "escalation matrix, org chart. Edited by the SOC manager "
+            "(markdown in blob); the indexer picks up changes within "
+            "30 min of upload."
+        ),
+        "index":       "company-context-idx",
+        "indexer":     "company-context-indexer",
+        "agents":      ["triage", "investigator", "reporter", "soc-manager", "threat-intel"],
+    },
+    {
+        "name":        "company-policies",
+        "label":       "Company Policies (HR/IT-curated)",
+        "description": (
+            "Acceptable-use policy + asset inventory. Federated into "
+            "the same Foundry IQ knowledge base as company-context "
+            "(single MCP endpoint, two underlying sources)."
+        ),
+        "index":       "company-policies-idx",
+        "indexer":     "company-policies-indexer",
+        "agents":      ["triage", "investigator", "reporter", "soc-manager", "threat-intel"],
+    },
+]
+
+
 def _kb_descriptors() -> list[dict[str, Any]]:
-    """Parse AISOC_KB_DESCRIPTORS_JSON. Returns [] when the env var
-    is missing or unparseable — the /kb page just shows "no KBs
-    configured" in that case rather than 500-ing."""
+    """Return the KB descriptor list.
+
+    The env-var (`AISOC_KB_DESCRIPTORS_JSON`) is for customers who
+    name their indexes / indexers differently. The builtin defaults
+    match what Phase 2 Terraform actually deploys, so the /kb page
+    works even when the env var hasn't propagated to the running
+    Container App revision yet (the most common cause of the page
+    appearing empty after a fresh deploy).
+    """
+    raw = (os.getenv("AISOC_KB_DESCRIPTORS_JSON") or "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                kept = [d for d in parsed if isinstance(d, dict) and d.get("name")]
+                if kept:
+                    return kept
+                print(
+                    "[kb] AISOC_KB_DESCRIPTORS_JSON parsed but yielded no "
+                    "usable entries; using builtin defaults",
+                    flush=True,
+                )
+        except Exception as e:
+            print(
+                f"[kb] failed to parse AISOC_KB_DESCRIPTORS_JSON ({e!r}); "
+                f"using builtin defaults",
+                flush=True,
+            )
+    return list(_KB_DESCRIPTORS_BUILTIN)
+
+
+def _kb_descriptors_source() -> str:
+    """'env' if AISOC_KB_DESCRIPTORS_JSON gave us a usable list,
+    'builtin' if we fell back to _KB_DESCRIPTORS_BUILTIN. Used by
+    /api/kb/stats so the UI can show 'using builtin defaults'."""
     raw = (os.getenv("AISOC_KB_DESCRIPTORS_JSON") or "").strip()
     if not raw:
-        return []
+        return "builtin"
     try:
         parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return [d for d in parsed if isinstance(d, dict) and d.get("name")]
-    except Exception as e:
-        print(f"[kb] failed to parse AISOC_KB_DESCRIPTORS_JSON: {e!r}", flush=True)
-    return []
+        if isinstance(parsed, list) and any(
+            isinstance(d, dict) and d.get("name") for d in parsed
+        ):
+            return "env"
+    except Exception:
+        pass
+    return "builtin"
 
+
+_KB_SEARCH_ENDPOINT_CACHE: dict[str, str] = {}
 
 def _kb_search_endpoint() -> str:
-    return (os.getenv("AISOC_KB_SEARCH_ENDPOINT") or "").strip().rstrip("/")
+    """The Search service URL the /kb page queries. Read from
+    AISOC_KB_SEARCH_ENDPOINT first; if absent, look it up from
+    ARM by listing search services in our RG (the deploy provisions
+    exactly one).
+
+    The ARM-lookup fallback is what makes the page work after a
+    fresh terraform apply where the env var is set on the Container
+    App resource but the active revision hasn't been re-rolled to
+    pick it up yet (the new image push from CI is what triggers
+    that). Cached for 5 min to avoid hammering ARM on every page
+    refresh.
+    """
+    direct = (os.getenv("AISOC_KB_SEARCH_ENDPOINT") or "").strip().rstrip("/")
+    if direct:
+        return direct
+
+    cached = _KB_SEARCH_ENDPOINT_CACHE.get("value", "")
+    cached_until = float(_KB_SEARCH_ENDPOINT_CACHE.get("until", 0) or 0)
+    if cached and time.time() < cached_until:
+        return cached
+
+    try:
+        from azure.identity import DefaultAzureCredential
+        sub = (os.getenv("AZURE_SUBSCRIPTION_ID") or "").strip()
+        rg  = (os.getenv("AZURE_RESOURCE_GROUP")  or "").strip()
+        if not sub or not rg:
+            return ""
+        token = DefaultAzureCredential().get_token("https://management.azure.com/.default").token
+        url = (
+            f"https://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}"
+            f"/providers/Microsoft.Search/searchServices?api-version=2023-11-01"
+        )
+        r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        if r.status_code == 200:
+            services = (r.json() or {}).get("value", [])
+            if services:
+                name = services[0].get("name", "")
+                if name:
+                    endpoint = f"https://{name}.search.windows.net"
+                    _KB_SEARCH_ENDPOINT_CACHE["value"] = endpoint
+                    _KB_SEARCH_ENDPOINT_CACHE["until"] = str(time.time() + 300)  # 5 min
+                    return endpoint
+    except Exception as e:
+        print(f"[kb] search-endpoint ARM fallback failed: {e!r}", flush=True)
+    return ""
 
 
 def _kb_search_token() -> str:
@@ -6381,8 +6502,19 @@ def api_kb_stats(
 
     descriptors = _kb_descriptors()
     endpoint    = _kb_search_endpoint()
+    descriptors_src = _kb_descriptors_source()
+    endpoint_src    = (
+        "env" if os.getenv("AISOC_KB_SEARCH_ENDPOINT") else
+        ("arm-fallback" if endpoint else "missing")
+    )
     if not descriptors or not endpoint:
-        return {"endpoint": endpoint, "knowledge_bases": []}
+        return {
+            "endpoint":          endpoint,
+            "service":           _kb_search_service_name(),
+            "descriptors_source": descriptors_src,
+            "endpoint_source":    endpoint_src,
+            "knowledge_bases":   [],
+        }
 
     try:
         token = _kb_search_token()
@@ -6459,9 +6591,11 @@ def api_kb_stats(
         out.append(entry)
 
     return {
-        "endpoint": endpoint,
-        "service":  _kb_search_service_name(),
-        "knowledge_bases": out,
+        "endpoint":          endpoint,
+        "service":           _kb_search_service_name(),
+        "descriptors_source": descriptors_src,
+        "endpoint_source":    endpoint_src,
+        "knowledge_bases":   out,
     }
 
 
