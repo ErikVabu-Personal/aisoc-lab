@@ -52,6 +52,17 @@
 #                            parameter. Default suits both rule
 #                            (.yml/.kql/.json/.md/.txt) and prose-doc
 #                            (.md/.txt) corpora.
+#   EXTRA_KNOWLEDGE_SOURCES  comma-separated list of additional
+#                            existing knowledgeSource names to attach
+#                            to the knowledgeBase alongside the
+#                            primary one (KNOWLEDGE_SOURCE_NAME). Used
+#                            when a single KB federates multiple
+#                            sources — e.g. company-context blob +
+#                            company-policies blob. The script does
+#                            NOT create those extras; assumes a prior
+#                            invocation has already PUT them. Order:
+#                            run script for source A first, then for
+#                            source B with EXTRA_KNOWLEDGE_SOURCES=A.
 #
 # Idempotency
 # -----------
@@ -77,6 +88,13 @@ KB_API_VERSION="${KB_API_VERSION:-2025-11-01-preview}"
 KS_DESCRIPTION="${KS_DESCRIPTION:-Foundry IQ knowledge source.}"
 KB_DESCRIPTION="${KB_DESCRIPTION:-Foundry IQ knowledge base.}"
 FILE_EXTENSIONS="${FILE_EXTENSIONS:-.yml,.yaml,.kql,.md,.txt,.json}"
+# Optional: comma-separated list of additional knowledgeSource names
+# to include in this KB alongside the primary one. Used when a single
+# KB federates multiple sources (e.g. company-context blob + company-
+# policies blob). Each name must already exist as a knowledgeSource
+# resource on the same Search service — usually because a previous
+# invocation of this script created it.
+EXTRA_KNOWLEDGE_SOURCES="${EXTRA_KNOWLEDGE_SOURCES:-}"
 
 put() {
   # put <path> <api-version> <body>
@@ -210,13 +228,25 @@ echo "=== Knowledge base: ${KNOWLEDGE_BASE_NAME} ==="
 # work, since the Detection Engineer agent does its own reasoning and
 # supplies queries directly when calling the KB. The KB just retrieves;
 # the agent does the thinking.
+# Build the knowledgeSources JSON array. Always includes the primary
+# (KNOWLEDGE_SOURCE_NAME); appends any names listed in
+# EXTRA_KNOWLEDGE_SOURCES (CSV) so a single KB can federate multiple
+# sources without us splitting the script.
+KS_JSON_ITEMS="{\"name\": \"${KNOWLEDGE_SOURCE_NAME}\"}"
+if [[ -n "${EXTRA_KNOWLEDGE_SOURCES}" ]]; then
+  IFS=',' read -ra _extras <<< "${EXTRA_KNOWLEDGE_SOURCES}"
+  for ks in "${_extras[@]}"; do
+    ks_trimmed="$(echo "${ks}" | xargs)"   # strip whitespace
+    [[ -z "${ks_trimmed}" ]] && continue
+    KS_JSON_ITEMS="${KS_JSON_ITEMS}, {\"name\": \"${ks_trimmed}\"}"
+  done
+fi
+
 put "knowledgeBases/${KNOWLEDGE_BASE_NAME}" "${KB_API_VERSION}" "$(cat <<JSON
 {
   "name": "${KNOWLEDGE_BASE_NAME}",
   "description": "${KB_DESCRIPTION}",
-  "knowledgeSources": [
-    { "name": "${KNOWLEDGE_SOURCE_NAME}" }
-  ],
+  "knowledgeSources": [ ${KS_JSON_ITEMS} ],
   "retrievalReasoningEffort": { "kind": "minimal" }
 }
 JSON

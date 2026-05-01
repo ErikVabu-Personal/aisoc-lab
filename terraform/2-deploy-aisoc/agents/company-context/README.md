@@ -99,6 +99,16 @@ SharePoint where the legal team already curates them, and keep
 the SOC-specific runbooks in blob where the SOC team can git-commit
 them.
 
+## Federated with the company-policies corpus
+
+A second corpus lives at `../company-policies/` (HR / IT-curated:
+acceptable-use policy, asset inventory). Both feed the SAME
+`company-context` knowledge base — Foundry IQ federates retrieval
+across them, and the agents see one MCP endpoint regardless of
+which container a given chunk came from. See
+`../company-policies/README.md` for the rationale and the upload
+flow for the second corpus.
+
 ## Demo angle
 
 For the cruise event, the talking points are:
