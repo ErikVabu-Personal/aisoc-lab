@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import time
 from collections import defaultdict, deque
@@ -806,12 +807,13 @@ def _render_nav(active: str, current_user: str) -> str:
 
     # (key, href, label, visible)
     tabs = [
-        ("live",      "/",            "Live Agent View",     True),
-        ("dashboard", "/dashboard",   "Dashboard",           True),
-        ("improvements", "/improvements", "Continuous Improvement",
+        ("live",         "/",                "Live Agent View",       True),
+        ("dashboard",    "/dashboard",       "Dashboard",             True),
+        ("threat-horizon", "/threat-horizon", "Threat Horizon",        True),
+        ("improvements", "/improvements",    "Continuous Improvement",
             is_soc_manager or is_detection_engineer),
-        ("audit",     "/audit",       "Logging & Auditing",  is_soc_manager),
-        ("config",    "/config",      "Configuration",       is_soc_manager),
+        ("audit",        "/audit",           "Logging & Auditing",    is_soc_manager),
+        ("config",       "/config",          "Configuration",         is_soc_manager),
     ]
     items = []
     for key, href, label, visible in tabs:
@@ -1005,6 +1007,35 @@ def audit_view(request: Request) -> Response:
         title="NVISO Cruises · Logging & Auditing",
         body_html=body,
         scripts=["/static/audit.js"],
+    ))
+
+
+@app.get("/threat-horizon", response_class=HTMLResponse)
+def threat_horizon_view(request: Request) -> Response:
+    """Threat Horizon — a standing TI dashboard refreshed on a timer
+    by the Threat Intel agent. Visible to any signed-in user (read-only);
+    the refresh-interval input + "Refresh now" button on the page
+    are gated server-side to soc-managers.
+    """
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+
+    body = (
+        '<h1>Threat Horizon</h1>'
+        '<p class="subtitle">'
+        '  Standing threat picture for NVISO Cruiseways. Refreshed automatically '
+        '  by the Threat Intel agent — Bing-grounded research synthesised into a '
+        '  short-form dashboard. Tune the cadence below or refresh manually.'
+        '</p>'
+        '<div id="aisoc-threat-horizon-root"></div>'
+    )
+    return HTMLResponse(_render_shell(
+        active="threat-horizon",
+        current_user=user,
+        title="NVISO Cruises · Threat Horizon",
+        body_html=body,
+        scripts=["/static/threat_horizon.js"],
     ))
 
 
@@ -1645,6 +1676,359 @@ async def api_soc_manager_review_interval_set(
             flush=True,
         )
     return _soc_manager_review_interval_public_state()
+
+
+# ── Threat Horizon — periodic TI dashboard ────────────────────────────
+#
+# A small standing dashboard fed by the Threat Intel agent on a timer.
+# Default cadence is 5 minutes; configurable via /api/threat_horizon/config
+# (soc-manager only). 0 disables the loop — the manual /refresh button
+# still works.
+#
+# The TI agent is asked to produce a structured JSON report (see
+# threat-intel.md for the contract). We parse it into THREAT_HORIZON_REPORT
+# and serve it from /api/threat_horizon. Until the first successful
+# tick, the report is None and the dashboard renders an empty state.
+
+THREAT_HORIZON_CONFIG: dict[str, Any] = {
+    "value_sec": float(os.getenv("THREAT_HORIZON_INTERVAL_SEC", "300")),  # 5m default
+    "last_event": None,
+    "last_event_ts": None,
+}
+
+# Latest report + meta. Replaced atomically on each successful tick.
+THREAT_HORIZON_REPORT: dict[str, Any] = {
+    "report": None,            # parsed dashboard payload (or None until first tick)
+    "raw_text": "",            # raw agent reply, kept for debugging
+    "last_attempt_ts": None,   # when the most recent tick ran (success OR fail)
+    "last_success_ts": None,   # when the most recent SUCCESSFUL tick ran
+    "last_error": None,        # str — populated on parse / invoke failure
+    "last_trigger": None,      # "loop" | "manual"
+    "in_flight": False,        # true while a tick is currently running
+}
+
+# Minimum gap between back-to-back manual refreshes (seconds). Stops a
+# user mashing the button from spending a small fortune on Bing tokens.
+_THREAT_HORIZON_MANUAL_COOLDOWN_SEC = 30
+
+
+def _threat_horizon_interval_value() -> float:
+    return float(THREAT_HORIZON_CONFIG.get("value_sec") or 0.0)
+
+
+def _threat_horizon_config_public_state() -> dict[str, Any]:
+    return {
+        "value_sec": int(_threat_horizon_interval_value()),
+        "last_event": THREAT_HORIZON_CONFIG.get("last_event"),
+        "last_event_ts": THREAT_HORIZON_CONFIG.get("last_event_ts"),
+    }
+
+
+def _threat_horizon_public_state() -> dict[str, Any]:
+    """Trim the in-memory record for the wire — drop raw_text by
+    default (it's bulky; the dashboard only needs the parsed report)."""
+    interval = _threat_horizon_interval_value()
+    last_attempt = THREAT_HORIZON_REPORT.get("last_attempt_ts")
+    next_refresh_at = (
+        (last_attempt + interval) if (last_attempt and interval > 0)
+        else None
+    )
+    return {
+        "report":           THREAT_HORIZON_REPORT.get("report"),
+        "last_attempt_ts":  THREAT_HORIZON_REPORT.get("last_attempt_ts"),
+        "last_success_ts":  THREAT_HORIZON_REPORT.get("last_success_ts"),
+        "last_error":       THREAT_HORIZON_REPORT.get("last_error"),
+        "last_trigger":     THREAT_HORIZON_REPORT.get("last_trigger"),
+        "in_flight":        bool(THREAT_HORIZON_REPORT.get("in_flight")),
+        "config":           _threat_horizon_config_public_state(),
+        "next_refresh_at":  next_refresh_at,
+        "ts":               time.time(),
+    }
+
+
+def _parse_threat_horizon_payload(raw_text: str) -> tuple[dict[str, Any] | None, str]:
+    """Extract the dashboard JSON object from the agent's reply. The
+    agent contract says: produce a single fenced ```json``` block (or
+    a bare JSON object) representing the dashboard. Be tolerant of
+    extra prose around it. Returns (parsed_or_None, error_message).
+    """
+    if not raw_text:
+        return None, "agent returned empty reply"
+
+    text = raw_text
+
+    # Prefer a ```json fenced block; fall back to bare object.
+    candidate = None
+    m = re.search(r"```json\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    if m:
+        candidate = m.group(1).strip()
+    else:
+        # Try to find the first '{' through the matching last '}'.
+        first = text.find("{")
+        last = text.rfind("}")
+        if first != -1 and last > first:
+            candidate = text[first:last + 1].strip()
+
+    if not candidate:
+        return None, "no JSON block found in agent reply"
+
+    try:
+        obj = json.loads(candidate)
+    except Exception as e:
+        return None, f"JSON parse error: {e!r}"
+
+    if not isinstance(obj, dict):
+        return None, "top-level value is not a JSON object"
+
+    # Normalise — fill in defaults so the frontend never has to
+    # branch on None for any of the standard fields.
+    posture = (obj.get("posture") or "normal").strip().lower()
+    if posture not in ("calm", "normal", "elevated", "critical"):
+        posture = "normal"
+
+    def _list(v):
+        return v if isinstance(v, list) else []
+
+    normalised = {
+        "headline":          str(obj.get("headline") or "").strip()
+                              or "No standing analysis yet — first refresh pending.",
+        "posture":           posture,
+        "headline_threats":  _list(obj.get("headline_threats")),
+        "new_and_notable":   _list(obj.get("new_and_notable")),
+        "watchlist":         _list(obj.get("watchlist")),
+        "recommendations":   _list(obj.get("recommendations")),
+        "generated_at":      time.time(),  # always server-assigned
+    }
+    return normalised, ""
+
+
+def _build_threat_horizon_prompt() -> str:
+    """User text the TI agent receives on every horizon tick. Pinned
+    to the dashboard contract — see threat-intel.md for the schema
+    the agent agreed to follow."""
+    return (
+        "You are producing the Threat Horizon dashboard for NVISO Cruiseways. "
+        "This is a STANDING dashboard refreshed on a timer (currently every "
+        "few minutes), not a one-off chat reply. Use Bing grounding to surface "
+        "the most relevant fresh threats for our exposure (Sentinel + a small "
+        "Azure footprint, the Ship Control Panel web auth surface, maritime "
+        "sector operations).\n\n"
+        "Return ONE JSON object inside a ```json``` fenced code block. The "
+        "object MUST follow the schema documented in your role instructions "
+        "under 'Threat Horizon dashboard contract'. Do not add prose outside "
+        "the JSON block — anything outside is ignored by the renderer.\n\n"
+        "If grounding returned nothing useful, still return a valid JSON "
+        "object with empty arrays and a `headline` saying so — never return "
+        "an error message in place of the JSON."
+    )
+
+
+def _threat_horizon_tick_blocking(trigger: str = "loop") -> dict[str, Any]:
+    """One tick: invoke the TI agent, parse, store. Sync — called from
+    the async loop via asyncio.to_thread."""
+    project_endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT", "")
+    if not project_endpoint:
+        err = "AZURE_AI_FOUNDRY_PROJECT_ENDPOINT not set"
+        THREAT_HORIZON_REPORT["last_error"] = err
+        THREAT_HORIZON_REPORT["last_attempt_ts"] = time.time()
+        THREAT_HORIZON_REPORT["last_trigger"] = trigger
+        return {"error": err}
+
+    THREAT_HORIZON_REPORT["in_flight"] = True
+    THREAT_HORIZON_REPORT["last_attempt_ts"] = time.time()
+    THREAT_HORIZON_REPORT["last_trigger"] = trigger
+    try:
+        from azure.identity import DefaultAzureCredential
+        token = DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
+    except Exception as e:
+        err = f"could not get bearer: {e!r}"
+        THREAT_HORIZON_REPORT["last_error"] = err
+        THREAT_HORIZON_REPORT["in_flight"] = False
+        return {"error": err}
+
+    import requests as _requests
+
+    url = project_endpoint.rstrip("/") + "/openai/v1/responses"
+    payload = {
+        "input": _build_threat_horizon_prompt(),
+        "agent_reference": {"name": "threat-intel", "type": "agent_reference"},
+    }
+    try:
+        r = _requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=240,
+        )
+    except Exception as e:
+        err = f"invoke raised: {e!r}"
+        THREAT_HORIZON_REPORT["last_error"] = err
+        THREAT_HORIZON_REPORT["in_flight"] = False
+        print(f"[threat-horizon] {err}", flush=True)
+        return {"error": err}
+
+    if r.status_code >= 400:
+        err = f"{r.status_code}: {r.text[:500]}"
+        THREAT_HORIZON_REPORT["last_error"] = err
+        THREAT_HORIZON_REPORT["in_flight"] = False
+        print(f"[threat-horizon] invoke failed: {err}", flush=True)
+        return {"error": err}
+
+    # Pull the agent reply text out of the response. The /responses
+    # API returns content in `output[0].content[*].text` for the agent
+    # message — be tolerant of shape drift across SDK versions.
+    raw_text = ""
+    try:
+        data = r.json()
+        # Preferred shape: data["output"] is a list of messages, each
+        # with .content as a list of {type, text} parts.
+        for msg in (data.get("output") or []):
+            if msg.get("type") == "message":
+                for part in (msg.get("content") or []):
+                    txt = part.get("text") or ""
+                    if isinstance(txt, str):
+                        raw_text += txt
+        # Fallback: Foundry sometimes flattens to data["output_text"].
+        if not raw_text and isinstance(data.get("output_text"), str):
+            raw_text = data["output_text"]
+    except Exception as e:
+        err = f"could not extract reply text: {e!r}"
+        THREAT_HORIZON_REPORT["last_error"] = err
+        THREAT_HORIZON_REPORT["in_flight"] = False
+        return {"error": err}
+
+    THREAT_HORIZON_REPORT["raw_text"] = raw_text
+
+    parsed, parse_err = _parse_threat_horizon_payload(raw_text)
+    if parsed is None:
+        THREAT_HORIZON_REPORT["last_error"] = parse_err or "unknown parse error"
+        THREAT_HORIZON_REPORT["in_flight"] = False
+        print(f"[threat-horizon] parse failed: {parse_err}", flush=True)
+        return {"error": parse_err}
+
+    THREAT_HORIZON_REPORT["report"] = parsed
+    THREAT_HORIZON_REPORT["last_success_ts"] = time.time()
+    THREAT_HORIZON_REPORT["last_error"] = None
+    THREAT_HORIZON_REPORT["in_flight"] = False
+    print(
+        f"[threat-horizon] tick ok ({trigger}); "
+        f"headline_threats={len(parsed.get('headline_threats') or [])}, "
+        f"watchlist={len(parsed.get('watchlist') or [])}",
+        flush=True,
+    )
+    return {"ok": True}
+
+
+async def _threat_horizon_loop() -> None:
+    import asyncio as _asyncio
+
+    while True:
+        try:
+            await _asyncio.to_thread(_threat_horizon_tick_blocking, "loop")
+        except Exception as e:
+            print(f"[threat-horizon] loop error: {e!r}", flush=True)
+        interval = _threat_horizon_interval_value()
+        if interval <= 0:
+            await _asyncio.sleep(60)
+        else:
+            await _asyncio.sleep(interval)
+
+
+@app.on_event("startup")
+async def _start_threat_horizon() -> None:
+    import asyncio as _asyncio
+    _asyncio.create_task(_threat_horizon_loop())
+
+
+@app.get("/api/threat_horizon")
+def api_threat_horizon_get(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
+    return _threat_horizon_public_state()
+
+
+@app.post("/api/threat_horizon/refresh")
+def api_threat_horizon_refresh(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Trigger an immediate refresh. Soc-manager only — keeps the
+    per-tick token spend gated on a privileged role."""
+    _require_soc_manager(request, x_pixelagents_token)
+
+    # Cooldown — both manual+loop ticks contribute. Prevents a
+    # button-mashing operator from drowning the agent.
+    last_attempt = THREAT_HORIZON_REPORT.get("last_attempt_ts") or 0
+    if time.time() - float(last_attempt) < _THREAT_HORIZON_MANUAL_COOLDOWN_SEC:
+        wait = int(_THREAT_HORIZON_MANUAL_COOLDOWN_SEC - (time.time() - float(last_attempt)))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Refresh cooldown active — try again in ~{max(1, wait)}s",
+        )
+    if THREAT_HORIZON_REPORT.get("in_flight"):
+        raise HTTPException(
+            status_code=409,
+            detail="A refresh is already in flight — wait for it to complete.",
+        )
+
+    # Run inline (the request blocks until the tick finishes — gives
+    # the operator immediate feedback). 240s timeout matches the
+    # underlying invoke.
+    result = _threat_horizon_tick_blocking("manual")
+    if result.get("error"):
+        raise HTTPException(status_code=502, detail=str(result["error"]))
+    return _threat_horizon_public_state()
+
+
+@app.get("/api/threat_horizon/config")
+def api_threat_horizon_config_get(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    _require_auth(request, x_pixelagents_token)
+    return _threat_horizon_config_public_state()
+
+
+@app.post("/api/threat_horizon/config")
+async def api_threat_horizon_config_set(
+    req: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Update the refresh interval. 0 disables the loop; the manual
+    /refresh button still works. Soc-manager only."""
+    _require_soc_manager(req, x_pixelagents_token)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    raw = body.get("value_sec")
+    try:
+        new_val = int(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="value_sec must be an integer")
+    if new_val < 0:
+        raise HTTPException(status_code=400, detail="value_sec must be >= 0")
+    # Sanity ceiling — 24h. Anything longer is a typo.
+    if new_val > 86400:
+        raise HTTPException(status_code=400, detail="value_sec must be <= 86400 (24h)")
+    prev = int(_threat_horizon_interval_value())
+    THREAT_HORIZON_CONFIG["value_sec"] = float(new_val)
+    if new_val != prev:
+        THREAT_HORIZON_CONFIG["last_event"] = (
+            "disabled" if new_val == 0
+            else f"interval set to {new_val // 60}m {new_val % 60}s"
+        )
+        THREAT_HORIZON_CONFIG["last_event_ts"] = time.time()
+        print(f"[threat-horizon] interval: {prev}s -> {new_val}s", flush=True)
+    return _threat_horizon_config_public_state()
+
 
 
 @app.post("/api/soc_manager/review")
