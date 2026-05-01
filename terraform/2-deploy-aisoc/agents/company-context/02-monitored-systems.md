@@ -1,13 +1,20 @@
 # Monitored systems — Ship Control Panel subsystems
 
-The **Ship Control Panel** (Bridge & Operations) is the only system
-currently in scope for AISOC monitoring. It's the operations surface
-the bridge officer uses while the ship is at sea. The application
-runs on each vessel's operations network and forwards its logs to
-the Brussels Sentinel workspace via Container Apps.
+Two assets are currently in scope for AISOC monitoring:
 
-The panel groups its functionality into the following subsystems —
-each is a distinct tab in the UI and emits its own log events.
+1. The **Ship Control Panel** (Bridge & Operations) — the
+   operations surface the bridge officer uses while at sea. App
+   logs flow into Sentinel via the `ContainerAppConsoleLogs_CL`
+   table. **This page is about the Ship Control Panel.**
+2. The **lab VM** — a Windows 11 host with the Azure Monitor Agent
+   and Sysmon installed. Endpoint telemetry (Application / System
+   / Security event logs + Sysmon) flows into the `Event` table.
+   See `09-endpoint-telemetry.md` for the schema, base filters,
+   and pivot patterns.
+
+The Ship Control Panel groups its functionality into the
+following subsystems — each is a distinct tab in the UI and emits
+its own log events.
 
 ## Subsystems
 

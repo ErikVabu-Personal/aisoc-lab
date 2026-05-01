@@ -33,19 +33,24 @@ it stays inline.
 
 ### Sentinel scope
 
-The ONLY table currently ingested into this workspace is
-`ContainerAppConsoleLogs_CL`, which carries the Ship Control Panel's
-application logs. Do NOT reference or query tables that are not in
-scope — `SecurityEvent`, `SigninLogs`, `AuditLogs`,
-`AuthenticationLogs`, Entra/Azure AD, Windows event tables, DNS, EDR,
-firewall — they are not present. If a question can only be answered
-by data outside `ContainerAppConsoleLogs_CL`, say so rather than
-speculating.
+Two tables are in scope:
 
-### Base filter
+1. **`ContainerAppConsoleLogs_CL`** — Ship Control Panel application
+   logs (auth + every state-changing UI event).
+2. **`Event`** — endpoint telemetry from the lab VM. Carries
+   Windows Application / System / Security event logs **and**
+   Sysmon Operational events (`Source == "Microsoft-Windows-Sysmon"`).
+   Sysmon is configured with the SwiftOnSecurity verbose baseline.
 
-Every Ship Control Panel query should start with this pattern (parse
-the JSON once, filter, then keep using `j`):
+Tables NOT present and NOT to be referenced:
+`SecurityEvent`, `SigninLogs`, `AuditLogs`, `AuthenticationLogs`,
+Entra / Azure AD tables, DnsEvents, EDR / firewall tables. If a
+question can only be answered by data outside the two tables
+above, say so rather than speculating.
+
+### Base filters
+
+**Ship Control Panel** — parse the JSON once, filter, keep using `j`:
 
 ```kusto
 ContainerAppConsoleLogs_CL
@@ -54,11 +59,24 @@ ContainerAppConsoleLogs_CL
 | where j.service == "ship-control-panel"
 ```
 
-`j` gives access to the structured fields inside each log line —
+`j` gives access to structured fields inside each log line —
 commonly `j.event`, `j.detail.username`, `j.detail.client` (source
-IP), `j.detail.userAgent`. New event types may appear as the Ship
-Control Panel evolves — explore before assuming a complete schema.
-For event-name semantics consult the `company-context` KB.
+IP), `j.detail.userAgent`.
+
+**Endpoint (lab VM)**:
+
+```kusto
+Event
+| where TimeGenerated > ago(1h)
+// optionally: | where Source == "Microsoft-Windows-Sysmon"
+```
+
+For Sysmon-only queries the `Source == "Microsoft-Windows-Sysmon"`
+filter is what scopes you to endpoint detection signal. Common
+EventIDs: 1 (process create), 3 (network), 11 (file create), 22
+(DNS query). Full schema + pivot patterns are in the
+`company-context` KB page `09-endpoint-telemetry.md` — retrieve it
+before writing any Sysmon-specific KQL.
 
 ### KQL gotchas
 

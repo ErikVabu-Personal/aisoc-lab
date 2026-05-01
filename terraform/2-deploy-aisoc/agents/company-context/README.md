@@ -19,6 +19,7 @@ conventions, runbooks, glossary.
 | `06-runbook-uplink-disabled.md`      | IR runbook for connectivity-disabled |
 | `07-glossary.md`                     | Maritime + Ship Control Panel + AISOC terminology |
 | `08-escalation.md`                   | Escalation matrix, oncall, approved tooling |
+| `09-endpoint-telemetry.md`           | Lab VM + Sysmon — schema, base filter, common Sysmon EIDs, KQL pivot patterns |
 
 ## Uploading to the blob container
 
