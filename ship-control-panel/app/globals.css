@@ -797,3 +797,202 @@ a{color:inherit}
   font-size: 11px;
   color: var(--accent-deep);
 }
+
+
+/* ── Light-theme readability overrides ──────────────────────────────
+   The original instrument + view CSS was tuned for a dark holo
+   console (white text on black, cyan glows). When the chrome
+   moved to a light operations surface, several rules left their
+   readings invisible — labels at rgba(230,243,255,...) on a near-
+   white background, "0.20-black" panel surfaces that look like
+   grey washes instead of dark cards. This block retunes the most
+   visible offenders without touching the per-component TSX.
+   Where a panel reads better as a dark instrument (compass,
+   throttle), we keep it dark explicitly with solid colours instead
+   of dark transparency. */
+
+/* Instrument labels + values + axis readouts */
+.instLabel{ color: var(--muted); }
+.gNum{ color: var(--text); }
+.gSub{ color: var(--muted); }
+.gUnit{ color: var(--muted); }
+
+/* Bar meter base — was near-white track on near-white bg. */
+.bar{
+  background: var(--bg-grid);
+  border-color: var(--hairline);
+}
+
+/* Lock SVG — strokes were near-white, invisible on light bg. */
+.lock .shackle{ border-color: var(--brand-navy); }
+.lock .body{
+  background: rgba(0,153,204,0.10);
+  border-color: rgba(0,153,204,0.45);
+}
+.lock.locked .body{
+  background: rgba(22,160,122,0.12);
+  border-color: rgba(22,160,122,0.45);
+}
+.lock .keyhole{ background: var(--brand-navy); box-shadow: none; }
+
+/* Sea state pips — were ghost-white on ghost-white. */
+.wave{
+  background: var(--bg-grid);
+  border-color: var(--hairline);
+}
+.wave.on{
+  background: rgba(0,153,204,0.18);
+  border-color: rgba(0,153,204,0.45);
+  box-shadow: none;
+}
+
+/* Status divider line on cards. */
+.hr{ background: var(--hairline-soft); }
+
+/* The .holo radial gradient overlay was tuned for cyan-on-black —
+   on a light card it just murks the text. Drop it back to nothing
+   so the kpi tiles read clean. */
+.holo::before{ display: none; }
+
+/* Subtitle paragraph (.sub) — used on login + section subtitles. */
+.sub{ color: var(--muted); }
+
+/* Helm / panel label headers used on the Navigation view. */
+.thLabel{ color: var(--text); }
+
+/* ── Compass — keep it visually "an instrument" with a dark face on
+   the light surface, white labels + needle remain crisp. */
+.compass{
+  background: var(--brand-navy-2);
+  border-color: var(--brand-navy);
+  box-shadow: 0 8px 28px rgba(14,58,95,0.18);
+}
+.compassRing{ border-color: rgba(255,255,255,0.20); }
+.compassN, .compassE, .compassS, .compassW{ color: rgba(255,255,255,0.92); }
+.compassReadout{ color: rgba(255,255,255,0.85); }
+.tick{ background: rgba(255,255,255,0.30); }
+.tick.major{ background: var(--accent-soft); }
+
+/* ── Throttle — same treatment, dark instrument body. */
+.thBody{
+  background: var(--brand-navy-2);
+  border-color: var(--brand-navy);
+}
+.thTrack{
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.18);
+}
+.thHandle{
+  background: linear-gradient(180deg, rgba(0,153,204,0.85), rgba(51,176,221,0.65));
+  border-color: rgba(255,255,255,0.45);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.30);
+  color: #fff;
+}
+.thVal{ color: #fff; opacity: 1; }
+
+/* ── Collision panel — light surface card, status pills retain
+   their semantic colours. */
+.collisionPanel,
+.collisionUnderMap{
+  background: var(--panel-2);
+  border-color: var(--hairline);
+  color: var(--text);
+}
+.collisionTitle{ color: var(--text); font-weight: 700; }
+.toggle{
+  background: var(--panel);
+  border-color: var(--hairline);
+  color: var(--text);
+}
+.toggle.on{
+  background: rgba(22,160,122,0.10);
+  border-color: rgba(22,160,122,0.40);
+  color: #065f46;
+}
+.toggle.off{
+  background: rgba(192,57,43,0.10);
+  border-color: rgba(192,57,43,0.40);
+  color: #991b1b;
+}
+.status.safe{
+  background: rgba(22,160,122,0.10);
+  border-color: rgba(22,160,122,0.35);
+  color: #065f46;
+}
+.status.disabled{
+  background: rgba(192,57,43,0.10);
+  border-color: rgba(192,57,43,0.35);
+  color: #991b1b;
+}
+
+/* ── Engine room cards. */
+.engineCard{
+  background: var(--panel);
+  border-color: var(--hairline);
+  color: var(--text);
+}
+.engineName{ color: var(--text); }
+
+/* ── Connectivity uplink visual. */
+.uplink{
+  background: var(--panel-2);
+  border-color: var(--hairline);
+}
+.sigBar{
+  background: var(--bg-grid);
+  border-color: var(--hairline);
+}
+.sigBar.on{
+  background: rgba(0,153,204,0.18);
+  border-color: rgba(0,153,204,0.45);
+  box-shadow: none;
+}
+.sat{
+  background: var(--panel);
+  border-color: var(--hairline);
+  color: var(--muted);
+}
+.sat.on{
+  border-color: rgba(0,153,204,0.45);
+  color: var(--accent-deep);
+}
+
+/* ── Anchor + stabilisers cards. */
+.anchorState,
+.stabCard,
+.fin{
+  background: var(--panel);
+  border-color: var(--hairline);
+  color: var(--text);
+}
+.anchorIcon{
+  background: var(--bg-grid);
+  border-color: var(--hairline);
+  color: var(--text);
+}
+.anchorState.active{
+  border-color: rgba(0,153,204,0.45);
+  box-shadow: 0 0 0 3px rgba(0,153,204,0.10) inset;
+}
+.anchorDesc{ color: var(--muted); }
+.finLabel{ color: var(--muted); opacity: 1; }
+.finGauge{
+  background: var(--panel-2);
+  border-color: var(--hairline);
+}
+.finNeedle{
+  background: var(--brand-navy);
+  box-shadow: none;
+}
+
+/* ── Login page (the .holo + .grid + KPI tiles). The .holo overlay
+   already had its ::before disabled above. The rest is just text-
+   colour realignment so the KPI labels + sub-text become
+   legible. */
+.kpi{
+  /* Was rgba(255,255,255,0.04) — invisible on light bg. */
+  background: var(--panel-2);
+  border-color: var(--hairline);
+}
+
+/* The login .err pill colours read fine on light, no change needed. */
