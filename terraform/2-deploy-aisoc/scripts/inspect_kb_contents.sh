@@ -36,6 +36,112 @@ fi
 
 DP_API="2024-07-01"
 
+# ---------------------------------------------------------------
+# Pipeline-state diagnostics — runs BEFORE the index dumps so an
+# operator hitting "0 docs" can see WHERE the pipeline broke
+# without having to read 300 lines of empty output below.
+# ---------------------------------------------------------------
+
+DRK_STORAGE="$(terraform output -raw detection_rules_storage_account 2>/dev/null || echo)"
+DRK_CONTAINER="$(terraform output -raw detection_rules_storage_container 2>/dev/null || echo)"
+CCK_STORAGE="$(terraform output -raw company_context_storage_account 2>/dev/null || echo)"
+CCK_CTX_CONTAINER="$(terraform output -raw company_context_storage_container 2>/dev/null || echo)"
+CCK_POL_CONTAINER="$(terraform output -raw company_policies_storage_container 2>/dev/null || echo)"
+
+count_blobs() {
+  # count_blobs <storage-account> <container>
+  local acct="$1" cont="$2"
+  if [[ -z "$acct" || -z "$cont" ]]; then
+    echo "n/a"
+    return 0
+  fi
+  az storage blob list \
+    --account-name "$acct" \
+    --container-name "$cont" \
+    --auth-mode login \
+    --query 'length(@)' \
+    -o tsv 2>/dev/null || echo "?"
+}
+
+indexer_status() {
+  # indexer_status <indexer-name>
+  local indexer="$1"
+  curl -s -H "api-key: ${ADMIN_KEY}" \
+    "${SEARCH_EP}/indexers/${indexer}/status?api-version=${DP_API}" \
+    | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    last = d.get('lastResult') or {}
+    print(f'{last.get(\"status\", \"never-run\"):<12}  '
+          f'items={last.get(\"itemsProcessed\", 0):<5}  '
+          f'failed={last.get(\"itemsFailed\", 0):<3}  '
+          f'ended={(last.get(\"endTime\") or \"\")[:19]}')
+    errors = last.get('errors') or []
+    for e in errors[:3]:
+        print(f'    ERROR: {(e.get(\"errorMessage\") or \"\")[:200]}')
+except Exception as e:
+    print(f'?  (parse failed: {e})')"
+}
+
+echo "================================================================"
+echo "  Pipeline state — blobs uploaded vs indexer ran vs index count"
+echo "================================================================"
+printf "%-22s  %-10s  %-10s  %s\n" "Container" "Blobs" "Index docs" "Last indexer run"
+echo "----------------------  ----------  ----------  ----------------------------------------"
+
+# Run blob counts in parallel-ish — sequential is fine, each is <1s.
+DRK_BLOBS=$(count_blobs "$DRK_STORAGE" "$DRK_CONTAINER")
+CCK_CTX_BLOBS=$(count_blobs "$CCK_STORAGE" "$CCK_CTX_CONTAINER")
+CCK_POL_BLOBS=$(count_blobs "$CCK_STORAGE" "$CCK_POL_CONTAINER")
+
+count_index() {
+  curl -s -H "api-key: ${ADMIN_KEY}" \
+    "${SEARCH_EP}/indexes/$1/docs/\$count?api-version=${DP_API}" \
+    | tr -d '\r\n﻿' | head -c 8 || echo "?"
+}
+
+printf "%-22s  %-10s  %-10s  %s\n" \
+  "${DRK_CONTAINER:-detection-rules}" \
+  "$DRK_BLOBS" \
+  "$(count_index detection-rules-idx)" \
+  "$(indexer_status detection-rules-indexer)"
+printf "%-22s  %-10s  %-10s  %s\n" \
+  "${CCK_CTX_CONTAINER:-company-context}" \
+  "$CCK_CTX_BLOBS" \
+  "$(count_index company-context-idx)" \
+  "$(indexer_status company-context-indexer)"
+printf "%-22s  %-10s  %-10s  %s\n" \
+  "${CCK_POL_CONTAINER:-company-policies}" \
+  "$CCK_POL_BLOBS" \
+  "$(count_index company-policies-idx)" \
+  "$(indexer_status company-policies-indexer)"
+
+cat <<'EOF'
+
+How to read this:
+  Blobs=0           → upload step never ran (or failed). Run the
+                      upload helpers:
+                        cd terraform/2-deploy-aisoc/agents/company-context
+                        ./upload_company_context.sh
+                        cd ../company-policies
+                        ./upload_company_policies.sh
+                        cd ../..
+                        ./scripts/refresh_sigma_corpus.sh
+  Blobs>0 but Index docs=0 with last run "Succeeded items=0"
+                    → indexer can't read the blobs (RBAC issue on
+                      the search MI) or the file extensions are
+                      filtered out. Check the indexer ERROR lines.
+  Blobs>0 but Index docs=0 and no last run shown
+                    → indexer hasn't run yet. Trigger it manually:
+                        az search indexer run --service-name <svc> \
+                          --name <indexer> --resource-group <rg>
+                      OR re-run an upload helper (they auto-trigger).
+  Blobs>0, Index docs>0
+                    → the pipeline is healthy.
+
+EOF
+
 dump_index() {
   # dump_index <index-name> <human-label>
   local idx="$1" label="$2"
