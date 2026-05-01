@@ -23,26 +23,54 @@ When the deploy finishes you have:
   login bursts, password spray, user-agent anomalies).
 - **A lab Windows 11 VM** wired into the workspace so you can
   generate "real" telemetry by RDPing in.
-- **The Ship Control Panel** running as a public Container App so
-  you can hit `/login` from anywhere and watch alerts fire.
+- **The Ship Control Panel** running as a public Container App —
+  not just a login gate, a full bridge-and-operations surface
+  (Navigation / Anchor / Stabilizers / Connectivity / Climate /
+  Entertainment / **Security CCTV grid**) emitting structured JSON
+  events for every state change. Hitting `/login` is the obvious
+  trigger; flipping the security toggle to "cameras off" is a
+  more interesting one.
 - **A six-agent Foundry roster** (Triage, Investigator, Reporter,
   Detection Engineer, SOC Manager, Threat Intel) with shared and
   role-specific prompts, all wired through an authenticated runner
-  to Sentinel + ARM.
-- **PixelAgents Web** — the operator UI: a Live Agent View
-  (sidebar with chats, HITL questions, your incident queue), a
-  Sentinel-backed Dashboard, a per-agent `/config` page, a
-  Continuous Improvement queue for proposed rule / prompt edits,
-  and a Logging & Auditing page that combines every action across
-  agents and humans into one timeline.
-- **A Foundry IQ knowledge base** seeded for the Detection
-  Engineer agent so it can ground new-rule proposals in your
-  existing detection corpus.
+  to Sentinel + ARM. Triage / Investigator / Reporter each post a
+  shared-spine comment on the Sentinel incident as they hand off,
+  so the case timeline reads as one continuous file.
+- **Two Foundry IQ knowledge bases** on a shared Azure AI Search
+  service:
+  - **`detection-rules`** — Sigma / KQL / writeups. Attached only
+    to the Detection Engineer agent for grounding new-rule
+    proposals.
+  - **`company-context`** — organisational context (fleet,
+    subsystems, naming conventions, IR runbooks, glossary,
+    escalation, HR / IT policies). Federates two corpora
+    (`company-context` + `company-policies` blob containers) and
+    is attached to Triage / Investigator / Reporter / SOC Manager
+    / Threat Intel. SharePoint-swap-ready: the same agents work
+    unchanged when you replace the underlying source via the
+    Foundry portal.
+- **Bing Grounding** auto-provisioned (`Microsoft.Bing/accounts`,
+  kind `Bing.Grounding`) and wired to the Threat Intel agent for
+  live web research.
+- **PixelAgents Web** — the operator UI, structured into three
+  groups in the top nav:
+  - **Live** — a Live Agent View (the pixel office + the right-
+    hand sidebar with chats, HITL questions, your incident queue).
+  - **Trends** — `/dashboard` (Sentinel incidents),
+    `/threat-horizon` (auto-refreshing TI dashboard), `/rules`
+    (per-rule TP/FP performance).
+  - **Configuration** — `/improvements` (Continuous Improvement
+    queue, role-filtered), `/audit` (Logging & Auditing timeline,
+    soc-manager-only), `/config` (per-agent model + temperature,
+    user management, periodic-review interval, soc-manager-curated
+    output templates).
 
-The roles model (`soc-manager` / `detection-engineer` / `soc-analyst`)
-gates every page — analysts see incidents, detection engineers see
-rule proposals, SOC managers see everything plus user management
-and audit.
+The roles model (`soc-manager` / `detection-engineer` /
+`soc-analyst` / `threat-intel-analyst`) gates every page —
+analysts see incidents, detection engineers see rule proposals,
+threat-intel-analysts see Threat Horizon + the TI agent's HITL
+queue, SOC managers see everything plus user management, audit,
+and the config page.
 
 ---
 
@@ -190,11 +218,15 @@ that depend on each other through `terraform_remote_state`.
                               │
 ┌───────────────────────────────────────────────────────────────────┐
 │ Phase 2 — Agentic SOC core                                        │
-│   Foundry hub + project (model deployments)                       │
+│   Foundry hub + project (primary model + extra deployments)       │
 │   SOC Gateway Function (ARM writes to Sentinel)                   │
 │   AISOC Orchestrator Function (triage→investigator→reporter)      │
 │   AISOC Runner Container App (broker between Foundry + Gateway)   │
-│   Detection Rules KB (Storage + AI Search + Foundry IQ)           │
+│   Azure AI Search service (semantic ranker enabled)               │
+│     ├─ Detection Rules KB (Storage + Foundry IQ)                  │
+│     └─ Company Context KB (2 Storage containers, federated)       │
+│   Bing Grounding account (Microsoft.Bing/accounts, kind=          │
+│     Bing.Grounding) wired to the Threat Intel agent               │
 └───────────────────────────────────────────────────────────────────┘
                               ▲ remote-state outputs
                               │
@@ -211,18 +243,23 @@ that depend on each other through `terraform_remote_state`.
 Six Foundry prompt-agents, each with a role-specific instruction file
 and the right runner tools attached:
 
-| Agent | Role | Pipeline? |
-|-------|------|-----------|
-| **Triage** | L1 first pass — frames the question, escalates. Never asks humans, never closes. | Yes |
-| **Investigator** | KQL-driven analysis, builds the timeline, can ask the human or Threat Intel agent mid-flow. | Yes |
-| **Reporter** | Drafts the case note, decides to close / get sign-off / re-investigate. Free-text human reply. | Yes |
-| **Detection Engineer** | On-demand. Drafts new analytic rules, grounded in the rule library KB. | No (chat-only) |
-| **SOC Manager** | On-demand + periodic. Reviews recent runs, proposes preamble + agent-prompt edits. | No (chat-only) |
-| **Threat Intel** | On-demand + investigator hook. Web research via Bing grounding. | No |
+| Agent | Role | Pipeline? | KB |
+|-------|------|-----------|----|
+| **Triage** | L1 first pass — frames the question, escalates. Never asks humans, never closes. Posts a 🔎 spine-shaped comment to Sentinel. | Yes | `company-context` |
+| **Investigator** | KQL-driven analysis, builds the timeline, can ask the human or Threat Intel agent mid-flow. Posts a 🧪 comment with `Findings:` + `Timeline:`. | Yes | `company-context` |
+| **Reporter** | Drafts the case note, decides to close / get sign-off / re-investigate. Free-text human reply. Posts the 📝 case-note comment. | Yes | `company-context` |
+| **Detection Engineer** | On-demand. Drafts new analytic rules, grounded in the rule library KB. | No (chat-only) | `detection-rules` |
+| **SOC Manager** | On-demand + periodic. Reviews recent runs, proposes preamble / agent-prompt / **company-context page** / detection-rule edits. | No (chat-only) | `company-context` |
+| **Threat Intel** | On-demand + investigator hook. Web research via Bing Grounding. Powers the `/threat-horizon` dashboard. | No | `company-context` |
 
 Behaviour is controlled per-agent on `/config`: the LLM deployment,
 the `CONFIDENCE_THRESHOLD` slider (how readily it asks humans), and
-the role-specific instruction text are all editable live.
+the role-specific instruction text are all editable live. Common
+preamble (`common.md`) is trimmed to the technical contract only —
+KQL filter, tool rules, output format, the `{ok: false}` envelope.
+Organisational context (fleet, subsystems, naming, runbooks)
+lives in the `company-context` KB and is retrieved on demand, so
+the SOC manager can edit it without redeploying agents.
 
 ---
 
@@ -246,7 +283,7 @@ Three independent stacks. Always apply in order; destroy in reverse.
 | Folder | What it builds |
 |--------|----------------|
 | `1-deploy-sentinel/` | Microsoft Sentinel workspace, three analytic rules (`sentinel_rules.tf`), the Ship Control Panel Container App (`ship_control_panel.tf`), the lab VM (`main.tf`), shared Key Vault (`aisoc_kv.tf`), App Insights (`appinsights_shipcp.tf`), Defender for Endpoint onboarding (`mde_kv.tf`). README + PHASES + MDE + SECURITY docs sit alongside. |
-| `2-deploy-aisoc/` | Foundry hub + project (`foundry.tf`) + a primary model deployment + zero-or-more extras (`foundry_deployments.tf`). The SOC Gateway Function (`main.tf`), the AISOC Orchestrator Function (`orchestrator.tf` + `orchestrator/`), the Runner Container App (`runner.tf`). The Detection Rules knowledge base (`detection_rules_kb.tf`): Storage + Azure AI Search + Foundry IQ KB. The Foundry agents themselves (`agents/agents.json` + `agents/instructions/*.md`) are deployed by `scripts/deploy_prompt_agents_with_runner_tools.py`. |
+| `2-deploy-aisoc/` | Foundry hub + project (`foundry.tf`) + a primary model deployment + zero-or-more extras (`foundry_deployments.tf`). The SOC Gateway Function (`main.tf`), the AISOC Orchestrator Function (`orchestrator.tf` + `orchestrator/`), the Runner Container App (`runner.tf`). The Azure AI Search service shared by both knowledge bases — Detection Rules KB (`detection_rules_kb.tf`) + Company Context KB with two federated corpora (`company_context_kb.tf`). Bing Grounding account + auto-wired project connection (`bing_grounding.tf`). The Foundry agents themselves (`agents/agents.json` + `agents/instructions/*.md`) are deployed by `scripts/deploy_prompt_agents_with_runner_tools.py`. The KB corpora live alongside in `agents/company-context/*.md` (SOC-curated runbooks / glossary / escalation) and `agents/company-policies/*.md` (HR-IT-curated AUP + asset inventory) — uploaded to blob via the per-folder `upload_*.sh` scripts after apply. |
 | `3-deploy-pixelagents-web/` | Just the PixelAgents Web Container App + its env-var wiring. |
 
 Each phase has its own `scripts/` folder for post-apply work that
@@ -263,27 +300,35 @@ pixelagents_web/
 ├─ Dockerfile
 ├─ pyproject.toml
 ├─ app/
-│   ├─ server.py             # the whole backend (~5k lines, intentional monolith)
+│   ├─ server.py             # the whole backend (~6k lines, intentional monolith)
 │   └─ static/               # one .js per page
 │       ├─ agent_comm.js     # Live Agent View sidebar (chats + DM panels)
-│       ├─ dashboard.js      # /dashboard table + draggable incident-detail panels
-│       ├─ config.js         # /config — per-agent model + temperature + users + interval
-│       ├─ improvements.js   # /improvements queue
-│       ├─ audit.js          # /audit timeline
+│       ├─ chat_drawer.js    # streaming chat drawer (used inside agent_comm + popups)
 │       ├─ chat_popup.js     # iframe-embedded standalone chat surface
+│       ├─ dashboard.js      # /dashboard table + draggable incident-detail panels
+│       ├─ incidents_panel.js  # the per-incident timeline panel (used by /dashboard)
+│       ├─ threat_horizon.js # /threat-horizon TI dashboard (auto-refresh)
+│       ├─ rules.js          # /rules per-rule TP/FP performance
+│       ├─ improvements.js   # /improvements Continuous Improvement dashboard
+│       ├─ audit.js          # /audit timeline
+│       ├─ config.js         # /config — per-agent dials, users, interval, templates
 │       └─ auto_pickup_badge.js  # Live View status pill
 └─ ui/                       # vendored Pixel Agents office bundle (the "live view")
 ```
 
-Pages and their role gates:
+Pages and their role gates. The top nav groups them into three
+sections (Live / Trends / Configuration) with notification badges
+per group:
 
 | Path | Visible to | Purpose |
 |------|------------|---------|
-| `/` | everyone | "Live Agent View" — the pixel office + the right-hand sidebar with HITL, chats, queue. |
-| `/dashboard` | everyone | Sentinel incidents table, click-through to a draggable per-incident timeline panel. |
-| `/improvements` | detection-engineer + soc-manager | Proposed Changes queue. Detection-engineers see only detection-rule items. |
-| `/audit` | soc-manager | All-platform timeline (incidents, runs, change decisions, SOC-Manager reviews). |
-| `/config` | soc-manager | Per-agent dials, user management, periodic-review interval. |
+| `/` | everyone | **Live** — the pixel office + the right-hand sidebar with HITL, chats, queue. |
+| `/dashboard` | everyone | **Trends** — Sentinel incidents table, click-through to a draggable per-incident timeline panel. |
+| `/threat-horizon` | threat-intel-analyst + soc-manager | **Trends** — auto-refreshing TI dashboard (4 sections + posture banner) populated by the Threat Intel agent. Refresh cadence configurable on `/config`. |
+| `/rules` | detection-engineer + soc-manager | **Trends** — per-rule TP/FP performance with stacked bars, sortable. |
+| `/improvements` | detection-engineer + soc-manager | **Configuration** — Continuous Improvement dashboard. Detection-engineers see only detection-rule items. SOC managers see preamble / agent-instruction / **company-context-page** / detection-rule changes. |
+| `/audit` | soc-manager | **Configuration** — Logging & Auditing timeline (incidents, runs, tool calls, change decisions, SOC-Manager reviews). |
+| `/config` | soc-manager | **Configuration** — Per-agent model + temperature + confidence-threshold dials, user management, periodic-review interval, output-template editor (incident-comment, improvement-report, detection-rule-proposal). |
 | `/login`, `/logout`, `/chat-popup` | session-bound | Auth + the iframe payload for in-page chat panels. |
 
 ### `runner/`
@@ -302,23 +347,59 @@ runner/
 └─ openapi*.yaml             # tool schemas published to Foundry
 ```
 
-Tools the runner exposes: `kql_query`, `list_incidents`,
-`get_incident`, `update_incident`, `add_incident_comment`,
-`ask_human`, `create_analytic_rule`, the SOC Manager change-
-proposal family (`get_agent_role_instructions`,
-`propose_change_to_preamble`, `propose_change_to_agent_instructions`,
-`propose_change_to_detection_rule`), and `query_threat_intel`
-(invokes the Threat Intel agent for the Investigator).
+Tools the runner exposes:
+
+- **Sentinel** — `kql_query`, `list_incidents`, `get_incident`,
+  `update_incident`, `add_incident_comment`.
+- **HITL** — `ask_human` (blocks the agent run until a human
+  replies via the Live Agent View sidebar).
+- **Detection authoring** — `create_analytic_rule` (Detection
+  Engineer only).
+- **SOC Manager change-proposal family** —
+  `get_agent_role_instructions`, `get_template`,
+  `propose_change_to_preamble`,
+  `propose_change_to_agent_instructions`,
+  `propose_change_to_detection_rule`,
+  `propose_change_to_company_context` (the SOC manager can recommend
+  edits to any page in the company-context KB corpus, role-gated
+  through PA-Web's change queue).
+- **Threat intel** — `query_threat_intel` (invokes the Threat
+  Intel agent for the Investigator), `fetch_url` (HTTPS fetch +
+  HTML→text strip; complements Bing Grounding by reading pages
+  Bing only linked).
+- **Knowledge bases** — surfaced as **MCP tools** rather than
+  OpenAPI: `detection-rules` (Detection Engineer only) and
+  `company-context` (Triage / Investigator / Reporter / SOC
+  Manager / Threat Intel). Both expose `knowledge_base_retrieve`.
 
 ### `ship-control-panel/`
 
-The "victim" web app — a small Next.js auth surface for a fictional
-fleet ops portal. Logs structured JSON events (`auth.login.failure`,
-`auth.login.success`, `admin.action`, …) to stdout, which Container
-Apps ships to a Log Analytics workspace via the configured
-diagnostic settings, where Sentinel's analytic rules pick them up.
-Hitting `/login` repeatedly with bad credentials is the demo's
-"attack" trigger.
+The "victim" web app — a Next.js bridge-and-operations console for
+the fictional NVISO Cruiseways fleet. Visually skinned as a real
+maritime operations surface (light theme, navy + steel-blue,
+monospace readouts) with seven subsystem tabs:
+
+- **Navigation** — chart with destination, throttle telegraph,
+  collision-detection toggle.
+- **Anchor** — four states (HOME / PAYING_OUT / HOLDING / DRAGGING).
+- **Stabilizers** — fin angles, OFF / STANDBY / AUTO / MANUAL modes.
+- **Connectivity** — Starlink uplink + simulated speedtest.
+- **Climate** — per-room AC.
+- **Entertainment** — pool / wellness / media / lighting scenes.
+- **Security** — 2x3 CCTV grid with a "disable cameras" toggle that
+  emits a `severity:warn` event Sentinel rules can pivot off.
+
+Every state change emits a structured JSON line to stdout
+(`auth.login.failure`, `auth.login.success`, `navigation.throttle`,
+`anchor`, `connectivity`, `security`, `climate`, …). Container
+Apps ships stdout to Log Analytics, where Sentinel's analytic
+rules pick them up.
+
+The two demo-friendly attack triggers: hit `/login` repeatedly
+with bad credentials, or sign in once and flip the Security tab's
+cameras-disabled toggle. The cameras-off event is a textbook
+attacker-tradecraft signal — it's the case the Investigator's
+runbook in `company-context` is written around.
 
 ### `scripts/`
 
@@ -351,18 +432,27 @@ The example documents every supported knob. Highlights:
   **`TF_VAR_foundry_location`**, **`TF_VAR_location_override`** —
   the four region / RG knobs that matter on a fresh subscription.
 - **`TF_VAR_pixelagents_users`** — JSON `{email: {password, roles}}`.
-  Roles are `soc-manager`, `detection-engineer`, `soc-analyst`.
-  The example file ships the full demo roster.
+  Roles are `soc-manager`, `detection-engineer`, `soc-analyst`,
+  `threat-intel-analyst`. The example file ships the full demo
+  roster.
 - **`TF_VAR_foundry_additional_model_deployments`** — JSON list
   of extra model deployments to surface on `/config`'s per-agent
   dropdown. Defaults to `gpt-4.1` and `gpt-4o-mini` alongside the
   primary `gpt-4.1-mini`.
 - **`TF_VAR_detection_rules_kb_enabled`** — flips the Foundry IQ
-  rule-library subsystem on or off.
-- **`AISOC_BING_GROUNDING_CONNECTION`** — name of a project
-  connection that holds a Bing Search v7 API key. When set, the
-  Threat Intel agent gets a `bing_grounding` tool. Setup steps in
-  the example file.
+  rule-library subsystem on or off. Default: `true`.
+- **`TF_VAR_company_context_kb_enabled`** — flips the second
+  Foundry IQ KB (org context + HR/IT policies, federated). Default:
+  `true`. Requires `detection_rules_kb_enabled` because both KBs
+  share the Search service.
+- **`TF_VAR_bing_grounding_enabled`** — when `true` (default),
+  Phase 2 provisions a `Microsoft.Bing/accounts` (kind=
+  `Bing.Grounding`) and the agent deploy script auto-creates the
+  matching Foundry project connection. The Threat Intel agent
+  picks up the `bing_grounding` tool with no manual portal
+  clicks. Backward-compat: if you've already wired a project
+  connection by hand, set `AISOC_BING_GROUNDING_CONNECTION` to
+  its name and the auto-provision step is skipped.
 
 Sensitive values (admin password, API keys) should ideally be
 exported in your shell rather than written to `aisoc.config` —
@@ -392,12 +482,13 @@ The demo's role model:
 
 | Role | Sees |
 |------|------|
-| `soc-analyst` | Incident queue, HITL questions from triage / investigator / reporter, can pick up cases. |
-| `detection-engineer` | Continuous Improvement (filtered to detection-rule changes only). HITL questions from the Detection Engineer agent. |
-| `soc-manager` | Everything. `/config`, `/audit`, full Continuous Improvement queue, user management. |
+| `soc-analyst` | Live Agent View (incident queue + HITL questions from triage / investigator / reporter), `/dashboard`. Can pick up cases. |
+| `detection-engineer` | Live Agent View, `/dashboard`, `/rules`, `/improvements` (filtered to detection-rule changes). HITL questions from the Detection Engineer agent. |
+| `threat-intel-analyst` | Live Agent View, `/dashboard`, `/threat-horizon`. HITL questions from the Threat Intel agent. |
+| `soc-manager` | Everything. `/config`, `/audit`, full `/improvements` queue (preamble / agent-instructions / company-context-page / detection-rule), user management, the templates editor. |
 
 A user can hold multiple roles. The first user in the bootstrap
-fallback (`erik.vanbuggenhout@nviso.eu`) holds all three.
+fallback (`erik.vanbuggenhout@nviso.eu`) holds all four.
 
 ### Tearing down
 
@@ -443,3 +534,22 @@ OIDC trust + AZURE_* repo variables stay in place; the next
   `terraform/2-deploy-aisoc/agents/agents.json`. Adding an agent
   means: edit that file, write an `agents/instructions/<slug>.md`,
   re-deploy.
+- **Knowledge base corpora**:
+  - SOC-curated: `terraform/2-deploy-aisoc/agents/company-context/`
+    (8 starter pages — fleet, subsystems, naming, runbooks,
+    glossary, escalation). README in that folder documents the
+    upload flow + the SharePoint swap procedure.
+  - HR/IT-curated: `terraform/2-deploy-aisoc/agents/company-policies/`
+    (acceptable use, asset inventory). Same Foundry IQ KB; second
+    blob source federated in. Edit either folder and re-run the
+    matching `upload_*.sh` to push changes; the indexer picks them
+    up within 30 minutes.
+- **Activation order on a fresh deploy**:
+  1. `./aisoc_demo.sh deploy …` (builds all infra + uploads agent
+     prompts).
+  2. `cd terraform/2-deploy-aisoc/agents/company-context && \
+       ./upload_company_context.sh`
+  3. `cd ../company-policies && ./upload_company_policies.sh`
+  4. (Optional) re-run
+     `terraform/2-deploy-aisoc/scripts/deploy_prompt_agents_with_runner_tools.py`
+     if you've edited any agent prompt or the corpora — idempotent.
