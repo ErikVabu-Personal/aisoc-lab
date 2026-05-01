@@ -164,6 +164,7 @@ resource "null_resource" "cck_search_seed_context" {
       dp_api             = local.drk_search_dp_api_version
       kb_api             = local.drk_search_kb_api_version
     }))
+    script_hash = filemd5("${path.module}/scripts/seed_search_kb.sh")
   }
 
   provisioner "local-exec" {
@@ -223,6 +224,7 @@ resource "null_resource" "cck_search_seed_policies" {
       dp_api             = local.drk_search_dp_api_version
       kb_api             = local.drk_search_kb_api_version
     }))
+    script_hash = filemd5("${path.module}/scripts/seed_search_kb.sh")
   }
 
   provisioner "local-exec" {

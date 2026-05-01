@@ -137,6 +137,13 @@ How to read this:
                         az search indexer run --service-name <svc> \
                           --name <indexer> --resource-group <rg>
                       OR re-run an upload helper (they auto-trigger).
+  Blobs>>Index docs with last run "transientFailure" / failed>0
+                    → indexer hit a per-document failure and bailed
+                      under the maxFailedItems threshold. Drill in:
+                        ./scripts/diagnose_indexer_errors.sh <indexer>
+                      Then either fix the doc, raise INDEXER_MAX_FAILED,
+                      or skip the file extension. After the fix:
+                        ./scripts/reset_kb_indexers.sh
   Blobs>0, Index docs>0
                     → the pipeline is healthy.
 

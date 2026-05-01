@@ -285,6 +285,11 @@ resource "null_resource" "drk_search_seed" {
       dp_api             = local.drk_search_dp_api_version
       kb_api             = local.drk_search_kb_api_version
     }))
+    # Re-seed when the seeder script itself changes (e.g. indexer
+    # parameters get tuned, schema fields added). Without this, edits
+    # to the script live on disk but never reach the Search service
+    # until someone runs it manually.
+    script_hash = filemd5("${path.module}/scripts/seed_search_kb.sh")
   }
 
   provisioner "local-exec" {

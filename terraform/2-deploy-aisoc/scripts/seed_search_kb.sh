@@ -171,6 +171,24 @@ JSON
 )"
 
 echo "=== Indexer: ${INDEXER_NAME} ==="
+# maxFailedItems / maxFailedItemsPerBatch:
+#   Default is 0 — i.e. ANY single doc failure halts the whole run
+#   and reports `transientFailure`. That's fine for a 10-doc curated
+#   corpus (company-context, company-policies). It's catastrophic for
+#   the 3700+ Sigma rules KB: one weird YAML and the indexer bails
+#   after a few hundred docs, leaving the rest untouched.
+#
+#   We set both to 200 (caller can override via INDEXER_MAX_FAILED_*).
+#   200 is ~5% of the Sigma corpus — high enough to absorb realistic
+#   per-doc breakage (oversized files, bad encoding) and still surface
+#   a systemic problem (something wrong with the index schema / RBAC
+#   would fail thousands).
+#
+# blobExtractionMode "contentAndMetadata" is the default; reasserting
+# it is harmless and self-documenting.
+INDEXER_MAX_FAILED="${INDEXER_MAX_FAILED:-200}"
+INDEXER_MAX_FAILED_BATCH="${INDEXER_MAX_FAILED_BATCH:-50}"
+
 put "indexers/${INDEXER_NAME}" "${DP_API_VERSION}" "$(cat <<JSON
 {
   "name": "${INDEXER_NAME}",
@@ -178,10 +196,15 @@ put "indexers/${INDEXER_NAME}" "${DP_API_VERSION}" "$(cat <<JSON
   "targetIndexName": "${INDEX_NAME}",
   "schedule": { "interval": "PT30M" },
   "parameters": {
+    "maxFailedItems":         ${INDEXER_MAX_FAILED},
+    "maxFailedItemsPerBatch": ${INDEXER_MAX_FAILED_BATCH},
     "configuration": {
-      "parsingMode":               "default",
-      "dataToExtract":             "contentAndMetadata",
-      "indexedFileNameExtensions": "${FILE_EXTENSIONS}"
+      "parsingMode":                              "default",
+      "dataToExtract":                            "contentAndMetadata",
+      "indexedFileNameExtensions":                "${FILE_EXTENSIONS}",
+      "indexStorageMetadataOnlyForOversizedDocuments": true,
+      "failOnUnsupportedContentType":             false,
+      "failOnUnprocessableDocument":              false
     }
   },
   "fieldMappings": [
