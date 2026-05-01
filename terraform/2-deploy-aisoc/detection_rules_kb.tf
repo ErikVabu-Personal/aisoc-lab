@@ -140,6 +140,19 @@ resource "azurerm_search_service" "detection_rules" {
 # 3) Search service MI -> Search Index Data Contributor on itself.
 #    Required for the agentic-retrieval engine to write back the
 #    semantic-rerank scoring profile during agentic queries.
+# 4) Deploying user (current az login) -> Search Index Data Contributor
+#    on the search service. Azure AI Search has a notorious gotcha:
+#    even subscription Owners do NOT get data-plane access on the
+#    Search service automatically. Without this, the Foundry portal's
+#    "Knowledge bases" tab fails with "Failed to fetch knowledge
+#    bases for connection <svc>…" because the portal calls the
+#    Search data plane as the LOGGED-IN USER, not as a managed
+#    identity. Granting the deploying user the data-plane role makes
+#    the portal experience work.
+#    Contributor (vs. Reader) — the portal's Knowledge-bases UI lets
+#    you create / edit / delete; Reader is enough for read-only
+#    listing but the portal also tries write probes and fails
+#    silently on Reader.
 #
 # The Foundry **project** has its own system-assigned MI, distinct
 # from the account MI. The KB project connection uses
@@ -174,6 +187,23 @@ resource "azurerm_role_assignment" "drk_search_self_contributor" {
   role_definition_name = "Search Index Data Contributor"
   principal_id         = azurerm_search_service.detection_rules[0].identity[0].principal_id
   description          = "Search service MI writes agentic-retrieval rerank state on its own indexes."
+}
+
+# Grants the identity that's running `terraform apply` (Erik's
+# `az login` user, or the CI service principal) data-plane access
+# on the Search service, so the Foundry portal's Knowledge Bases
+# UI loads without "Failed to fetch knowledge bases for connection".
+# The portal authenticates against Search as the *logged-in user*,
+# not as a managed identity — RBAC at the management plane (Owner
+# / Contributor at subscription level) does NOT grant data-plane
+# access to AI Search. This is one of the highest-friction
+# gotchas in setting up Foundry IQ for the first time.
+resource "azurerm_role_assignment" "drk_user_to_search" {
+  count                = local.drk_enabled ? 1 : 0
+  scope                = azurerm_search_service.detection_rules[0].id
+  role_definition_name = "Search Index Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+  description          = "Deploying user can list / inspect KBs in the Foundry portal Knowledge Bases tab."
 }
 
 
