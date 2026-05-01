@@ -52,6 +52,14 @@ SEARCH_EP="$(read_tf_output detection_rules_search_endpoint)"
 KB_NAME="$(read_tf_output detection_rules_kb_name)"
 KB_CONN_NAME="$(read_tf_output detection_rules_project_connection_name)"
 
+# Company-context KB — same Search service, second KB. Probed
+# alongside detection-rules so a single diagnostic run covers
+# every agent (detection-engineer uses detection-rules; triage /
+# investigator / reporter / soc-manager / threat-intel use
+# company-context).
+CCK_KB_NAME="$(read_tf_output company_context_kb_name)"
+CCK_KB_CONN_NAME="$(read_tf_output company_context_project_connection_name)"
+
 if [[ -z "$RG" || -z "$HUB" || -z "$PROJECT" || -z "$SEARCH_EP" ]]; then
   echo "ERROR: missing terraform outputs. Run from terraform/2-deploy-aisoc/ and ensure phase 2 has applied."
   exit 2
@@ -64,15 +72,17 @@ SEARCH_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.Search
 
 print_section "Inputs"
 cat <<EOF
-Subscription:       ${SUB}
-Resource group:     ${RG}
-Foundry hub:        ${HUB}
-Foundry project:    ${PROJECT}
-Search service:     ${SEARCH_NAME}
-Search endpoint:    ${SEARCH_EP}
-KB name:            ${KB_NAME}
-KB project conn:    ${KB_CONN_NAME}
-Search ARM id:      ${SEARCH_ID}
+Subscription:           ${SUB}
+Resource group:         ${RG}
+Foundry hub:            ${HUB}
+Foundry project:        ${PROJECT}
+Search service:         ${SEARCH_NAME}
+Search endpoint:        ${SEARCH_EP}
+detection-rules KB:     ${KB_NAME}
+  project conn:         ${KB_CONN_NAME}
+company-context KB:     ${CCK_KB_NAME:-(disabled)}
+  project conn:         ${CCK_KB_CONN_NAME:-(disabled)}
+Search ARM id:          ${SEARCH_ID}
 EOF
 
 # ---- 1. Hub / account MI principal id -------------------------------
@@ -129,58 +139,78 @@ echo "  - Search service MI     (Search Index Data Contributor)   [from drk_sear
 echo "  - Deploying user / SP   (Search Service Contributor)      [from drk_user_to_search]"
 echo "  - Project MI            (Search Service Contributor)      [from deploy_prompt_agents_with_runner_tools.py]"
 
-# ---- 5. The Foundry project connection record ----------------------
+# ---- 5. The Foundry project connection records --------------------
 
-print_section "5. Foundry project connection (${KB_CONN_NAME})"
-CONN_URL="https://management.azure.com/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${HUB}/projects/${PROJECT}/connections/${KB_CONN_NAME}?api-version=2025-06-01"
-echo "GET ${CONN_URL}"
-echo
-az rest --method GET --url "${CONN_URL}" 2>/dev/null \
-  | python3 -c "import sys, json; d = json.load(sys.stdin); p = d.get('properties', {}); print(json.dumps({'category': p.get('category'), 'authType': p.get('authType'), 'target': p.get('target'), 'audience': p.get('audience'), 'isSharedToAll': p.get('isSharedToAll'), 'metadata': p.get('metadata')}, indent=2))" \
-  || echo "ERROR: could not fetch the connection record. Run deploy_prompt_agents_with_runner_tools.py to (re)create it."
+show_project_connection() {
+  local label="$1" conn_name="$2"
+  local url="https://management.azure.com/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${HUB}/projects/${PROJECT}/connections/${conn_name}?api-version=2025-06-01"
+  echo
+  echo "── ${label} (${conn_name}) ──"
+  echo "GET ${url}"
+  echo
+  az rest --method GET --url "${url}" 2>/dev/null \
+    | python3 -c "import sys, json; d = json.load(sys.stdin); p = d.get('properties', {}); print(json.dumps({'category': p.get('category'), 'authType': p.get('authType'), 'target': p.get('target'), 'audience': p.get('audience'), 'isSharedToAll': p.get('isSharedToAll'), 'metadata': p.get('metadata')}, indent=2))" \
+    || echo "ERROR: connection ${conn_name} not found. Re-run deploy_prompt_agents_with_runner_tools.sh to recreate."
+}
+
+print_section "5. Foundry project connection records"
+show_project_connection "detection-rules" "${KB_CONN_NAME}"
+if [ -n "${CCK_KB_CONN_NAME}" ]; then
+  show_project_connection "company-context" "${CCK_KB_CONN_NAME}"
+fi
 
 echo
-echo "What you SHOULD see:"
+echo "What you SHOULD see for each:"
 echo "  category:  RemoteTool"
 echo "  authType:  ProjectManagedIdentity"
 echo "  target:    https://<svc>.search.windows.net/knowledgebases/<kb>/mcp?api-version=…"
 echo "  audience:  https://search.azure.com/"
 
-# ---- 6. Reachability probe of the MCP endpoint ---------------------
+# ---- 6. Reachability probe of each KB's MCP endpoint ---------------
 
-print_section "6. MCP endpoint reachability probe (unauth, expect 401)"
-MCP_URL="${SEARCH_EP}/knowledgebases/${KB_NAME}/mcp?api-version=2025-11-01-preview"
-echo "GET ${MCP_URL}"
-echo
-HTTP_CODE="$(curl -s -o /tmp/mcp_probe.txt -w '%{http_code}' "${MCP_URL}" || echo 000)"
-echo "HTTP ${HTTP_CODE}"
-case "${HTTP_CODE}" in
-  401)
-    echo "OK: endpoint exists + AAD auth is enabled (the 'WWW-Authenticate: Bearer' challenge is the proof)."
-    echo "    RBAC grants then determine if the MI/user can actually call it."
-    ;;
-  403)
-    echo "DIAGNOSTIC: HTTP 403 from an unauth probe is the tell-tale sign that AAD auth is"
-    echo "DISABLED on the Search service. The service is in API-key-only mode and is rejecting"
-    echo "all bearer-token-based calls (including those from the project MI), regardless of"
-    echo "whatever RBAC roles you've granted."
-    echo
-    echo "Fix: enable AAD auth on the Search service via Terraform. The azurerm_search_service"
-    echo "resource needs: authentication_failure_mode = \"http403\""
-    echo "Then: terraform apply -target=azurerm_search_service.detection_rules"
-    ;;
-  404)
-    echo "FAIL: endpoint returns 404 — the KB does NOT exist on the service. Re-run the seeder:"
-    echo "  terraform apply -target=null_resource.drk_search_seed"
-    ;;
-  000)
-    echo "FAIL: endpoint unreachable. DNS / network issue."
-    ;;
-  *)
-    echo "Unexpected. Body:"
-    cat /tmp/mcp_probe.txt
-    ;;
-esac
+probe_mcp_endpoint() {
+  # probe_mcp_endpoint <label> <kb-name> <seeder-target>
+  local label="$1" kb_name="$2" seeder_target="$3"
+  local url="${SEARCH_EP}/knowledgebases/${kb_name}/mcp?api-version=2025-11-01-preview"
+  echo
+  echo "── ${label} (${kb_name}) ──"
+  echo "GET ${url}"
+  local code
+  code="$(curl -s -o /tmp/mcp_probe.txt -w '%{http_code}' "${url}" || echo 000)"
+  echo "HTTP ${code}"
+  case "${code}" in
+    401)
+      echo "OK: endpoint exists + AAD auth is enabled (WWW-Authenticate: Bearer challenge is the proof)."
+      ;;
+    403)
+      echo "DIAGNOSTIC: HTTP 403 from unauth = AAD auth DISABLED on the Search service."
+      echo "All bearer-token calls (incl. project MI's MCP enumerate) are rejected before RBAC runs."
+      echo "Fix once for both KBs (they share the service):"
+      echo "  terraform apply -target=azurerm_search_service.detection_rules"
+      echo "(the resource block needs: authentication_failure_mode = \"http403\")"
+      ;;
+    404)
+      echo "FAIL: KB '${kb_name}' is not registered on the Search service. Re-run the seeder:"
+      echo "  terraform apply -target=${seeder_target}"
+      ;;
+    000)
+      echo "FAIL: endpoint unreachable. DNS / network issue."
+      ;;
+    *)
+      echo "Unexpected. Body:"
+      cat /tmp/mcp_probe.txt
+      ;;
+  esac
+}
+
+print_section "6. MCP endpoint reachability probes (unauth, expect 401)"
+probe_mcp_endpoint "detection-rules" "${KB_NAME}" "null_resource.drk_search_seed"
+if [ -n "${CCK_KB_NAME}" ]; then
+  probe_mcp_endpoint "company-context" "${CCK_KB_NAME}" "null_resource.cck_search_seed_context"
+else
+  echo
+  echo "── company-context: skipped (terraform output empty — KB disabled?) ──"
+fi
 
 # ---- 7. Authenticated probe with the user's token ------------------
 #
