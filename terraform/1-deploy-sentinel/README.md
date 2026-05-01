@@ -17,6 +17,7 @@ secrets.
 | Ship Control Panel Container App | `ship_control_panel.tf` | Public ingress, image pulled from GHCR. Logs stdout to the workspace via the App Insights connection-string in the Container App's env. |
 | Windows 11 lab VM | `main.tf` | Optional manual-trigger telemetry source. Auto-shutdown configured. RDP open from any source — throwaway demo box. |
 | Azure Monitor Agent + DCR | `main.tf` | Forwards Windows Event Logs to the workspace. |
+| **Sysmon (Sysinternals)** | `sysmon.tf` + `scripts/install_sysmon.ps1` | CustomScriptExtension installs Sysmon with the SwiftOnSecurity verbose config; the DCR is extended to forward `Microsoft-Windows-Sysmon/Operational` into the workspace. Toggleable via `enable_sysmon` (default `true`). |
 | Shared Key Vault | `aisoc_kv.tf` | Used by Phases 2 and 3 to publish Function host keys and Container App secrets. |
 | App Insights for the Ship Control Panel | `appinsights_shipcp.tf` | Connection-string only (no sampling configured); Container App reads it and emits trace + metrics. |
 | Defender for Endpoint onboarding | `mde_kv.tf`, `MDE.md` | Optional — disabled by default. See `MDE.md` for the manual onboarding-script step. |
@@ -71,14 +72,47 @@ Both are documented in `MDE.md`. Both are disabled by default.
 
 - The DCR uses the default ingestion endpoint (no DCE) to keep
   payloads simple and avoid API validation edge cases.
-- The DCR's XPath queries collect only Levels 1–3 from the Windows
-  Application / System / Security channels — enough to feed
-  Sentinel without flooding the workspace with verbose info events.
+- The DCR's XPath queries collect Levels 1–3 from Application /
+  System and Levels 1–4 from Security (Security audit events are
+  Level=4 / Information). When Sysmon is enabled, the DCR also
+  forwards `Microsoft-Windows-Sysmon/Operational` Levels 1–4 (all
+  Sysmon events are Level=4 by design — must be included or
+  nothing arrives).
 - Analytic rules are defined as JSON ARM templates under
   `analytic_rules/` and applied via `azapi_resource` because the
   azurerm provider's coverage of Sentinel-rule shapes lags the
   product. Each rule's KQL is heavily commented; edit directly +
   re-apply.
+
+## Sysmon notes
+
+- The CustomScriptExtension downloads two files via `fileUris`:
+  `scripts/install_sysmon.ps1` from this repo's `main` branch, and
+  the SwiftOnSecurity `sysmonconfig-export.xml` from upstream. Both
+  URLs are configurable via `var.sysmon_install_script_url` /
+  `var.sysmon_config_url` — pin to a commit SHA for prod, or swap
+  in Olaf Hartong's sysmon-modular config.
+- The script is **idempotent** — it detects an existing Sysmon
+  service and reloads the config in place (`Sysmon64.exe -c <file>`)
+  instead of reinstalling. Re-running `terraform apply` is safe.
+- All install output is captured at
+  `C:\ProgramData\AISOC\Sysmon\install.log` on the VM. RDP in and
+  read it if the channel doesn't appear in Log Analytics.
+- Once Sysmon events are flowing, you'll see them in the workspace
+  under the `Event` table (the same table that holds Application /
+  System / Security):
+
+  ```kusto
+  Event
+  | where Source == "Microsoft-Windows-Sysmon"
+  | summarize n = count() by EventID, RenderedDescription
+  | order by n desc
+  ```
+
+  Common Sysmon event IDs you'll get: 1 (process create), 3 (network
+  connection), 7 (image loaded), 10 (process access), 11 (file
+  create), 12/13/14 (registry), 22 (DNS query), 25 (process
+  tampering).
 
 ## Observability tip
 

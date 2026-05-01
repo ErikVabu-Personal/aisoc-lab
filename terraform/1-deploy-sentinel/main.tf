@@ -223,12 +223,29 @@ resource "azurerm_monitor_data_collection_rule" "dcr" {
       name    = "windows-events"
       streams = ["Microsoft-Event"]
 
-      x_path_queries = [
+      # Application / System / Security on the standard severity
+      # bands. Security needs Level=4 (Information) too — most
+      # audit events (logon, process creation, special privilege
+      # use) ride that level.
+      #
+      # Sysmon writes to its OWN channel
+      # (`Microsoft-Windows-Sysmon/Operational`). All Sysmon events
+      # are Level=4 (Information), so we must include Level 4 here
+      # or nothing forwards. The `*` xpath is broad on purpose —
+      # Sysmon's config (sysmonconfig.xml on the host) is the
+      # authoritative filter; we don't double-filter at the AMA.
+      #
+      # The Sysmon channel is appended only when var.enable_sysmon
+      # is true. If you've turned Sysmon off, leaving the xpath in
+      # is harmless (AMA logs a warn for the missing channel) but
+      # we keep the toggle clean.
+      x_path_queries = concat([
         "Application!*[System[(Level=1 or Level=2 or Level=3)]]",
         "System!*[System[(Level=1 or Level=2 or Level=3)]]",
-        # Security events are typically Level=4 (Information). Include Level 4 so audit events arrive.
         "Security!*[System[(Level=1 or Level=2 or Level=3 or Level=4)]]",
-      ]
+        ], var.enable_sysmon ? [
+        "Microsoft-Windows-Sysmon/Operational!*[System[(Level=1 or Level=2 or Level=3 or Level=4)]]",
+      ] : [])
     }
   }
 
@@ -262,7 +279,14 @@ resource "azurerm_monitor_data_collection_rule_association" "dcr_assoc" {
   target_resource_id      = azurerm_windows_virtual_machine.vm.id
   data_collection_rule_id = azurerm_monitor_data_collection_rule.dcr[0].id
 
-  depends_on = [azurerm_virtual_machine_extension.ama]
+  # AMA must be present first. When Sysmon is enabled we ALSO
+  # depend on its install extension so the channel exists by the
+  # time AMA refreshes its xpath subscriptions — without this the
+  # first ~5min of forwarded events miss Sysmon entirely.
+  depends_on = [
+    azurerm_virtual_machine_extension.ama,
+    azurerm_virtual_machine_extension.sysmon,
+  ]
 }
 
 # --- Defender for Endpoint (MDE) onboarding (optional) ---
