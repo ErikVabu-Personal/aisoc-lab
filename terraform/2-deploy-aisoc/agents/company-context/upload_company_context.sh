@@ -69,6 +69,29 @@ for f in "${to_upload[@]}"; do
 done
 
 echo
-echo "Done. The Search indexer picks up new blobs every 30 minutes."
-echo "To force an immediate re-index:"
-echo "  az search indexer run --service-name <svc> --name company-context-indexer --resource-group <rg>"
+echo "Triggering the Search indexer so the new blobs land in the"
+echo "index immediately (rather than waiting up to 30 min)…"
+
+SEARCH_EP="$(terraform output -raw company_context_search_endpoint 2>/dev/null \
+  || terraform output -raw detection_rules_search_endpoint 2>/dev/null \
+  || echo "")"
+SEARCH_NAME="$(echo "$SEARCH_EP" | sed 's|https://||' | sed 's|\.search\.windows\.net.*||')"
+RG="$(terraform output -raw resource_group)"
+
+if [[ -n "$SEARCH_NAME" && -n "$RG" ]]; then
+  az search indexer run \
+    --service-name "$SEARCH_NAME" \
+    --name company-context-indexer \
+    --resource-group "$RG" \
+    --only-show-errors \
+    && echo "  ok — indexer running. Should land in the index within 30-60s." \
+    || echo "  WARN: indexer trigger failed (the blobs are uploaded; the indexer will pick them up on its scheduled run)."
+else
+  echo "WARN: could not derive Search service name; skipping indexer trigger."
+  echo "      To run manually: az search indexer run --service-name <svc> \\"
+  echo "        --name company-context-indexer --resource-group <rg>"
+fi
+
+echo
+echo "Done. Inspect the result with:"
+echo "  ./scripts/inspect_kb_contents.sh"
