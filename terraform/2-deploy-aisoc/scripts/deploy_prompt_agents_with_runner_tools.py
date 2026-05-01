@@ -596,8 +596,16 @@ def main() -> int:
 
         if agent_name == "threat-intel" and bing_conn_name:
             # Foundry's bing_grounding tool — the project connection
-            # carries the API key to Bing Search. Same general shape
-            # as the OpenAPI tool's auth block.
+            # carries the API key to Bing Search.
+            #
+            # Field-name gotcha: the validator wants
+            # `project_connection_id`, NOT `connection_id`. Same
+            # gotcha that bit the detection-rules MCP tool path —
+            # see the note above the conn_arm_id construction near
+            # line ~556. Sending the wrong key fails apply with:
+            #   (invalid_payload) required: Required properties
+            #   ["project_connection_id"] are not present
+            # which is the only signal Foundry gives.
             bing_conn_arm_id = (
                 f"/subscriptions/{sub_id}"
                 f"/resourceGroups/{rg}"
@@ -610,7 +618,7 @@ def main() -> int:
                 "bing_grounding": {
                     "search_configurations": [
                         {
-                            "connection_id": bing_conn_arm_id,
+                            "project_connection_id": bing_conn_arm_id,
                             "count": 7,
                             "freshness": "Week",
                         }
