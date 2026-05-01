@@ -50,12 +50,14 @@ export function EngineRoomView() {
     { id: 't3', label: 'Day Tank', level: 64 },
   ]);
 
+  // Light-theme surface for the engine-room canvas. Used to be a dark
+  // hologram gradient; on the cruise-bridge skin it reads better as a
+  // soft drafting-board panel matching the rest of the operations
+  // surface.
   const bgStyle = useMemo(() => {
     return {
-      background:
-        'radial-gradient(900px 420px at 20% 20%, rgba(255,255,255,0.10), transparent 55%),' +
-        'radial-gradient(700px 380px at 80% 30%, rgba(34,211,238,0.10), transparent 55%),' +
-        'linear-gradient(180deg, rgba(0,0,0,0.28), rgba(0,0,0,0.65))',
+      background: 'var(--panel-2)',
+      border: '1px solid var(--hairline)',
     } as React.CSSProperties;
   }, []);
 

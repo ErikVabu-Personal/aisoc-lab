@@ -41,14 +41,18 @@ export function EntertainmentView() {
   const trackId = (state?.entertainment?.trackId as string) ?? tracks[0].id;
   const track = tracks.find((t) => t.id === trackId) ?? tracks[0];
 
+  // Light-theme scene tints — same idea as the dark version (each
+  // scene paints the entShell with its own subtle gradient) but tuned
+  // for the bridge skin's off-white surface, so text remains readable
+  // and the cards inside don't disappear into a black wash.
   const bg = useMemo(() => {
     switch (scene) {
       case 'SUNSET_DECK':
-        return 'radial-gradient(900px 500px at 20% 10%, rgba(251,113,133,0.18), transparent 55%), radial-gradient(900px 500px at 70% 30%, rgba(250,204,21,0.14), transparent 55%), linear-gradient(180deg, rgba(0,0,0,0.24), rgba(0,0,0,0.62))';
+        return 'radial-gradient(700px 360px at 20% 10%, rgba(251,113,133,0.10), transparent 55%), radial-gradient(700px 360px at 70% 30%, rgba(250,204,21,0.08), transparent 55%), var(--panel-2)';
       case 'AURORA':
-        return 'radial-gradient(900px 500px at 20% 20%, rgba(52,211,153,0.16), transparent 55%), radial-gradient(900px 500px at 70% 30%, rgba(34,211,238,0.16), transparent 55%), linear-gradient(180deg, rgba(0,0,0,0.24), rgba(0,0,0,0.62))';
+        return 'radial-gradient(700px 360px at 20% 20%, rgba(22,160,122,0.08), transparent 55%), radial-gradient(700px 360px at 70% 30%, rgba(0,153,204,0.10), transparent 55%), var(--panel-2)';
       case 'DEEP_SEA':
-        return 'radial-gradient(900px 500px at 30% 20%, rgba(96,165,250,0.14), transparent 55%), radial-gradient(900px 500px at 70% 60%, rgba(34,211,238,0.10), transparent 55%), linear-gradient(180deg, rgba(0,0,0,0.28), rgba(0,0,0,0.68))';
+        return 'radial-gradient(700px 360px at 30% 20%, rgba(14,58,95,0.08), transparent 55%), radial-gradient(700px 360px at 70% 60%, rgba(0,153,204,0.08), transparent 55%), var(--panel-2)';
     }
   }, [scene]);
 
@@ -57,7 +61,7 @@ export function EntertainmentView() {
       <div className="viewTitle">Entertainment</div>
       <div className="viewSub">Pool • Wellness • Media • Scenes (simulated)</div>
 
-      <div className="entShell" style={{ marginTop: 12, borderRadius: 14, padding: 12, border: '1px solid rgba(255,255,255,0.10)', background: bg }}>
+      <div className="entShell" style={{ marginTop: 12, borderRadius: 4, padding: 12, border: '1px solid var(--hairline)', background: bg }}>
         <div className="panelGrid" style={{ marginTop: 0 }}>
           <div className="kpi">
             <div className="panelTitle">Lighting Scenes</div>

@@ -373,17 +373,17 @@ export function NavigationView() {
           {!mapLoaded ? (
             <div className="mapOverlay">
               <div className="mapOverlayCard">
-                <div style={{ fontWeight: 900 }}>Loading map…</div>
-                <div style={{ marginTop: 6, opacity: 0.8 }}>If this never finishes, it’s usually a tile/style network issue.</div>
+                <div style={{ fontWeight: 700 }}>Loading map…</div>
+                <div className="sub" style={{ marginTop: 6 }}>If this never finishes, it’s usually a tile/style network issue.</div>
               </div>
             </div>
           ) : null}
 
           {mapError ? (
             <div className="mapOverlay">
-              <div className="mapOverlayCard" style={{ borderColor: 'rgba(251,113,133,0.35)' }}>
-                <div style={{ fontWeight: 900, color: 'rgba(255,180,180,0.95)' }}>Map failed to load</div>
-                <div className="mono" style={{ marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 11 }}>{mapError}</div>
+              <div className="mapOverlayCard" style={{ borderColor: 'rgba(192,57,43,0.45)' }}>
+                <div style={{ fontWeight: 700, color: 'var(--danger)' }}>Map failed to load</div>
+                <div className="mono" style={{ marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 11, color: 'var(--text)' }}>{mapError}</div>
               </div>
             </div>
           ) : null}
