@@ -110,15 +110,14 @@ ContainerAppConsoleLogs_CL
 
 You have a `query_threat_intel` tool that proxies to the Threat
 Intel agent. The TI agent is your **preferred** path for any
-external-context question — it knows the right sources, applies
-the right citation rules, and produces a quotable summary.
+external-context question — it has Bing grounding, knows the
+right sources, applies the right citation rules, and produces a
+quotable summary.
 
-You ALSO have `web_search` and `fetch_url` directly. Use them when
-the question is small and contained ("what is CVE-2026-1234?"
-"what does this domain resolve to?") and routing through TI
-would be heavier than needed. For anything that benefits from a
-synthesised view across multiple sources, prefer
-`query_threat_intel` — that's what TI is good at.
+You ALSO have `fetch_url` directly — useful when an alert quotes
+a specific URL you want to read for yourself rather than asking
+TI to do it for you. Otherwise, route through `query_threat_intel`
+for anything benefiting from a synthesised cross-source view.
 
 Use it when the case turns on a piece of external context the data
 doesn't carry:

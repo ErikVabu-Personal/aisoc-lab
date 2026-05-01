@@ -50,6 +50,15 @@ export AISOC_DETECTION_RULES_KB_SEARCH_ENDPOINT="$(terraform output -raw detecti
 export AISOC_DETECTION_RULES_KB_NAME="$(terraform output -raw detection_rules_kb_name 2>/dev/null || echo)"
 export AISOC_DETECTION_RULES_KB_PROJECT_CONNECTION="$(terraform output -raw detection_rules_project_connection_name 2>/dev/null || echo)"
 
+# Bing Grounding wiring (optional). When enabled, Phase 2 Terraform
+# provisioned the Microsoft.Bing/accounts resource and exposed the
+# name + API key here. The Python script uses them to lazily create
+# the Foundry project connection and attach bing_grounding to the
+# Threat Intel agent.
+export AISOC_BING_GROUNDING_ENABLED="$(terraform output -raw bing_grounding_enabled 2>/dev/null || echo false)"
+export AISOC_BING_GROUNDING_ACCOUNT="$(terraform output -raw bing_grounding_account_name 2>/dev/null || echo)"
+export AISOC_BING_GROUNDING_API_KEY="$(terraform output -raw bing_grounding_api_key 2>/dev/null || echo)"
+
 RG="$AZURE_RESOURCE_GROUP"
 HUB="$AZURE_FOUNDRY_HUB_NAME"
 PROJ="$AZURE_FOUNDRY_PROJECT_NAME"

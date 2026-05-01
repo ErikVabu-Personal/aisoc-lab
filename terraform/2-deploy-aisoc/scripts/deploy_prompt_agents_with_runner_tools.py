@@ -92,6 +92,73 @@ def _ensure_project_connection_remote_tool(
             f"project connection PUT returned {r.status_code}: {r.text[:1000]}"
         )
 
+
+def _ensure_project_connection_apikey(
+    *,
+    sub_id: str,
+    rg: str,
+    hub: str,
+    project: str,
+    connection_name: str,
+    target_url: str,
+    api_key: str,
+    metadata: dict | None = None,
+) -> None:
+    """Idempotently create or update a Foundry project connection of
+    category=ApiKey with raw API-key credentials. Used by the
+    Bing Grounding wiring: the project connection holds the Bing
+    Search API key Foundry passes to the bing_grounding tool when the
+    agent invokes it.
+    """
+    try:
+        from azure.identity import DefaultAzureCredential
+        import requests as _requests
+    except Exception as e:
+        raise RuntimeError(
+            f"missing azure-identity / requests for project connection: {e!r}"
+        ) from e
+
+    cred = DefaultAzureCredential()
+    token = cred.get_token("https://management.azure.com/.default").token
+
+    api_version = PROJECT_CONNECTION_API_VERSION
+    url = (
+        f"https://management.azure.com/subscriptions/{sub_id}"
+        f"/resourceGroups/{rg}"
+        f"/providers/Microsoft.CognitiveServices/accounts/{hub}"
+        f"/projects/{project}"
+        f"/connections/{connection_name}"
+        f"?api-version={api_version}"
+    )
+
+    body = {
+        "name": connection_name,
+        "type": "Microsoft.MachineLearningServices/workspaces/connections",
+        "properties": {
+            "authType":      "ApiKey",
+            "category":      "ApiKey",
+            "target":        target_url,
+            "isSharedToAll": True,
+            "credentials":   {"key": api_key},
+            "metadata":      metadata or {},
+        },
+    }
+
+    r = _requests.put(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/json",
+        },
+        json=body,
+        timeout=30,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(
+            f"project connection PUT returned {r.status_code}: {r.text[:1000]}"
+        )
+
+
 import jsonref
 
 
@@ -277,7 +344,6 @@ def render_openapi(runner_url: str, agent_name: str) -> Dict[str, Any]:
                                                 "propose_change_to_preamble",
                                                 "propose_change_to_agent_instructions",
                                                 "propose_change_to_detection_rule",
-                                                "web_search",
                                                 "fetch_url",
                                             ],
                                         },
@@ -316,15 +382,32 @@ def main() -> int:
     drk_conn_name  = (os.environ.get("AISOC_DETECTION_RULES_KB_PROJECT_CONNECTION", "") or "").strip()
     drk_attach     = bool(drk_enabled and drk_search_ep and drk_kb_name and drk_conn_name)
 
-    # Threat Intel agent — Bing grounding wiring. Optional. When the
-    # operator has set up a Bing Grounding connection on the Foundry
-    # project (via the portal or `az cognitiveservices ... connection
-    # create`) and exported the connection name as
-    # AISOC_BING_GROUNDING_CONNECTION, the deploy script attaches a
-    # bing_grounding tool to the threat-intel agent. Otherwise the
-    # agent is created without a search tool — its prompt explicitly
-    # tells it to acknowledge the missing tool to the user.
-    bing_conn_name = (os.environ.get("AISOC_BING_GROUNDING_CONNECTION", "") or "").strip()
+    # Threat Intel agent — Bing grounding wiring.
+    #
+    # Phase 2 Terraform now provisions the Microsoft.Bing/accounts
+    # resource itself (kind=Bing.Grounding) and exports the resource
+    # name + API key. The deploy script picks them up here and creates
+    # the matching Foundry project connection on the fly — no manual
+    # `az ... connection create` needed.
+    #
+    # Inputs (all set by deploy_prompt_agents_with_runner_tools.sh from
+    # `terraform output`):
+    #   AISOC_BING_GROUNDING_ACCOUNT  → bing account name (also the
+    #                                   project connection name we'll
+    #                                   create on the fly)
+    #   AISOC_BING_GROUNDING_API_KEY  → bing account primary key
+    #
+    # Backward-compat: if those aren't set but the legacy
+    # AISOC_BING_GROUNDING_CONNECTION is, we use it as a pre-existing
+    # connection name (the operator wired it manually). When NONE are
+    # set the agent ships without bing_grounding.
+    bing_account_name = (os.environ.get("AISOC_BING_GROUNDING_ACCOUNT", "") or "").strip()
+    bing_api_key      = (os.environ.get("AISOC_BING_GROUNDING_API_KEY", "") or "").strip()
+    bing_conn_name    = (os.environ.get("AISOC_BING_GROUNDING_CONNECTION", "") or "").strip()
+    # When the auto-wire inputs are present, prefer them — and use the
+    # account name as the connection name so the two stay consistent.
+    if bing_account_name and bing_api_key and not bing_conn_name:
+        bing_conn_name = bing_account_name
 
     if (
         not endpoint
@@ -403,6 +486,44 @@ def main() -> int:
             print(f"ERROR: {msg}", file=sys.stderr)
             deploy_failures.append(msg)
             drk_attach = False  # don't try to attach the MCP tool below
+
+    # Bing Grounding project connection — created lazily here for the
+    # same reason the detection-rules-kb connection is: the Foundry
+    # project itself doesn't exist until deploy_foundry_project runs.
+    # Skipped when the auto-wire env vars are missing (operator opted
+    # out via TF_VAR_bing_grounding_enabled=false, OR they're using
+    # the legacy "I created the connection myself" path).
+    if bing_account_name and bing_api_key and bing_conn_name:
+        try:
+            _ensure_project_connection_apikey(
+                sub_id=sub_id,
+                rg=rg,
+                hub=hub,
+                project=project,
+                connection_name=bing_conn_name,
+                # The bing_grounding tool talks to the public Bing API
+                # endpoint with the project connection's API key. The
+                # Foundry tool spec carries the connection_id; the actual
+                # request goes to api.bing.microsoft.com.
+                target_url="https://api.bing.microsoft.com/",
+                api_key=bing_api_key,
+                metadata={"ApiType": "Azure", "Kind": "Bing.Grounding"},
+            )
+            print(
+                f"INFO: project connection {bing_conn_name!r} ready "
+                f"(ApiKey, target=api.bing.microsoft.com)"
+            )
+        except Exception as e:
+            msg = (
+                f"failed to create Bing Grounding project connection "
+                f"{bing_conn_name!r}: {e!r}. The Threat Intel agent will "
+                f"be deployed without bing_grounding."
+            )
+            print(f"ERROR: {msg}", file=sys.stderr)
+            deploy_failures.append(msg)
+            # Disable the attach below so we don't ship a tool whose
+            # connection isn't actually wired.
+            bing_conn_name = ""
 
     for name in AGENTS:
         spec = render_openapi(runner_url, name)

@@ -117,33 +117,14 @@
 # standard3 add capacity + replicas — overkill for a demo.
 # TF_VAR_detection_rules_kb_search_sku="basic"
 
-# ── Threat Intel agent — Bing grounding (optional) ─────────────────
-# When set, the deploy script attaches a Foundry bing_grounding tool
-# to the Threat Intel agent so it can do live web research. The
-# value is the NAME of a project connection (RemoteTool / API key)
-# you've already created in Foundry pointing at a Bing Search v7
-# resource. Leave unset to deploy the agent without web access — it
-# will tell users so when asked.
-#
-# To create the connection once:
-#   az cognitiveservices account project connection create \
-#     -g "$RG" -n "$HUB" --project-name "$PROJ" \
-#     --connection-name "bing-grounding" \
-#     --target "https://api.bing.microsoft.com/" \
-#     --auth-type ApiKey --api-key "<your bing search v7 key>" \
-#     --category ApiKey
-# Then:
-# AISOC_BING_GROUNDING_CONNECTION="bing-grounding"
-
-# ── Tavily web search (optional but strongly recommended) ───────────
-# When set, the runner exposes a `web_search` tool to the Threat Intel
-# and Investigator agents. They use it for live internet research
-# (CVEs, IOCs, fresh threat-actor activity) without needing Foundry's
-# bing_grounding tool to be wired. Sign up at https://tavily.com — the
-# free tier covers 1000 searches/month and signup is one form.
-# Independent of bing_grounding: both can be wired at the same time;
-# the agent will use whichever is available.
-# TF_VAR_tavily_api_key="tvly-..."
+# ── Bing Grounding (Threat Intel agent's live internet) ─────────────
+# By default Phase 2 provisions a Microsoft.Bing/accounts resource
+# (kind=Bing.Grounding, SKU=G1) and auto-creates a Foundry project
+# connection so the Threat Intel agent's bing_grounding tool just
+# works. Set to false ONLY if your subscription hasn't accepted the
+# Bing Search legal terms (one-time portal click) — when it fails the
+# error message points you at the portal step.
+# TF_VAR_bing_grounding_enabled="true"
 
 # ── OpenRouter (optional) ───────────────────────────────────────────
 # Only needed if you've wired the gateway to call OpenRouter as well

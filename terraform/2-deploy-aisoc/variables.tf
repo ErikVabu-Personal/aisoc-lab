@@ -205,18 +205,28 @@ variable "runner_enable_writes" {
   default     = true
 }
 
-variable "tavily_api_key" {
+# -----------------------------
+# Bing Grounding (Threat Intel agent's live internet)
+# -----------------------------
+
+variable "bing_grounding_enabled" {
   description = <<-EOT
-    Tavily Search API key (https://tavily.com — free tier covers 1000
-    searches/month). When set, the Threat Intel + Investigator agents'
-    web_search runner tool calls Tavily for live internet research.
-    Leave empty to deploy without web search; web_search returns a 503
-    with setup instructions and the agent's reply tells the human what
-    to fix. Independent of Foundry's bing_grounding tool — both can be
-    wired at the same time and the agent will prefer whichever is
-    available.
+    Provision a `Microsoft.Bing/accounts` resource (kind=Bing.Grounding)
+    and auto-create a Foundry project connection so the Threat Intel
+    agent's `bing_grounding` tool works without manual setup.
+
+    Set to false if your subscription hasn't accepted the Bing Search
+    legal terms (one-time portal click) or if you want to wire the
+    connection by hand. When false, the agent is deployed without
+    bing_grounding; the runner's `fetch_url` tool still works for
+    known URLs.
   EOT
+  type        = bool
+  default     = true
+}
+
+variable "bing_grounding_sku" {
+  description = "Bing Grounding SKU. G1 is the only one available today."
   type        = string
-  default     = ""
-  sensitive   = true
+  default     = "G1"
 }

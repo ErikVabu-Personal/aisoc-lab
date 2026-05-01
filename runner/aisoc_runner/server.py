@@ -834,104 +834,11 @@ def tools_execute(
                 raise HTTPException(status_code=r.status_code, detail=r.text)
             return {"result": r.json()}
 
-        # ── Web search + fetch (Threat Intel / Investigator) ──────────
-        # Two runner-side tools that give any agent live internet access
-        # without needing Foundry's bing_grounding tool wired up. They
-        # complement bing_grounding (when present) but don't require it.
-        #
-        #   web_search(query, max_results=5)
-        #     → Tavily-backed search. Requires TAVILY_API_KEY on the
-        #       runner. Returns clean JSON with title / url / snippet.
-        #       Tavily's free tier covers 1000 searches/month and signup
-        #       is one form. Without the key we return a 503 with a
-        #       clear setup pointer so the agent's reply tells the
-        #       human exactly what to fix.
-        #   fetch_url(url, max_chars=5000)
-        #     → Plain HTTPS fetch with a normal User-Agent. Strips
-        #       scripts/styles, returns a text excerpt capped at
-        #       max_chars. No third-party API needed.
-
-        if tool_name == "web_search":
-            query = args.get("query")
-            if not isinstance(query, str) or not query.strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail="Missing arguments.query (string)",
-                )
-            max_results_raw = args.get("max_results")
-            try:
-                max_results = int(max_results_raw) if max_results_raw is not None else 5
-            except Exception:
-                max_results = 5
-            max_results = max(1, min(10, max_results))
-
-            tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
-            # Terraform writes the literal "<unset>" sentinel when no
-            # key was supplied (the Container App secret has to exist
-            # before the env can reference it). Treat it as missing.
-            if tavily_key == "<unset>":
-                tavily_key = ""
-            if not tavily_key:
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "web_search not wired — TAVILY_API_KEY is not set "
-                        "on the runner. Sign up at https://tavily.com (free "
-                        "tier: 1000 searches/month), then export "
-                        "TAVILY_API_KEY in aisoc.config and re-run "
-                        "`bash aisoc_demo.sh deploy --phase 2` so Terraform "
-                        "lands the new runner secret. fetch_url still works "
-                        "without this key when you already have a URL."
-                    ),
-                )
-
-            try:
-                r = requests.post(
-                    "https://api.tavily.com/search",
-                    headers={"Content-Type": "application/json"},
-                    json={
-                        "api_key":      tavily_key,
-                        "query":        query.strip(),
-                        "max_results":  max_results,
-                        "search_depth": "basic",
-                        "include_answer": True,
-                    },
-                    timeout=30,
-                )
-            except Exception as e:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"web_search upstream error: {e!r}",
-                )
-            if r.status_code >= 400:
-                raise HTTPException(
-                    status_code=r.status_code,
-                    detail=f"Tavily {r.status_code}: {r.text[:300]}",
-                )
-
-            try:
-                data = r.json()
-            except Exception:
-                data = {}
-            results = data.get("results") or []
-            slim = []
-            for item in results[:max_results]:
-                if not isinstance(item, dict):
-                    continue
-                slim.append({
-                    "title":   (item.get("title") or "")[:200],
-                    "url":     item.get("url") or "",
-                    "snippet": (item.get("content") or "")[:600],
-                    "score":   item.get("score"),
-                })
-            return {
-                "result": {
-                    "query":   query.strip(),
-                    "answer":  data.get("answer") or "",
-                    "results": slim,
-                    "count":   len(slim),
-                },
-            }
+        # ── fetch_url (Threat Intel / Investigator) ───────────────────
+        # Plain HTTPS fetch + cheap HTML→text strip. Lets any agent read
+        # the body of a page it already has a URL for (CVE detail, vendor
+        # advisory, blog post). Complements Foundry's bing_grounding tool
+        # — bing finds links, fetch_url reads them. No API key needed.
 
         if tool_name == "fetch_url":
             url = args.get("url")
