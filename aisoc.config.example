@@ -44,8 +44,12 @@
 # you need a specific password.
 # TF_VAR_admin_password="<your-vm-password>"
 
-# Override the default admin username.
-# TF_VAR_admin_username="azureadmin"
+# Override the default admin username. Default is "jack.sparrow" —
+# the captain's name in the demo's company-context KB, which lets
+# the SOC agents recognise that interactive logins on the lab VM
+# are the captain's. Change only if you want to tell a different
+# story.
+# TF_VAR_admin_username="jack.sparrow"
 
 # VM size. Default is Standard_D2s_v3.
 # TF_VAR_vm_size="Standard_D2s_v3"

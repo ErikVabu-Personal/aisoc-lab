@@ -8,23 +8,48 @@ same source IP within a 15-minute window.
 
 1. Confirm scope. Run the standard auth-failures KQL with a
    widened window (60 min); pivot by `username` and `clientIp`.
-2. Check whether **any** login succeeded for the same `username` /
+2. **Source-IP triage — is this an internal source?** Before
+   reaching for Threat Intel, retrieve the org-chart
+   (`10-org-chart.md`) and check whether `clientIp` matches an
+   asset we know:
+   - **Lab VM's public IP** — query the `Event` table for Windows
+     logon events around the burst window:
+     ```kusto
+     Event
+     | where TimeGenerated between (
+         (datetime(<burst-start>) - 5m) ..
+         (datetime(<burst-end>) + 5m))
+     | where Source == "Security" and EventID == 4624 and
+             AccountName == "jack.sparrow"
+     ```
+     If `jack.sparrow` was logged in during the burst, the burst
+     is overwhelmingly likely to be the captain mistyping his
+     password at the operations workstation — see "Captain-on-VM
+     pattern" in the org chart.
+   - Any other internal asset — flag for L2 review; we don't
+     normally see internal hosts authenticating to the Ship
+     Control Panel.
+3. Check whether **any** login succeeded for the same `username` /
    `clientIp` pair. A successful login during or right after the
    burst flips this from a brute-force attempt to a confirmed
-   compromise.
-3. Geolocate `clientIp`. Cross-check against the user's typical
-   location. NVISO Cruiseways crew and bridge officers should not be
-   logging in from countries outside the voyage's port-call list.
-4. If the user is a **service account** (`svc_*`), it should have no
+   compromise — UNLESS the source-IP triage in step 2 puts the
+   burst on a captain-on-VM session, in which case a successful
+   login is just the captain finally typing it correctly.
+4. Geolocate `clientIp`. Cross-check against the user's typical
+   location. NVISO Cruiseways crew and bridge officers should not
+   be logging in from countries outside the voyage's port-call
+   list.
+5. If the user is a **service account** (`svc_*`), it should have no
    interactive logins at all. Any successful login is automatic
    true-positive.
-5. Pull adjacent `event` lines for the same session (15-minute
+6. Pull adjacent `event` lines for the same session (15-minute
    window after success). Look for state-change events that suggest
    evasion: `security` (cameras off), `connectivity` (uplink off),
    `setSecurity {camerasEnabled: false}`.
-6. Consult Threat Intel (`query_threat_intel`) for the source IP —
-   credential-stuffing IPs typically appear on AbuseIPDB / GreyNoise
-   block lists.
+7. Consult Threat Intel (`query_threat_intel`) for the source IP —
+   credential-stuffing IPs typically appear on AbuseIPDB /
+   GreyNoise block lists. **Skip this step** if step 2 already
+   resolved the burst as the captain-on-VM pattern.
 
 ## Containment steps (recommendation only — humans execute)
 
@@ -40,6 +65,7 @@ same source IP within a 15-minute window.
 
 | Pattern                                              | Verdict             |
 |------------------------------------------------------|---------------------|
+| **Burst from lab-VM IP + `jack.sparrow` had an active Windows session** | **Closed (false positive — captain mistyping at his workstation; see `10-org-chart.md`)** |
 | Burst + zero successes + IP not on watchlist         | Closed (false positive — likely typo loop or scanner) |
 | Burst + zero successes + IP on TI watchlist          | Closed (true positive, contained — no compromise) |
 | Burst + ≥1 success on `bo_*` / `crew_*`              | Active (escalate to L2 — possible compromise) |

@@ -20,6 +20,7 @@ conventions, runbooks, glossary.
 | `07-glossary.md`                     | Maritime + Ship Control Panel + AISOC terminology |
 | `08-escalation.md`                   | Escalation matrix, oncall, approved tooling |
 | `09-endpoint-telemetry.md`           | Lab VM + Sysmon — schema, base filter, common Sysmon EIDs, KQL pivot patterns |
+| `10-org-chart.md`                    | Authoritative roster (bridge officers, engineering, SOC team) + the captain-on-VM correlation pattern that resolves false positives on the credential-stuffing alert |
 
 ## Uploading to the blob container
 

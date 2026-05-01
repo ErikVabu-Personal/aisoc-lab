@@ -539,7 +539,7 @@ print_plan_summary() {
   local region="${TF_VAR_azure_location:-westus}"
   local phase2_region="${TF_VAR_location_override:-westcentralus}"
   local vm_size="${TF_VAR_vm_size:-Standard_D2s_v3}"
-  local admin_user="${TF_VAR_admin_username:-azureadmin}"
+  local admin_user="${TF_VAR_admin_username:-jack.sparrow}"
   local foundry_region="${TF_VAR_foundry_location:-eastus2}"
   local foundry_model="${TF_VAR_foundry_model_choice:-gpt-4.1-mini}"
   local sub_name

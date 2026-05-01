@@ -108,9 +108,23 @@ variable "vm_size" {
 }
 
 variable "admin_username" {
-  description = "Local admin username for the VM"
+  description = <<-EOT
+    Local admin username for the lab VM. Defaults to `jack.sparrow`
+    on purpose: the AISOC demo's narrative leans on the captain
+    (Jack Sparrow per the company-context KB org chart) being the
+    interactive user on the lab VM. Failed-login bursts on the
+    Ship Control Panel originating from the VM's IP are the
+    captain mistyping his password — and the agent should reach
+    that conclusion by retrieving the org chart from the
+    `company-context` KB. Override via TF_VAR_admin_username only
+    if you want to tell a different story.
+
+    Constraints (Azure VM admin_username): 1–20 chars; cannot end
+    with a period; cannot use reserved names like "administrator"
+    or "admin"; cannot contain spaces or @\\:.
+  EOT
   type        = string
-  default     = "azureadmin"
+  default     = "jack.sparrow"
 }
 
 variable "admin_password" {
