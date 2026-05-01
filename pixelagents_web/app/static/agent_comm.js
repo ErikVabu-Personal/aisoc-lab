@@ -680,6 +680,11 @@
          column width even when long; the title attr still shows the
          full address on hover. */
       max-width: 100%;
+      /* Shrink the human-name text relative to agent rows so a roster
+         of 9+ users packs more densely. Agents keep the inherited
+         row size (which reads as the primary affordance). */
+      font-size: 12px;
+      line-height: 1.25;
     }
     #${ROOT_ID} .item .head .hum-info .preview {
       /* Preview is no longer competing with the name on a single
@@ -1795,6 +1800,16 @@
       const content = item.querySelector('.body-content');
       if (id && content) itemScrolls[id] = snapshotScroll(content);
     });
+    // Per-section scroll containers (Agents / Humans / My queue) each
+    // have their OWN scroll. Without this snapshot, every poll-driven
+    // re-render yanks the user back to the top of whichever section
+    // they were scrolling — which is exactly the "scrollbar jumps up"
+    // bug. Indexed by data-sec-items name so we can restore by section.
+    const secScrolls = {};
+    root.querySelectorAll('[data-sec-items]').forEach((el) => {
+      const name = el.getAttribute('data-sec-items');
+      if (name) secScrolls[name] = snapshotScroll(el);
+    });
 
     let html = '<header>Control Panel<div class="sub">Agents, humans, and the incidents on your plate</div></header>';
     html += '<div class="body">';
@@ -1917,6 +1932,13 @@
       const content = item.querySelector('.body-content');
       if (id && content && itemScrolls[id]) {
         restoreScroll(content, itemScrolls[id]);
+      }
+    });
+    // Restore per-section scroll positions (see snapshot above).
+    root.querySelectorAll('[data-sec-items]').forEach((el) => {
+      const name = el.getAttribute('data-sec-items');
+      if (name && secScrolls[name]) {
+        restoreScroll(el, secScrolls[name]);
       }
     });
 
