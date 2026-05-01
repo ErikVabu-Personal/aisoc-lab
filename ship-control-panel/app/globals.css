@@ -11,30 +11,60 @@
 */
 
 :root{
+  /* Industrial / maritime palette. The previous version leaned hard
+     on a bright cyan accent (#0099cc) that read as toy-like on a soft
+     white canvas. This pass tones the accent down to a desaturated
+     steel-blue and adds explicit muted variants so the surface looks
+     more like a real bridge / BMS console (Wärtsilä NACOS, Kongsberg
+     K-Bridge, Splunk Enterprise) than a retro arcade dashboard.
+
+     The brand-navy header keeps its deeper hue for contrast, but the
+     accent that paints buttons / active tabs / gauge arcs is steel
+     instead of cyan. Status colours are deeper and less saturated so
+     they read "instrument lit" rather than highlighter-marker.        */
+
   --brand-navy:    #0e3a5f;        /* deep navy — header chrome, brand */
   --brand-navy-2:  #0a2640;
-  --accent:        #0099cc;        /* NVISO Cruises cyan */
-  --accent-soft:   #33b0dd;
-  --accent-deep:   #0e6996;
 
-  --bg0:           #f3f6fa;        /* canvas — soft off-white */
-  --bg1:           #e8eef5;
-  --bg-grid:       rgba(14,58,95,0.04);
+  /* Steel-blue accent — primary action / active state. Replaces the
+     bright cyan; that's now demoted to a "soft" accent for hairline
+     borders + the brand-secondary mark only. */
+  --accent:        #2c5680;
+  --accent-soft:   #4775a0;
+  --accent-deep:   #1e3f60;
+
+  /* Brand cyan retained at low intensity for the bridge band's
+     bottom border, the sec-toolbar live-pill, etc. — keeps the
+     brand thread without painting the whole UI in it. */
+  --brand-cyan:    #0099cc;
+  --brand-cyan-2:  #33b0dd;
+
+  --bg0:           #f1f4f8;        /* canvas — soft off-white */
+  --bg1:           #e6ecf3;
+  --bg-grid:       rgba(14,37,65,0.04);
 
   --panel:         #ffffff;        /* cards */
-  --panel-2:       #f9fbfd;
+  --panel-2:       #f6f8fb;
   --panel-deep:    #0e3a5f;        /* status strips, footer */
 
   --text:          #0e2541;        /* primary text on light */
+  --text-soft:     #2a4566;        /* secondary text */
   --text-on-dark:  #e8f0f8;
-  --muted:         #5a6f87;
-  --hairline:      rgba(14,58,95,0.14);
-  --hairline-soft: rgba(14,58,95,0.08);
+  --muted:         #6a7e94;
+  --hairline:      rgba(14,37,65,0.14);
+  --hairline-soft: rgba(14,37,65,0.08);
 
-  --danger:        #c0392b;
-  --warn:          #d97706;
-  --ok:            #16a07a;
-  --ring:          rgba(0,153,204,0.30);
+  /* Status colours, retuned for legibility on light surfaces. Less
+     saturation, more depth — closer to "control room indicator
+     light" than "candy". */
+  --danger:        #a63427;
+  --danger-soft:   rgba(166,52,39,0.10);
+  --warn:          #b07406;
+  --warn-soft:     rgba(176,116,6,0.10);
+  --ok:            #2c8862;
+  --ok-soft:       rgba(44,136,98,0.10);
+
+  --ring:          rgba(44,86,128,0.28);
 }
 
 *{box-sizing:border-box}
@@ -110,7 +140,7 @@ a{color:inherit}
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 24px;
-  border-bottom: 3px solid var(--accent);
+  border-bottom: 2px solid var(--brand-cyan);
 }
 .bridge-brand{ display: flex; align-items: center; gap: 14px; }
 .bridge-brand img{
@@ -205,9 +235,9 @@ a{color:inherit}
 }
 .bridge-status .ind.ok .v{ color: #a7f3d0; }
 .bridge-status .ind .dot{
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--accent-soft);
-  box-shadow: 0 0 8px rgba(51,176,221,0.7);
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 6px rgba(44,136,98,0.55);
 }
 
 /* Main body of the bridge console — light surface holding the
@@ -239,27 +269,31 @@ a{color:inherit}
   display:flex;
   gap:10px;
   align-items:center;
-  font-weight:700;
-  letter-spacing:0.04em;
+  font-weight:600;
+  font-size: 14px;
+  letter-spacing:0.02em;
   color: var(--text);
 }
 
+/* Section badge — slim, monospaced, used as a label chip on titles. */
 .badge{
-  font-size:11px;
-  padding:3px 9px;
-  border-radius: 3px;
-  background: rgba(0,153,204,0.10);
-  border:1px solid rgba(0,153,204,0.30);
-  color: var(--accent-deep);
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 2px;
+  background: var(--bg-grid);
+  border: 1px solid var(--hairline);
+  color: var(--text-soft);
+  font-weight: 600;
+  letter-spacing: 0.10em;
   text-transform: uppercase;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .sub{
   color: var(--muted);
   margin-top:8px;
-  line-height:1.4;
+  line-height:1.45;
+  font-size: 13px;
 }
 
 .grid{
@@ -272,47 +306,149 @@ a{color:inherit}
 .kpi{
   background: var(--panel-2);
   border: 1px solid var(--hairline);
-  border-radius: 4px;
+  border-radius: 3px;
   padding: 12px 14px;
 }
 
 .kpiLabel{
   color: var(--muted);
-  font-size: 10.5px; font-weight: 700;
-  letter-spacing: 0.08em; text-transform: uppercase;
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.10em; text-transform: uppercase;
 }
 .kpiValue{
-  font-size: 22px; font-weight: 700; margin-top: 4px;
+  font-size: 20px; font-weight: 600; margin-top: 6px;
   color: var(--text); font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: -0.01em;
 }
 
-/* Instruments */
-.inst{display:flex; flex-direction:column; gap:6px}
-.instLabel{color: rgba(230,243,255,0.72); font-size:12px}
-.gWrap{display:flex; align-items:center; gap:10px}
+/* ── Instruments ──────────────────────────────────────────────── */
+.inst{display:flex; flex-direction:column; gap:8px}
+.instLabel{
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+}
+.gWrap{display:flex; align-items:center; gap:14px}
 .gValue{display:flex; flex-direction:column; gap:2px}
-.gNum{font-size:18px; font-weight:900}
-.gUnit{font-size:12px; opacity:0.75; margin-left:6px}
-.gSub{color: rgba(230,243,255,0.62); font-size:11px}
+.gNum{
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.gUnit{
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.gSub{
+  color: var(--muted);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+}
 
-.bar{height:12px; border-radius:999px; background: rgba(255,255,255,0.08); overflow:hidden; border:1px solid rgba(255,255,255,0.12)}
-.barFill{height:100%; border-radius:999px; box-shadow: 0 0 18px rgba(34,211,238,0.20)}
+/* Bar meter — slim track, single solid fill, no halo glow. */
+.bar{
+  height: 6px;
+  border-radius: 1px;
+  background: var(--bg-grid);
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+}
+.barFill{
+  height: 100%;
+  border-radius: 0;
+  background: var(--accent);
+  box-shadow: none;
+}
 
-.lock{width:64px; height:64px; position:relative; margin-top:2px; filter: drop-shadow(0 10px 22px rgba(0,0,0,0.35));}
-.lock .shackle{position:absolute; left:14px; top:3px; width:36px; height:30px; border:6px solid rgba(230,243,255,0.75); border-bottom:none; border-radius:18px 18px 0 0;}
-.lock.unlocked .shackle{transform: rotate(-18deg) translateX(-6px); transform-origin: left bottom;}
-.lock .body{position:absolute; left:10px; top:26px; width:44px; height:34px; border-radius:10px; background: rgba(34,211,238,0.14); border:1px solid rgba(34,211,238,0.32);}
-.lock.locked .body{background: rgba(52,211,153,0.12); border-color: rgba(52,211,153,0.35);}
-.lock .keyhole{position:absolute; left:19px; top:10px; width:6px; height:12px; border-radius:3px; background: rgba(230,243,255,0.75); box-shadow: 0 0 0 2px rgba(0,0,0,0.18) inset;}
+/* Lock indicator — replaced the cartoon padlock with a slim
+   rectangle + shackle drawn purely in CSS. Reads as a deliberate
+   "secured / unsecured" status chip rather than a children's-book
+   icon. The shackle is a top-only border arc, the body a small
+   rounded rectangle with a keyhole dot. */
+.lock{
+  width: 48px;
+  height: 56px;
+  position: relative;
+  margin-top: 2px;
+}
+.lock .shackle{
+  position: absolute;
+  left: 12px; top: 4px;
+  width: 24px; height: 18px;
+  border: 2px solid var(--text-soft);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  transition: transform 0.15s ease;
+}
+.lock.unlocked .shackle{
+  transform: rotate(-22deg) translate(-2px, -2px);
+  transform-origin: left bottom;
+}
+.lock .body{
+  position: absolute;
+  left: 6px; top: 20px;
+  width: 36px; height: 30px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+}
+.lock.locked .body{
+  background: var(--ok);
+  border-color: var(--ok);
+}
+.lock .keyhole{
+  position: absolute;
+  left: 50%; top: 11px;
+  transform: translateX(-50%);
+  width: 4px; height: 8px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.85);
+  box-shadow: none;
+}
 
-.waves{display:flex; gap:6px; align-items:flex-end; height:34px}
-.wave{width:10px; height:10px; border-radius:6px; background: rgba(255,255,255,0.10); border:1px solid rgba(255,255,255,0.12)}
-.wave.on{height:28px; background: rgba(34,211,238,0.16); border-color: rgba(34,211,238,0.30); box-shadow: 0 0 18px rgba(34,211,238,0.14)}
+/* Sea state — equalizer-style bars (no rounded corners), increasing
+   in height to convey a scale rather than a row of lozenges. */
+.waves{
+  display: flex;
+  gap: 4px;
+  align-items: flex-end;
+  height: 28px;
+}
+.wave{
+  width: 6px;
+  height: 6px;
+  border-radius: 0;
+  background: var(--bg-grid);
+  border: 1px solid var(--hairline);
+}
+.wave:nth-child(1){ height: 8px; }
+.wave:nth-child(2){ height: 12px; }
+.wave:nth-child(3){ height: 16px; }
+.wave:nth-child(4){ height: 20px; }
+.wave:nth-child(5){ height: 24px; }
+.wave.on{
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: none;
+}
 
 .hr{
-  height:1px;
-  background: rgba(255,255,255,0.10);
-  margin:16px 0;
+  height: 1px;
+  background: var(--hairline-soft);
+  margin: 14px 0;
+  border: 0;
 }
 
 .form{
@@ -324,49 +460,70 @@ a{color:inherit}
 
 .input{
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 3px;
+  padding: 9px 12px;
+  border-radius: 2px;
   border: 1px solid var(--hairline);
   background: #fff;
   color: var(--text);
   outline: none;
-  font-size: 14px;
+  font-size: 13.5px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
+.input:hover{ border-color: var(--text-soft); }
 .input:focus{
   box-shadow: 0 0 0 3px var(--ring);
   border-color: var(--accent);
 }
 
+/* Primary button — filled deep navy. The previous version used
+   bright cyan which read as a "play" button. Real ops surfaces
+   keep the primary action restrained: dark fill, white text, light
+   capitalisation. */
 .btn{
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border-radius: 3px;
-  border: 1px solid var(--accent);
-  background: var(--accent);
+  border-radius: 2px;
+  border: 1px solid var(--brand-navy);
+  background: var(--brand-navy);
   color: #fff;
-  padding: 10px 16px;
-  font-weight: 700; font-size: 12px;
-  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 8px 16px;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: none;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
-.btn:hover{ background: var(--accent-deep); border-color: var(--accent-deep); }
+.btn:hover{
+  background: var(--brand-navy-2);
+  border-color: var(--brand-navy-2);
+}
 .btn:active{ transform: translateY(1px); }
+.btn:disabled,
+.btn[disabled]{
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .btn.ghost{
-  background: transparent;
+  background: var(--panel);
   color: var(--text);
   border-color: var(--hairline);
 }
-.btn.ghost:hover{ background: var(--bg-grid); color: var(--accent-deep); }
+.btn.ghost:hover{
+  background: var(--panel-2);
+  color: var(--text);
+  border-color: var(--text-soft);
+}
 
 .err{
-  color: rgba(255,180,180,0.95);
-  background: rgba(251,113,133,0.10);
-  border: 1px solid rgba(251,113,133,0.25);
-  padding:10px;
-  border-radius: 12px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid rgba(166,52,39,0.30);
+  padding: 9px 12px;
+  border-radius: 2px;
+  font-size: 13px;
 }
 
 .nav{
@@ -376,15 +533,18 @@ a{color:inherit}
   gap:12px;
 }
 
+/* Mono pill — slim status chip with hairline border. Used for
+   one-shot data points (CHAIN: 47%, ZONE: LOUNGE, etc.). */
 .pill{
-  font-size: 11px;
-  padding: 4px 9px;
-  border-radius: 3px;
-  background: var(--bg-grid);
+  font-size: 10.5px;
+  padding: 3px 7px;
+  border-radius: 2px;
+  background: var(--panel);
   border: 1px solid var(--hairline);
-  color: var(--text);
-  font-weight: 700;
+  color: var(--text-soft);
+  font-weight: 600;
   letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
 }
 
 .panelGrid{
@@ -398,30 +558,37 @@ a{color:inherit}
   grid-column: 1 / -1;
 }
 
-/* Tabs + views */
+/* Tabs + views — slim underline accent, sentence-case copy. Real
+   ops surfaces don't shout at you with all-caps tab labels. */
 .tabs{
-  display: flex; gap: 0; flex-wrap: wrap;
+  display: flex;
+  gap: 0;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--hairline);
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 .tab{
   border: 0;
-  border-bottom: 3px solid transparent;
+  border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-weight: 700;
-  font-size: 12px; letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 12px 18px;
-  transition: color 0.15s ease, border-color 0.15s ease;
-  display: inline-flex; align-items: center; gap: 8px;
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  padding: 11px 16px;
+  transition: color 0.12s ease, border-color 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
-.tab:hover{ color: var(--accent-deep); }
+.tab:hover{ color: var(--text); }
 .tab.active{
-  color: var(--accent-deep);
-  border-bottom-color: var(--accent);
-  background: rgba(0,153,204,0.04);
+  color: var(--text);
+  border-bottom-color: var(--brand-navy);
+  background: transparent;
+  font-weight: 600;
 }
 
 .view{margin-top:6px}
@@ -431,15 +598,50 @@ a{color:inherit}
 .navGrid{display:grid; grid-template-columns: 1.2fr 0.8fr; gap:12px; margin-top:12px}
 @media (max-width: 980px){ .navGrid{grid-template-columns:1fr} }
 
-.collisionUnderMap{margin-top:10px; padding:12px; border-radius:14px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.22);
-  display:grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; gap:10px; align-items:center}
+.collisionUnderMap{
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  background: var(--panel);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 12px;
+  align-items: center;
+}
 
-.mapWrap{position:relative; height:360px; border-radius:14px; overflow:hidden; border:1px solid rgba(255,255,255,0.10);}
+.mapWrap{
+  position: relative;
+  height: 360px;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+}
 .map{position:absolute; inset:0;}
 .mapOverlay{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:16px; z-index:3; pointer-events:none;}
-.mapOverlayCard{width:min(520px, 100%); background: rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.14); border-radius:14px; padding:14px; backdrop-filter: blur(8px);}
-.mapHud{position:absolute; left:12px; bottom:12px; padding:10px 12px; border-radius:12px;
-  background: rgba(0,0,0,0.28); border:1px solid rgba(255,255,255,0.12); z-index:4}
+.mapOverlayCard{
+  width: min(520px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 14px 16px;
+  box-shadow: 0 6px 20px rgba(14,37,65,0.15);
+}
+.mapHud{
+  position: absolute;
+  left: 12px; bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 2px;
+  background: rgba(14,37,65,0.85);
+  color: rgba(255,255,255,0.95);
+  border: 1px solid rgba(255,255,255,0.10);
+  z-index: 4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+}
 
 .compassWrap{position:absolute; right:12px; top:12px; z-index:2}
 
@@ -460,77 +662,346 @@ a{color:inherit}
 .tick{position:absolute; left:50%; top:10px; width:2px; height:8px; background: rgba(255,255,255,0.25); transform-origin: 0 50px;}
 .tick.major{height:12px; background: rgba(34,211,238,0.55)}
 
-/* Throttle */
-.throttle{display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:end}
-.thLabel{grid-column:1 / -1; font-weight:900}
-.thBody{position:relative; width:74px; height:320px; border-radius:14px; border:1px solid rgba(255,255,255,0.14);
-  background: rgba(0,0,0,0.20); overflow:hidden}
-.thTrack{position:absolute; left:50%; top:10px; bottom:10px; width:10px; transform: translateX(-50%);
-  border-radius:999px; background: rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.10)}
-.thHandle{position:absolute; left:50%; width:54px; height:28px; transform: translate(-50%, 50%);
-  border-radius:14px; background: linear-gradient(180deg, rgba(34,211,238,0.22), rgba(96,165,250,0.12));
-  border:1px solid rgba(34,211,238,0.35); box-shadow: 0 10px 30px rgba(0,0,0,0.40);
-  display:flex; align-items:center; justify-content:center;}
-.thVal{font-size:11px; opacity:0.92}
-.thSlider{position:absolute; inset:0; transform: rotate(-90deg) translateX(-320px); transform-origin: top left;
-  width:320px; height:74px; opacity:0; cursor:pointer;}
+/* Throttle — kept as a dark bridge instrument; refined to remove the
+   candy gradient + heavy drop-shadow. The handle is now a small
+   solid steel block with a single hairline highlight. */
+.throttle{display:grid; grid-template-columns: 1fr auto; gap:12px; align-items:end}
+.thLabel{
+  grid-column: 1 / -1;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+.thBody{
+  position: relative;
+  width: 64px;
+  height: 320px;
+  border-radius: 3px;
+  border: 1px solid var(--brand-navy);
+  background: var(--brand-navy-2);
+  overflow: hidden;
+}
+.thTrack{
+  position: absolute;
+  left: 50%; top: 10px; bottom: 10px;
+  width: 4px;
+  transform: translateX(-50%);
+  border-radius: 0;
+  background: rgba(255,255,255,0.10);
+  border: 0;
+}
+.thHandle{
+  position: absolute;
+  left: 50%;
+  width: 44px;
+  height: 22px;
+  transform: translate(-50%, 50%);
+  border-radius: 2px;
+  background: var(--accent);
+  border: 1px solid var(--accent-soft);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 2px 6px rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.thVal{
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+.thSlider{
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg) translateX(-320px);
+  transform-origin: top left;
+  width: 320px; height: 64px;
+  opacity: 0;
+  cursor: pointer;
+}
 
-.destHandle{width:14px; height:14px; border-radius:999px; background: rgba(34,211,238,0.95); border:2px solid rgba(255,255,255,0.9);
-  box-shadow: 0 0 0 6px rgba(34,211,238,0.18), 0 12px 30px rgba(0,0,0,0.35);}
+/* Tick marks down the throttle body — gives it scale, like a real
+   bridge telegraph. */
+.thBody::before{
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 10px; bottom: 10px;
+  width: 6px;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255,255,255,0.18) 0,
+      rgba(255,255,255,0.18) 1px,
+      transparent 1px,
+      transparent 30px
+    );
+}
+.thBody::after{
+  content: "";
+  position: absolute;
+  right: 8px;
+  top: 10px; bottom: 10px;
+  width: 6px;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255,255,255,0.18) 0,
+      rgba(255,255,255,0.18) 1px,
+      transparent 1px,
+      transparent 30px
+    );
+}
 
-/* Collision panel */
-.collisionPanel{margin-top:12px; padding:12px; border-radius:14px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.22);
-  display:grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; gap:10px; align-items:center}
-.collisionTitle{font-weight:900}
-.toggle{border-radius:999px; padding:8px 12px; font-weight:900; cursor:pointer; border:1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: rgba(230,243,255,0.92)}
-.toggle.on{border-color: rgba(16,185,129,0.35); background: rgba(16,185,129,0.10)}
-.toggle.off{border-color: rgba(251,113,133,0.40); background: rgba(251,113,133,0.10)}
-.status{grid-column:1 / -1; padding:8px 10px; border-radius:12px; display:flex; gap:8px; align-items:center; font-weight:900}
-.status.safe{background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.28); color: rgba(209,250,229,0.95)}
-.status.disabled{background: rgba(251,113,133,0.10); border: 1px solid rgba(251,113,133,0.28); color: rgba(255,210,210,0.95)}
-.safeDot{width:8px; height:8px; border-radius:999px; background: rgba(52,211,153,0.95); box-shadow: 0 0 14px rgba(52,211,153,0.35)}
-.dangerDot{width:8px; height:8px; border-radius:999px; background: rgba(251,113,133,0.95); box-shadow: 0 0 14px rgba(251,113,133,0.35)}
+.destHandle{
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #fff;
+  box-shadow:
+    0 0 0 3px rgba(44,86,128,0.25),
+    0 4px 10px rgba(14,37,65,0.30);
+}
 
-/* Anchor */
-.anchorRow{display:grid; grid-template-columns: repeat(2, 1fr); gap:10px; margin-top:10px}
-@media (max-width: 980px){ .anchorRow{grid-template-columns:1fr} }
-.anchorState{display:flex; gap:10px; align-items:flex-start; padding:10px; border-radius:14px; border:1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.03); opacity:0.6}
-.anchorState.active{opacity:1; border-color: rgba(34,211,238,0.35); box-shadow: 0 0 0 4px rgba(34,211,238,0.10) inset}
-.anchorIcon{width:34px; height:34px; border-radius:12px; display:flex; align-items:center; justify-content:center;
-  background: rgba(0,0,0,0.20); border:1px solid rgba(255,255,255,0.10); font-size:16px}
-.anchorLabel{font-weight:900}
-.anchorDesc{color: rgba(230,243,255,0.65); font-size:12px; margin-top:2px}
-.anchorMeta{display:flex; gap:10px; flex-wrap:wrap}
-.pill.warn{border-color: rgba(251,113,133,0.35); background: rgba(251,113,133,0.10)}
-.pill.ok{border-color: rgba(16,185,129,0.35); background: rgba(16,185,129,0.10)}
-.pill.danger{border-color: rgba(251,113,133,0.40); background: rgba(251,113,133,0.10)}
-
-/* Stabilizers */
-.stabGrid{display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px}
-@media (max-width: 980px){ .stabGrid{grid-template-columns:1fr} }
-.stabCard{border-radius:14px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.18); padding:12px}
-.stabTitle{font-weight:900}
-.stabModes{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px}
-.finRow{display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px}
-.fin{display:flex; flex-direction:column; gap:8px; align-items:center; padding:12px; border-radius:14px; border:1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.03)}
-.finLabel{font-weight:900; opacity:0.85}
-.finGauge{width:110px; height:60px; border-radius: 999px 999px 14px 14px; border:1px solid rgba(255,255,255,0.10);
-  background: radial-gradient(220px 100px at 50% 80%, rgba(34,211,238,0.14), transparent 60%), rgba(0,0,0,0.18);
-  position:relative; overflow:hidden}
-.finNeedle{position:absolute; left:50%; bottom:10px; width:2px; height:44px; background: rgba(230,243,255,0.85);
-  transform-origin: bottom center; box-shadow: 0 0 14px rgba(34,211,238,0.18)}
-
-.panel{
-  border-radius: 4px;
+/* Collision panel + status pills. */
+.collisionPanel{
+  margin-top: 12px;
   padding: 14px 16px;
+  border-radius: 3px;
   border: 1px solid var(--hairline);
   background: var(--panel);
-  box-shadow: 0 1px 2px rgba(14,58,95,0.04);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 12px;
+  align-items: center;
+}
+.collisionTitle{
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Toggle pill — slim, with a small status dot, less candy.
+   The TSX writes "Enabled" / "Disabled" / "ON" / "OFF" inside; we
+   render a leading dot in the background using ::before. */
+.toggle{
+  position: relative;
+  border-radius: 2px;
+  padding: 6px 12px 6px 24px;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  border: 1px solid var(--hairline);
+  background: var(--panel);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.toggle::before{
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.toggle:hover{ border-color: var(--text-soft); }
+.toggle.on{
+  background: var(--ok-soft);
+  border-color: rgba(44,136,98,0.45);
+  color: #1a5e44;
+}
+.toggle.on::before{ background: var(--ok); }
+.toggle.off{
+  background: var(--danger-soft);
+  border-color: rgba(166,52,39,0.40);
+  color: #7a2519;
+}
+.toggle.off::before{ background: var(--danger); }
+
+/* Status banner ribbon — appears under collision toggle, etc. */
+.status{
+  grid-column: 1 / -1;
+  padding: 8px 12px;
+  border-radius: 2px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.status.safe{
+  background: var(--ok-soft);
+  border: 1px solid rgba(44,136,98,0.35);
+  color: #1a5e44;
+}
+.status.disabled{
+  background: var(--danger-soft);
+  border: 1px solid rgba(166,52,39,0.35);
+  color: #7a2519;
+}
+.safeDot{
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: none;
+}
+.dangerDot{
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: none;
+}
+
+/* Anchor — slim card row, dimmed when not the active state. The
+   active card gets a thin steel left border instead of a glow ring. */
+.anchorRow{
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+@media (max-width: 980px){ .anchorRow{grid-template-columns:1fr} }
+.anchorState{
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 2px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--hairline);
+  background: var(--panel);
+  opacity: 0.55;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+.anchorState.active{
+  opacity: 1;
+  border-left-color: var(--brand-navy);
+  background: var(--panel-2);
+  box-shadow: none;
+}
+.anchorIcon{
+  width: 28px; height: 28px;
+  border-radius: 2px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-grid);
+  border: 1px solid var(--hairline);
+  color: var(--text-soft);
+  flex-shrink: 0;
+}
+.anchorIcon svg{ width: 16px; height: 16px; display: block; }
+.anchorState.active .anchorIcon{
+  background: var(--brand-navy);
+  border-color: var(--brand-navy);
+  color: #fff;
+}
+.anchorLabel{
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+.anchorDesc{
+  color: var(--muted);
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+.anchorMeta{
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* Stabilizers — light cards with monospace readouts. */
+.stabGrid{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+@media (max-width: 980px){ .stabGrid{grid-template-columns:1fr} }
+.stabCard{
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  background: var(--panel);
+  padding: 14px 16px;
+}
+.stabTitle{
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  text-transform: uppercase;
+}
+.stabModes{
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.finRow{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+.fin{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  background: var(--panel-2);
+}
+.finLabel{
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.finGauge{
+  width: 100px;
+  height: 50px;
+  border-radius: 50px 50px 2px 2px;
+  border: 1px solid var(--hairline);
+  background: var(--bg-grid);
+  position: relative;
+  overflow: hidden;
+}
+.finNeedle{
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  width: 2px;
+  height: 38px;
+  background: var(--brand-navy);
+  transform-origin: bottom center;
+  box-shadow: none;
+  border-radius: 1px;
+}
+
+.panel{
+  border-radius: 3px;
+  padding: 16px 18px;
+  border: 1px solid var(--hairline);
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(14,37,65,0.04);
 }
 .panelTitle{
-  font-weight: 700;
-  margin-bottom: 10px;
+  font-weight: 600;
+  margin-bottom: 12px;
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -538,29 +1009,113 @@ a{color:inherit}
   padding-bottom: 8px;
   border-bottom: 1px solid var(--hairline-soft);
 }
-.ctl{display:grid; grid-template-columns: 110px 1fr 70px; align-items:center; gap:10px; margin:10px 0; color: rgba(230,243,255,0.85)}
-.ctl input[type="range"]{width:100%}
+
+/* Slider control row — label / range / value, mono-readout. */
+.ctl{
+  display: grid;
+  grid-template-columns: 110px 1fr 70px;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  color: var(--text);
+  font-size: 13px;
+}
+.ctl input[type="range"]{ width: 100%; accent-color: var(--brand-navy); }
+.ctl .mono,
+.ctl span:last-child{
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-soft);
+}
 
 .helmGrid{display:grid; grid-template-columns: auto 1fr; gap:12px; align-items:start}
 @media (max-width: 980px){ .helmGrid{grid-template-columns:1fr} }
 
-.engineRoom{margin-top:12px; border-radius:14px; border:1px solid rgba(255,255,255,0.10); padding:12px; overflow:hidden}
+.engineRoom{
+  margin-top: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  padding: 14px 16px;
+  overflow: hidden;
+}
 .engineGrid{display:grid; grid-template-columns: repeat(3, 1fr); gap:12px}
 @media (max-width: 980px){ .engineGrid{grid-template-columns:1fr} }
-.engineCard{border-radius:14px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.22); padding:12px}
-.engineTop{display:flex; justify-content:space-between; align-items:center; gap:10px}
-.engineName{font-weight:900; letter-spacing:0.02em}
-.engineMetrics{display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px}
+.engineCard{
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  background: var(--panel);
+  padding: 14px 16px;
+}
+.engineTop{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.engineName{
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+.engineMetrics{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
 
-/* Connectivity visuals */
-.uplink{margin-top:12px; height:86px; position:relative; border-radius:12px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.18); overflow:hidden}
-
-.sigBars{position:absolute; left:12px; top:12px; bottom:12px; right:12px; display:flex; align-items:flex-end; gap:6px; opacity:0.7; padding-right:110px}
-.sigBars.on{opacity:1}
-.sigBar{width:8px; border-radius:6px; background: rgba(255,255,255,0.10); border:1px solid rgba(255,255,255,0.12)}
-.sigBar.on{background: rgba(34,211,238,0.18); border-color: rgba(34,211,238,0.30); box-shadow: 0 0 18px rgba(34,211,238,0.12)}
-
-.sat{position:absolute; right:12px; top:50%; transform: translateY(-50%); padding:8px 10px; border-radius:999px; border:1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); font-weight:900; opacity:0.7}
+/* Connectivity uplink visual — slim signal-bar strip + satellite tag. */
+.uplink{
+  margin-top: 12px;
+  height: 76px;
+  position: relative;
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.sigBars{
+  position: absolute;
+  left: 14px; top: 14px; bottom: 14px; right: 14px;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  opacity: 0.6;
+  padding-right: 100px;
+}
+.sigBars.on{ opacity: 1; }
+.sigBar{
+  width: 5px;
+  border-radius: 1px;
+  background: var(--bg-grid);
+  border: 1px solid var(--hairline);
+}
+.sigBar.on{
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: none;
+}
+.sat{
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 5px 10px;
+  border-radius: 2px;
+  border: 1px solid var(--hairline);
+  background: var(--panel);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.7;
+}
 .sat.on{opacity:1; border-color: rgba(34,211,238,0.30)}
 
 .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
@@ -572,28 +1127,35 @@ a{color:inherit}
    with sweep lines + scanlines so the demo never has empty squares. */
 
 .sec-toolbar{
-  display: flex; gap: 12px; align-items: center;
+  display: flex;
+  gap: 12px;
+  align-items: center;
   margin-bottom: 14px;
-  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.01em;
   color: var(--muted);
 }
 .sec-toolbar .live-pill{
-  display: inline-flex; gap: 6px; align-items: center;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(192,57,43,0.10);
-  border: 1px solid rgba(192,57,43,0.35);
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 2px;
+  background: var(--danger-soft);
+  border: 1px solid rgba(166,52,39,0.35);
   color: var(--danger);
-  font-weight: 700; letter-spacing: 0.10em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  font-size: 11px;
 }
 .sec-toolbar .live-pill .blink{
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 6px; height: 6px; border-radius: 50%;
   background: var(--danger);
   animation: sec-blink 1.2s ease-in-out infinite;
 }
 /* Disabled-cameras pill — reads as "intentional", not "live REC". */
 .sec-toolbar .live-pill.offline{
-  background: rgba(14,58,95,0.06);
+  background: var(--bg-grid);
   border-color: var(--hairline);
   color: var(--muted);
 }
@@ -632,9 +1194,12 @@ a{color:inherit}
 .sec-toolbar .clock{
   margin-left: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: var(--text);
-  font-weight: 700; letter-spacing: 0.04em;
+  color: var(--text-soft);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.02em;
   text-transform: none;
+  font-variant-numeric: tabular-nums;
 }
 
 .sec-grid{
@@ -663,18 +1228,22 @@ a{color:inherit}
   position: absolute; left: 0; right: 0; top: 0;
   padding: 8px 10px;
   display: flex; align-items: center; gap: 8px;
-  font-size: 11px; letter-spacing: 0.08em;
-  text-transform: uppercase; color: rgba(255,255,255,0.92);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: rgba(255,255,255,0.95);
   background: linear-gradient(180deg, rgba(0,0,0,0.55), transparent);
   z-index: 3;
 }
 .sec-tile .sec-head .cam-id{
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: rgba(255,255,255,0.70);
+  color: rgba(255,255,255,0.65);
   font-size: 10px;
+  letter-spacing: 0.04em;
 }
 .sec-tile .sec-head .cam-name{
-  font-weight: 700; letter-spacing: 0.04em;
+  font-weight: 500;
+  letter-spacing: 0;
 }
 .sec-tile .sec-head .rec{
   margin-left: auto;
@@ -799,316 +1368,40 @@ a{color:inherit}
 }
 
 
-/* ── Light-theme readability pass ──────────────────────────────────
-   The legacy CSS above was authored for a dark holo console (white
-   text on black, cyan glows). When the chrome moved to a light
-   operations surface, many rules became unreadable — rgba(230,243,255,
-   …) text on near-white backgrounds, rgba(0,0,0,0.20) "panels" that
-   look like washes instead of dark cards. The block below retunes
-   every legacy class onto the new bridge palette so the rest of the
-   app reads as clean as the new Security view does.
+/* ── Polish overrides ──────────────────────────────────────────────
+   The legacy CSS rules above are now light-theme native (palette
+   retuned, sizes refined, primitives rebuilt). This block holds
+   only the things that genuinely need to layer on top — view
+   titles, the .holo radial overlay disable, the login-page card
+   scoping, and the special "tab as button group" treatment used
+   by the stabilizer-mode + entertainment-scene pickers. */
 
-   The two exceptions are the **compass** and the **throttle**, where
-   a dark instrument body on the light surface reads better than a
-   floating light disc — those stay dark with explicit solid colours
-   (not transparency) and white text on top.
-*/
-
-/* ── View titles + subtitles (used on every tab) ─────────────────── */
+/* ── View titles + subtitles (used on every tab) ─────────────── */
 .viewTitle{
   color: var(--text);
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 .viewSub{
   color: var(--muted);
-  margin-top: 6px;
-  font-size: 12px;
+  margin-top: 4px;
+  font-size: 13px;
+  letter-spacing: 0;
 }
-.sub{ color: var(--muted); }
-
-/* ── Instruments (gauge + bar + lock + sea state) ──────────────── */
-.instLabel{
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.gNum{ color: var(--text); }
-.gSub{ color: var(--muted); }
-.gUnit{ color: var(--muted); }
-
-/* The gauge's background circle + track were tuned for white-on-black.
-   On a light card they need to be slightly tinted so the dial face
-   reads as "an instrument" rather than disappearing. */
-.inst svg circle[fill^="rgba(0,0,0"]{ fill: var(--bg-grid); }
-.inst svg circle[stroke^="rgba(255,255,255,0.10)"]{
-  stroke: var(--hairline);
-}
-.inst svg line{ stroke: var(--brand-navy); }
-.inst svg circle[fill^="rgba(230,243,255"]{ fill: var(--brand-navy); }
-
-.bar{
-  background: var(--bg-grid);
-  border-color: var(--hairline);
-  box-shadow: none;
-}
-.barFill{ box-shadow: none; }
-
-.lock{ filter: drop-shadow(0 6px 14px rgba(14,58,95,0.18)); }
-.lock .shackle{ border-color: var(--brand-navy); }
-.lock .body{
-  background: rgba(0,153,204,0.10);
-  border-color: rgba(0,153,204,0.45);
-}
-.lock.locked .body{
-  background: rgba(22,160,122,0.12);
-  border-color: rgba(22,160,122,0.45);
-}
-.lock .keyhole{ background: var(--brand-navy); box-shadow: none; }
-
-.wave{
-  background: var(--bg-grid);
-  border-color: var(--hairline);
-}
-.wave.on{
-  background: rgba(0,153,204,0.18);
-  border-color: rgba(0,153,204,0.45);
-  box-shadow: none;
-}
-
-/* ── Card surfaces, dividers, KPI tiles ────────────────────────── */
-.kpi{
-  background: var(--panel-2);
-  border-color: var(--hairline);
-}
-.hr{ background: var(--hairline-soft); }
 
 /* The .holo radial overlay was tuned for cyan-on-black; on a light
    card it just murks the text underneath. Disabled. */
 .holo::before{ display: none; }
 
-/* ── Slider / control rows on the Helm + climate + entertainment
-   panels. The label/value text was rgba(230,243,255,…) → invisible. */
-.ctl{ color: var(--text); }
-.ctl .mono{ color: var(--text); }
-
-/* ── Compass — kept dark on purpose (reads as "an instrument") ─── */
-.compass{
-  background: var(--brand-navy-2);
-  border-color: var(--brand-navy);
-  box-shadow: 0 8px 28px rgba(14,58,95,0.18);
-}
-.compassRing{ border-color: rgba(255,255,255,0.20); }
-.compassN, .compassE, .compassS, .compassW{ color: rgba(255,255,255,0.92); }
-.compassReadout{ color: rgba(255,255,255,0.85); }
-.tick{ background: rgba(255,255,255,0.30); }
-.tick.major{ background: var(--accent-soft); }
-
-/* ── Throttle — kept dark for the same reason ──────────────────── */
-.thLabel{ color: var(--text); font-weight: 700; }
-.thBody{
-  background: var(--brand-navy-2);
-  border-color: var(--brand-navy);
-}
-.thTrack{
-  background: rgba(255,255,255,0.10);
-  border-color: rgba(255,255,255,0.18);
-}
-.thHandle{
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-deep) 100%);
-  border-color: rgba(255,255,255,0.55);
-  box-shadow: 0 4px 14px rgba(0,0,0,0.30);
-  color: #fff;
-}
-.thVal{ color: #fff; opacity: 1; font-weight: 700; }
-
-/* ── Map overlays + HUD card on the Navigation view. */
-.mapWrap{
-  border-color: var(--hairline);
-  background: var(--panel-2);
-}
-.mapOverlayCard{
-  background: var(--panel);
-  border: 1px solid var(--hairline);
-  color: var(--text);
-  backdrop-filter: none;
-  box-shadow: 0 8px 28px rgba(14,58,95,0.18);
-}
-.mapHud{
-  background: var(--panel);
-  border: 1px solid var(--hairline);
-  color: var(--text);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  box-shadow: 0 1px 2px rgba(14,58,95,0.06);
-}
-
-/* ── Collision panel + status pills (used by Navigation, Climate,
-   Entertainment, Engine Room toggle states). ─────────────────── */
-.collisionPanel,
-.collisionUnderMap{
-  background: var(--panel-2);
-  border-color: var(--hairline);
-  color: var(--text);
-}
-.collisionTitle{
-  color: var(--text);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-.toggle{
-  background: var(--panel);
-  border-color: var(--hairline);
-  color: var(--text);
-  font-weight: 700;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-}
-.toggle.on{
-  background: rgba(22,160,122,0.10);
-  border-color: rgba(22,160,122,0.45);
-  color: #0a6b51;
-}
-.toggle.off{
-  background: rgba(192,57,43,0.10);
-  border-color: rgba(192,57,43,0.45);
-  color: #991b1b;
-}
-.status{
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-.status.safe{
-  background: rgba(22,160,122,0.10);
-  border-color: rgba(22,160,122,0.40);
-  color: #0a6b51;
-}
-.status.disabled{
-  background: rgba(192,57,43,0.10);
-  border-color: rgba(192,57,43,0.40);
-  color: #991b1b;
-}
-.safeDot{ box-shadow: none; }
-.dangerDot{ box-shadow: none; }
-
-/* ── Engine room shell + cards. */
-.engineRoom{
-  border-color: var(--hairline) !important;
-  border-radius: 4px;
-  padding: 12px;
-}
-.engineCard{
-  background: var(--panel);
-  border-color: var(--hairline);
-  color: var(--text);
-  border-radius: 4px;
-}
-.engineName{ color: var(--text); font-weight: 700; }
-
-/* ── Connectivity uplink visual. */
-.uplink{
-  background: var(--panel-2);
-  border-color: var(--hairline);
-}
-.sigBar{
-  background: var(--bg-grid);
-  border-color: var(--hairline);
-}
-.sigBar.on{
-  background: rgba(0,153,204,0.20);
-  border-color: rgba(0,153,204,0.55);
-  box-shadow: none;
-}
-.sat{
-  background: var(--panel);
-  border-color: var(--hairline);
-  color: var(--muted);
-  opacity: 0.85;
-}
-.sat.on{
-  border-color: rgba(0,153,204,0.55);
-  color: var(--accent-deep);
-  opacity: 1;
-}
-
-/* ── Anchor + stabilisers cards. ─────────────────────────────── */
-.anchorState,
-.stabCard,
-.fin{
-  background: var(--panel);
-  border-color: var(--hairline);
-  color: var(--text);
-  border-radius: 4px;
-}
-.anchorIcon{
-  background: var(--bg-grid);
-  border-color: var(--hairline);
-  color: var(--text);
-}
-.anchorLabel{ color: var(--text); font-weight: 700; }
-.anchorState.active{
-  border-color: rgba(0,153,204,0.45);
-  box-shadow: 0 0 0 3px rgba(0,153,204,0.10) inset;
-}
-.anchorDesc{ color: var(--muted); }
-.stabTitle{ color: var(--text); font-weight: 700; }
-.finLabel{ color: var(--muted); opacity: 1; font-weight: 700; }
-.finGauge{
-  background: var(--panel-2);
-  border-color: var(--hairline);
-  background-image: radial-gradient(220px 100px at 50% 80%, rgba(0,153,204,0.10), transparent 60%);
-}
-.finNeedle{
-  background: var(--brand-navy);
-  box-shadow: none;
-}
-
-/* ── Entertainment shell — light scene tints handled inline in the
-   component. The shell border + card surfaces just need to match. */
-.entShell{
-  border-color: var(--hairline) !important;
-  border-radius: 4px;
-}
-
-/* ── Pills (mono labels used across views) ──────────────────────
-   The base .pill rule above is light-theme correct; the .ok/.warn/
-   .danger variants need their colours retuned for legibility. */
-.pill.ok{
-  border-color: rgba(22,160,122,0.45);
-  background: rgba(22,160,122,0.10);
-  color: #0a6b51;
-}
-.pill.warn{
-  border-color: rgba(217,119,6,0.45);
-  background: rgba(217,119,6,0.10);
-  color: var(--warn);
-}
-.pill.danger{
-  border-color: rgba(192,57,43,0.45);
-  background: rgba(192,57,43,0.10);
-  color: #991b1b;
-}
-
-/* ── Error pill on the login page — was tuned for dark bg. ──── */
-.err{
-  color: #991b1b;
-  background: rgba(192,57,43,0.08);
-  border-color: rgba(192,57,43,0.35);
-  border-radius: 3px;
-}
-
-/* ── Destination handle on the map. The cyan was a touch washed out
-   on a light tile background; bump the contrast. */
-.destHandle{
-  background: var(--accent);
-  border-color: #fff;
-  box-shadow:
-    0 0 0 4px rgba(0,153,204,0.18),
-    0 6px 14px rgba(14,58,95,0.22);
+/* SVG inside an .inst gauge gets steel-blue strokes. The actual
+   gauge SVG is hand-drawn in Instruments.tsx with var(--…) colours
+   directly, so this is a belt-and-braces fallback for any legacy
+   inline rgba left in flight. */
+.inst svg circle[fill^="rgba(0,0,0"]{ fill: var(--bg-grid); }
+.inst svg circle[stroke^="rgba(255,255,255,0.10)"]{
+  stroke: var(--hairline);
 }
 
 /* ── Login page — uses .shell + .card without the bridge chrome.
@@ -1123,36 +1416,38 @@ a{color:inherit}
 .shell .card{
   min-height: 0;
   padding: 24px;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(14,58,95,0.06);
-}
-.shell .card .title{
-  font-size: 14px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(14,37,65,0.06);
 }
 .shell .card .grid{ margin-top: 16px; }
 .shell .card .form{ margin-top: 16px; }
 
-/* ── Tabs row — already retuned at the base for light theme, but the
-   stab-modes / scene-modes reuse `.tab` as a button group. Make those
-   read as proper button pills, not as tab strip items. */
+/* ── Tabs reused as button groups (stabilizer modes, scene picker).
+   Render as proper segmented-control buttons, not as underlined
+   tab-strip items. */
 .stabModes .tab,
 .entShell .stabModes .tab{
   border: 1px solid var(--hairline);
-  border-radius: 3px;
-  padding: 8px 14px;
+  border-radius: 2px;
+  padding: 6px 14px;
   background: var(--panel);
   color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
 .stabModes .tab:hover,
 .entShell .stabModes .tab:hover{
-  background: var(--bg-grid);
-  color: var(--accent-deep);
+  background: var(--panel-2);
+  color: var(--text);
+  border-color: var(--text-soft);
 }
 .stabModes .tab.active,
 .entShell .stabModes .tab.active{
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--brand-navy);
+  border-color: var(--brand-navy);
   color: #fff;
+  font-weight: 600;
 }

@@ -21,17 +21,57 @@ function nextState(current: AnchorState, action: 'drop' | 'heave'): AnchorState 
   return 'HOME';
 }
 
-function iconFor(s: AnchorState): string {
-  switch (s) {
-    case 'HOME':
-      return '⚓';
-    case 'PAYING_OUT':
-      return '⬇';
-    case 'HOLDING':
-      return '⛓';
-    case 'DRAGGING':
-      return '⚠';
+// Inline SVG icons for the four anchor states. Replaces the original
+// emoji set (⚓ ⬇ ⛓ ⚠) which rendered with the OS's emoji font and
+// looked like clip-art on the bridge surface. Drawn at 16x16, with
+// `currentColor` strokes/fills so they pick up the anchor card's
+// active vs. dim state from CSS.
+function AnchorIcon({ state }: { state: AnchorState }) {
+  const stroke = 'currentColor';
+  const sw = 1.5;
+  if (state === 'HOME') {
+    // Anchor mark — ring at top, vertical stem, curved flukes.
+    return (
+      <svg viewBox="0 0 16 16" fill="none" stroke={stroke} strokeWidth={sw}
+           strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="8" cy="3" r="1.4" />
+        <line x1="8" y1="4.5" x2="8" y2="13.5" />
+        <line x1="5.5" y1="6" x2="10.5" y2="6" />
+        <path d="M3 11.5 Q 3 13.5 5 13.8 Q 7 14 8 13" />
+        <path d="M13 11.5 Q 13 13.5 11 13.8 Q 9 14 8 13" />
+      </svg>
+    );
   }
+  if (state === 'PAYING_OUT') {
+    // Down-chevron + ticks suggesting motion.
+    return (
+      <svg viewBox="0 0 16 16" fill="none" stroke={stroke} strokeWidth={sw}
+           strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 2 L 8 11" />
+        <path d="M4 7.5 L 8 11.5 L 12 7.5" />
+        <line x1="3" y1="14" x2="13" y2="14" />
+      </svg>
+    );
+  }
+  if (state === 'HOLDING') {
+    // Two interlocking chain links — flat shorthand for "set & secure".
+    return (
+      <svg viewBox="0 0 16 16" fill="none" stroke={stroke} strokeWidth={sw}
+           strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2.5" y="5" width="6" height="3.5" rx="1.6" />
+        <rect x="7.5" y="7.5" width="6" height="3.5" rx="1.6" />
+      </svg>
+    );
+  }
+  // DRAGGING — warning triangle + exclamation.
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke={stroke} strokeWidth={sw}
+         strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 2.2 L 14.5 13.5 L 1.5 13.5 Z" />
+      <line x1="8" y1="6.5" x2="8" y2="9.5" />
+      <circle cx="8" cy="11.5" r="0.5" fill={stroke} />
+    </svg>
+  );
 }
 
 export function AnchorView() {
@@ -102,7 +142,7 @@ export function AnchorView() {
               const active = s.k === state;
               return (
                 <div key={s.k} className={active ? 'anchorState active' : 'anchorState'}>
-                  <div className="anchorIcon" aria-hidden>{iconFor(s.k)}</div>
+                  <div className="anchorIcon" aria-hidden><AnchorIcon state={s.k} /></div>
                   <div>
                     <div className="anchorLabel">{s.label}</div>
                     <div className="anchorDesc">{s.desc}</div>
