@@ -123,10 +123,32 @@ resource "azurerm_search_service" "detection_rules" {
   }
 
   # Local auth (admin key) is enabled so the post-apply seed script /
-  # operator can POST to the management plane during initial setup.
-  # The MCP tool itself uses Entra (project MI) — so this is a dev
-  # convenience, not the runtime auth path.
+  # operator can POST to the data plane during initial setup
+  # (sub-resource creation goes through the admin key — the MIs don't
+  # exist yet at seed time).
   local_authentication_enabled = true
+
+  # ENABLE Entra ID auth on the data plane.
+  #
+  # Setting `authentication_failure_mode` is what flips the Search
+  # service's `authOptions` from `apiKey` (default) to
+  # `aadOrApiKey`. WITHOUT this, even Entra principals with valid
+  # `Search Service Contributor` / `Search Index Data Reader` roles
+  # get HTTP 403 on every data-plane call — the service simply
+  # doesn't accept AAD-signed bearer tokens.
+  #
+  # This was the source of the "Detection Engineer agent: HTTP 403
+  # while enumerating tools" error during the May 2026 redeploy:
+  # all RBAC was correct, the connection was correct, the endpoint
+  # was reachable, but AAD auth itself was disabled at the service
+  # level. Hard to diagnose because RBAC tools (az role assignment
+  # list, the diagnose_kb_access.sh probe) don't surface it.
+  #
+  # "http403" is the failure-mode flavour Foundry IQ + agentic
+  # retrieval expect (vs. "http401WithBearerChallenge" which
+  # browsers prefer). Setting either one enables AAD auth; the
+  # value just controls what response a failed call gets.
+  authentication_failure_mode = "http403"
 }
 
 

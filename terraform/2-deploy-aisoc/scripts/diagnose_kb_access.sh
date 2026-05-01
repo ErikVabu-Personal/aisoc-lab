@@ -154,16 +154,79 @@ echo "GET ${MCP_URL}"
 echo
 HTTP_CODE="$(curl -s -o /tmp/mcp_probe.txt -w '%{http_code}' "${MCP_URL}" || echo 000)"
 echo "HTTP ${HTTP_CODE}"
-if [ "${HTTP_CODE}" = "401" ]; then
-  echo "OK: endpoint exists, requires auth (expected). RBAC grants are what determine if the MI/user can call it."
-elif [ "${HTTP_CODE}" = "404" ]; then
-  echo "FAIL: endpoint returns 404 — the KB does NOT exist on the service. Re-run the seeder:"
-  echo "  terraform apply -target=null_resource.drk_search_seed"
-elif [ "${HTTP_CODE}" = "000" ]; then
-  echo "FAIL: endpoint unreachable. DNS / network issue."
+case "${HTTP_CODE}" in
+  401)
+    echo "OK: endpoint exists + AAD auth is enabled (the 'WWW-Authenticate: Bearer' challenge is the proof)."
+    echo "    RBAC grants then determine if the MI/user can actually call it."
+    ;;
+  403)
+    echo "DIAGNOSTIC: HTTP 403 from an unauth probe is the tell-tale sign that AAD auth is"
+    echo "DISABLED on the Search service. The service is in API-key-only mode and is rejecting"
+    echo "all bearer-token-based calls (including those from the project MI), regardless of"
+    echo "whatever RBAC roles you've granted."
+    echo
+    echo "Fix: enable AAD auth on the Search service via Terraform. The azurerm_search_service"
+    echo "resource needs: authentication_failure_mode = \"http403\""
+    echo "Then: terraform apply -target=azurerm_search_service.detection_rules"
+    ;;
+  404)
+    echo "FAIL: endpoint returns 404 — the KB does NOT exist on the service. Re-run the seeder:"
+    echo "  terraform apply -target=null_resource.drk_search_seed"
+    ;;
+  000)
+    echo "FAIL: endpoint unreachable. DNS / network issue."
+    ;;
+  *)
+    echo "Unexpected. Body:"
+    cat /tmp/mcp_probe.txt
+    ;;
+esac
+
+# ---- 7. Authenticated probe with the user's token ------------------
+#
+# The unauth probe tells us if AAD auth is even ENABLED on the
+# service. This authenticated probe tells us whether the user (with
+# their granted role) can actually list KBs. If this succeeds, the
+# Foundry portal's KB tab will work. If this 403s while the user
+# has the role assignment AND AAD auth is enabled, the service is
+# still propagating RBAC (wait 5-15 min) or the role isn't right.
+
+print_section "7. Authenticated probe (user token) — list KBs"
+KB_LIST_URL="${SEARCH_EP}/knowledgebases?api-version=2025-11-01-preview"
+echo "GET ${KB_LIST_URL}"
+echo "Authorization: Bearer <user token for https://search.azure.com/>"
+echo
+
+USER_TOKEN="$(az account get-access-token --resource https://search.azure.com/ --query accessToken -o tsv 2>/dev/null || echo "")"
+if [ -z "${USER_TOKEN}" ]; then
+  echo "WARN: could not get a user token for https://search.azure.com/. Skipping auth probe."
 else
-  echo "Unexpected. Body:"
-  cat /tmp/mcp_probe.txt
+  AUTH_HTTP="$(curl -s -o /tmp/auth_probe.txt -w '%{http_code}' \
+    -H "Authorization: Bearer ${USER_TOKEN}" "${KB_LIST_URL}" || echo 000)"
+  echo "HTTP ${AUTH_HTTP}"
+  case "${AUTH_HTTP}" in
+    200)
+      echo "OK: authenticated KB list succeeded. AAD auth is on and the user has the right role."
+      echo "    Sample (first 200 chars):"
+      head -c 200 /tmp/auth_probe.txt
+      echo
+      ;;
+    401|403)
+      echo "FAIL: token rejected. Possibilities:"
+      echo "  - AAD auth is disabled at the service level (see section 6)"
+      echo "  - User role hasn't propagated yet (wait, retry)"
+      echo "  - User has the wrong role (need Search Service Contributor or Search Index"
+      echo "    Data Reader/Contributor)"
+      echo "Body:"
+      cat /tmp/auth_probe.txt
+      echo
+      ;;
+    *)
+      echo "Unexpected ${AUTH_HTTP}. Body:"
+      cat /tmp/auth_probe.txt
+      echo
+      ;;
+  esac
 fi
 
 # ---- Summary -------------------------------------------------------
@@ -171,26 +234,36 @@ fi
 print_section "Summary"
 cat <<EOF
 If the Detection Engineer agent is still getting HTTP 403 against
-the MCP endpoint, the most likely root causes — in order of
-probability — are:
+the MCP endpoint, walk this checklist in order:
 
-1. Section 4: project MI is missing from the role-assignment list.
+1. Section 6: HTTP 403 from the unauth probe means AAD auth is
+   DISABLED on the Search service. This is the most common cause
+   of "agent gets 403 even though all RBAC is correct" and the
+   one that doesn't show up in 'az role assignment list'.
+   Fix: enable AAD auth on the Search service:
+     terraform apply -target=azurerm_search_service.detection_rules
+   (the resource block must include
+    authentication_failure_mode = "http403")
+
+2. Section 7: HTTP 401/403 from the authenticated probe with the
+   user's token means either AAD auth is disabled (covered above)
+   or RBAC hasn't propagated. Wait 5-15 min and re-run.
+
+3. Section 4: project MI is missing from the role-assignment list.
    Fix:
-     python3 scripts/deploy_prompt_agents_with_runner_tools.py
-   (idempotent — re-runs the role grant).
+     ./scripts/deploy_prompt_agents_with_runner_tools.sh
+   (idempotent — re-runs the role grant + project-connection PUT).
 
-2. Section 5: the connection record's authType is something other
+4. Section 5: the connection record's authType is something other
    than 'ProjectManagedIdentity', or target / audience are wrong.
-   Fix: same script as above will re-PUT the connection.
+   Fix: same script as #3.
 
-3. RBAC propagation lag (1–5 minutes; sometimes longer for newly-
-   added Search-specific roles). Wait, then retry.
-
-4. Section 6: HTTP 404 on the MCP probe means the KB doesn't exist
+5. Section 6: HTTP 404 on the MCP probe means the KB doesn't exist
    on the Search service. The seeder didn't run successfully.
    Fix:
      terraform apply -target=null_resource.drk_search_seed
 
-5. Foundry portal caches failed responses for ~60s. Hard-reload
-   any portal pages after fixing.
+6. Foundry portal + agents cache failed responses for ~60s. Hard-
+   reload any portal pages after fixing, and start a new agent
+   chat (don't reuse a stuck one).
 EOF
