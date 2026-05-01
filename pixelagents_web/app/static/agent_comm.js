@@ -276,6 +276,34 @@
       padding: 0 12px;
       margin: 12px 0 6px;
     }
+    /* Collapse toggle — chevron rotates from down (expanded) to right
+       (collapsed). Lives flush-left of the section title. */
+    #${ROOT_ID} .sec .sec-toggle {
+      flex: 0 0 18px;
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: rgba(107,114,128,0.85);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3px;
+    }
+    #${ROOT_ID} .sec .sec-toggle:hover { background: rgba(107,114,128,0.10); }
+    #${ROOT_ID} .sec .sec-toggle .sec-chevron {
+      transition: transform 0.15s ease;
+    }
+    #${ROOT_ID} .sec.collapsed .sec-toggle .sec-chevron {
+      transform: rotate(-90deg);
+    }
+    /* When collapsed, the section header takes less space and the
+       items container is fully hidden via the [hidden] attr the
+       template applies. The filter input is also hidden so the row
+       reads as "title + chevron" only — minimum noise. */
+    #${ROOT_ID} .sec.collapsed .sec-head { margin-bottom: 0; }
     #${ROOT_ID} .sec .sec-head h2.section {
       margin: 0;
       flex: 0 0 auto;
@@ -968,6 +996,10 @@
     // as the agent + human + incident counts grow. Empty string means
     // no filter active.
     secFilters: { agents: '', humans: '', queue: '' },
+    // Per-section collapse state. Set keys to `true` to collapse;
+    // missing / falsy = expanded (default). Toggling persists across
+    // poll-driven re-renders.
+    secCollapsed: { agents: false, humans: false, queue: false },
   };
 
   // ── Helpers ─────────────────────────────────────────────────────────
@@ -1683,18 +1715,34 @@
   // mismatching items via applySecFilter.
   function buildSecHtml(name, title, itemsHtml) {
     const filterValue = STATE.secFilters[name] || '';
+    const collapsed = !!STATE.secCollapsed[name];
+    // Chevron — rotates 90° when collapsed via CSS. Inline so we don't
+    // need to ship another asset.
+    const chevron = '<svg class="sec-chevron" viewBox="0 0 12 12" '
+      + 'aria-hidden="true" width="10" height="10">'
+      + '<path d="M3 4.5 6 8 9 4.5" fill="none" stroke="currentColor" '
+      + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+      + '</svg>';
     return `
-      <div class="sec" data-sec="${escapeHtml(name)}">
+      <div class="sec${collapsed ? ' collapsed' : ''}" data-sec="${escapeHtml(name)}">
         <div class="sec-head">
+          <button type="button" class="sec-toggle"
+                  data-sec-toggle="${escapeHtml(name)}"
+                  aria-expanded="${collapsed ? 'false' : 'true'}"
+                  title="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(title)}">
+            ${chevron}
+          </button>
           <h2 class="section">${escapeHtml(title)}</h2>
           <input type="text"
                  class="sec-search"
                  data-sec-search="${escapeHtml(name)}"
                  placeholder="Filter…"
                  value="${escapeHtml(filterValue)}"
-                 aria-label="Filter ${escapeHtml(title)}">
+                 aria-label="Filter ${escapeHtml(title)}"
+                 ${collapsed ? 'tabindex="-1" style="display:none"' : ''}>
         </div>
-        <div class="sec-items" data-sec-items="${escapeHtml(name)}">
+        <div class="sec-items" data-sec-items="${escapeHtml(name)}"
+             ${collapsed ? 'hidden' : ''}>
           ${itemsHtml}
         </div>
       </div>`;
@@ -1968,6 +2016,19 @@
         const sec = inp.getAttribute('data-sec-search');
         STATE.secFilters[sec] = inp.value;
         applySecFilter(sec);
+      });
+    });
+    // Section collapse toggles. Same no-full-rerender pattern as the
+    // search inputs: just flip STATE + re-render the sidebar so the
+    // [hidden] attr lands. We DO call render() here because the
+    // collapsed state lives in STATE and changes the markup
+    // structure, not just visibility — DOM-only toggling would drift
+    // from STATE on the next poll-driven render.
+    root.querySelectorAll('[data-sec-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const sec = btn.getAttribute('data-sec-toggle');
+        STATE.secCollapsed[sec] = !STATE.secCollapsed[sec];
+        render();
       });
     });
     // Initial filter pass after render — needed because polling

@@ -309,7 +309,13 @@ def _load_users() -> dict[str, str]:
 ROLE_SOC_MANAGER = "soc-manager"
 ROLE_DETECTION_ENGINEER = "detection-engineer"
 ROLE_SOC_ANALYST = "soc-analyst"
-ROLES_KNOWN = (ROLE_SOC_MANAGER, ROLE_DETECTION_ENGINEER, ROLE_SOC_ANALYST)
+ROLE_THREAT_INTEL_ANALYST = "threat-intel-analyst"
+ROLES_KNOWN = (
+    ROLE_SOC_MANAGER,
+    ROLE_DETECTION_ENGINEER,
+    ROLE_SOC_ANALYST,
+    ROLE_THREAT_INTEL_ANALYST,
+)
 
 
 USERS: dict[str, dict[str, Any]] = _load_users()
@@ -730,6 +736,17 @@ NAV_CSS = """\
     height: 36px !important;
     display: block !important;
   }
+  /* Two-row nav: top row (groups + brand + userbar) and an
+     optional sub-row of sub-tabs that only renders when the active
+     group has sub-pages. Heights are 48px + 40px = 88px, which
+     leaves the previous 60px body-padding too short — pages render
+     under nav-aware spacing via the SHELL_BASE_CSS rule below. */
+  #aisoc-nav .nav-row {
+    display: flex !important;
+    align-items: center !important;
+    height: 48px !important;
+    padding: 0 16px !important;
+  }
   #aisoc-nav .tabs { display: flex !important; gap: 2px !important; align-items: center !important; }
   #aisoc-nav .tab {
     padding: 7px 12px !important;
@@ -741,8 +758,10 @@ NAV_CSS = """\
     display: inline-flex !important;
     align-items: center !important;
     gap: 7px !important;
+    position: relative !important;
   }
-  #aisoc-nav .tab .tab-icon {
+  #aisoc-nav .tab .tab-icon,
+  #aisoc-nav .subtab .subtab-icon {
     display: inline-flex !important;
     align-items: center !important;
     width: 16px !important;
@@ -750,7 +769,8 @@ NAV_CSS = """\
     flex: 0 0 16px !important;
     color: inherit !important;
   }
-  #aisoc-nav .tab .tab-icon svg {
+  #aisoc-nav .tab .tab-icon svg,
+  #aisoc-nav .subtab .subtab-icon svg {
     width: 16px !important;
     height: 16px !important;
     display: block !important;
@@ -764,12 +784,63 @@ NAV_CSS = """\
     background: var(--aisoc-nav-active-bg) !important;
     font-weight: 700 !important;
   }
-  /* Drop labels on narrow screens — icons stay, the tooltip
-     (browser default for <a title=>... actually <a>'s aria-hidden)
-     keeps the page navigable. Above 900px we always show labels. */
+  /* Notification badge — small pill that floats top-right of the
+     tab. Hidden via empty-string render (badge_html returns "" for
+     zero), so no special hide rule needed. Compact + accent-coloured. */
+  #aisoc-nav .tab-badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-width: 16px !important;
+    height: 16px !important;
+    padding: 0 5px !important;
+    margin-left: 4px !important;
+    border-radius: 999px !important;
+    background: var(--aisoc-nav-accent) !important;
+    color: #fff !important;
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
+    letter-spacing: 0.02em !important;
+  }
+  /* Sub-tabs row — only rendered when the active group has them. */
+  #aisoc-nav .subtabs {
+    display: flex !important;
+    gap: 4px !important;
+    align-items: center !important;
+    height: 40px !important;
+    padding: 0 16px !important;
+    background: #f9fafb !important;
+    border-top: 1px solid var(--aisoc-nav-border) !important;
+  }
+  #aisoc-nav .subtab {
+    padding: 5px 11px !important;
+    color: var(--aisoc-nav-muted) !important;
+    text-decoration: none !important;
+    border-radius: 4px !important;
+    font-weight: 500 !important;
+    font-size: 13px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    position: relative !important;
+  }
+  #aisoc-nav .subtab:hover {
+    background: #eef2f7 !important;
+    color: var(--aisoc-nav-text) !important;
+  }
+  #aisoc-nav .subtab.active {
+    color: var(--aisoc-nav-accent) !important;
+    background: var(--aisoc-nav-active-bg) !important;
+    font-weight: 700 !important;
+  }
+  /* Drop labels on narrow screens — icons stay; tooltips are kept on
+     hover by the browser's default for <a>. */
   @media (max-width: 900px) {
-    #aisoc-nav .tab .tab-label { display: none !important; }
+    #aisoc-nav .tab .tab-label,
+    #aisoc-nav .subtab .subtab-label { display: none !important; }
     #aisoc-nav .tab { padding: 7px 10px !important; }
+    #aisoc-nav .subtab { padding: 5px 9px !important; }
   }
   #aisoc-nav .userbar {
     margin-left: auto !important;
@@ -809,102 +880,243 @@ SHIP_SVG_INLINE = (
 )
 
 
-def _render_nav(active: str, current_user: str) -> str:
-    """Render the top-nav. ``active`` selects which tab gets highlighted.
+def _user_nav_capabilities(user_email: str) -> dict[str, bool]:
+    """Single source of truth for which top-nav GROUPS a user can see.
 
-    Tabs are role-aware:
-      - "Continuous Improvement" surfaces for detection-engineer +
-        soc-manager (the only roles allowed to act on Proposed
-        Changes anyway).
-      - "Logging & Auditing" is soc-manager only.
-      - "Configuration" stays soc-manager only (already gated server-
-        side; hiding it from non-managers' nav saves them a 403).
+    Visibility rules (per the redesign spec):
+
+      Live (SOC Room)     — every authenticated user.
+      Trends              — soc-manager, detection-engineer, threat-intel-analyst.
+                            Pure SOC analysts don't see it (their day is
+                            in the SOC Room).
+      Configuration       — soc-manager only. Holds Continuous
+                            Improvement (CI), Audit logs, and Settings.
+
+    The function returns a dict keyed by group identifier so callers
+    can use it for both nav rendering AND server-side gating without
+    drifting.
+    """
+    roles = set(_user_roles(user_email))
+    is_mgr     = ROLE_SOC_MANAGER in roles
+    is_de      = ROLE_DETECTION_ENGINEER in roles
+    is_ti      = ROLE_THREAT_INTEL_ANALYST in roles
+    return {
+        "live":          True,                    # everyone
+        "trends":        is_mgr or is_de or is_ti,
+        "configuration": is_mgr,
+        # CI is the configuration sub-page that detection-engineers
+        # ALSO need to act on (their proposed detection rules land
+        # there). Gate it independently so we can still link straight
+        # to /improvements from a detection engineer's UI without
+        # surfacing the rest of Configuration to them.
+        "improvements":  is_mgr or is_de,
+    }
+
+
+# Inline 16px line-style SVG icons (Lucide-shaped). All use
+# currentColor so the existing .tab / .tab.active rules keep
+# controlling the color. Module-level so they're evaluated once
+# and the per-tab dict construction in _render_nav stays readable.
+_NAV_ICON_LIVE = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>'
+    '<circle cx="12" cy="12" r="3"/></svg>'
+)
+_NAV_ICON_TRENDS = (
+    # Bar-chart "trending up" — three rising bars.
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><path d="M3 21V13"/><path d="M9 21V8"/>'
+    '<path d="M15 21V11"/><path d="M21 21V4"/><path d="M3 21h18"/></svg>'
+)
+_NAV_ICON_INCIDENTS = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><path d="M12 2 2 22h20L12 2Z"/>'
+    '<path d="M12 9v6"/><path d="M12 18h.01"/></svg>'
+)
+_NAV_ICON_HORIZON = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><circle cx="12" cy="12" r="10"/>'
+    '<path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20"/>'
+    '<path d="M12 2a15 15 0 0 0 0 20"/></svg>'
+)
+_NAV_ICON_RULES = (
+    # Shield with check — rule / detection.
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5l-8-3Z"/>'
+    '<path d="m9 12 2 2 4-4"/></svg>'
+)
+_NAV_ICON_CONFIG = (
+    # Sliders — settings / configuration parent.
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><line x1="4" y1="6"  x2="20" y2="6"/>'
+    '<line x1="4" y1="12" x2="20" y2="12"/>'
+    '<line x1="4" y1="18" x2="20" y2="18"/>'
+    '<circle cx="9"  cy="6"  r="2.4"/>'
+    '<circle cx="15" cy="12" r="2.4"/>'
+    '<circle cx="7"  cy="18" r="2.4"/></svg>'
+)
+_NAV_ICON_IMPROVEMENTS = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><path d="M3 17 9 11l4 4 8-8"/>'
+    '<path d="M14 7h7v7"/></svg>'
+)
+_NAV_ICON_AUDIT = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/>'
+    '<path d="M8 9h8"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>'
+)
+_NAV_ICON_SETTINGS = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true"><circle cx="12" cy="12" r="3"/>'
+    '<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>'
+    '</svg>'
+)
+
+
+# Map: page-key -> (group-key, sub-page-key) so _render_nav can
+# decide which top-tab is "active" and which sub-tabs to expose.
+# Pages not in this map don't belong to any group (no parent
+# highlighted, no sub-tabs row).
+_NAV_PAGE_GROUP: dict[str, tuple[str, str]] = {
+    # Live group has no sub-tabs.
+    "live":           ("live", "live"),
+
+    # Trends group.
+    "dashboard":      ("trends", "incidents"),
+    "threat-horizon": ("trends", "horizon"),
+    "rules":          ("trends", "rules"),
+
+    # Configuration group.
+    "improvements":   ("configuration", "improvements"),
+    "audit":          ("configuration", "audit"),
+    "config":         ("configuration", "settings"),
+}
+
+
+def _render_nav(active: str, current_user: str) -> str:
+    """Render the two-row top-nav.
+
+    Row 1 — top-level GROUPS (Live, Trends, Configuration). Visibility
+    follows _user_nav_capabilities (SOC analyst gets only Live; det
+    engineer + threat-intel get Live + Trends; soc manager gets
+    everything). The active group is highlighted; clicking lands you
+    on the group's default sub-page.
+
+    Row 2 — sub-tabs of the currently active group, only rendered
+    when there's >1 sub-page. Each sub-tab is its own URL.
+
+    Notification badges (a small dot with a count) are rendered on
+    both the group label AND the relevant sub-tab. Counts come from
+    /api/notifications/me — but rendered server-side at request time
+    via _user_notification_counts() so the first paint already shows
+    them (no flash of zero-state).
 
     Brand mark is composed from the real NVISO wordmark PNG plus an
     inline SVG ship. The PNG must live at /static/nviso-logo.png; if
     it's missing the alt text "NVISO" shows in its place.
     """
-    user_roles = set(_user_roles(current_user))
-    is_soc_manager = ROLE_SOC_MANAGER in user_roles
-    is_detection_engineer = ROLE_DETECTION_ENGINEER in user_roles
+    caps = _user_nav_capabilities(current_user)
+    notifs = _user_notification_counts(current_user)
 
-    # Inline 16px line-style SVG icons (Lucide-style). All use
-    # currentColor so the existing .tab / .tab.active rules keep
-    # controlling the color. Kept inline so there's no additional
-    # static asset to ship + cache-bust.
-    ICON_LIVE = (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-        'aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>'
-        '<circle cx="12" cy="12" r="3"/></svg>'
-    )
-    ICON_INCIDENTS = (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-        'aria-hidden="true"><path d="M12 2 2 22h20L12 2Z"/>'
-        '<path d="M12 9v6"/><path d="M12 18h.01"/></svg>'
-    )
-    ICON_HORIZON = (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-        'aria-hidden="true"><circle cx="12" cy="12" r="10"/>'
-        '<path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20"/>'
-        '<path d="M12 2a15 15 0 0 0 0 20"/></svg>'
-    )
-    ICON_IMPROVEMENTS = (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-        'aria-hidden="true"><path d="M3 17 9 11l4 4 8-8"/>'
-        '<path d="M14 7h7v7"/></svg>'
-    )
-    ICON_AUDIT = (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-        'aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/>'
-        '<path d="M8 9h8"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>'
-    )
-    ICON_SETTINGS = (
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-        'aria-hidden="true"><circle cx="12" cy="12" r="3"/>'
-        '<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>'
-        '</svg>'
-    )
-
-    # (key, href, label, icon_svg, visible)
-    tabs = [
-        ("live",           "/",               "Live",         ICON_LIVE,         True),
-        ("dashboard",      "/dashboard",      "Incidents",    ICON_INCIDENTS,    True),
-        ("threat-horizon", "/threat-horizon", "Horizon",      ICON_HORIZON,      True),
-        ("improvements",   "/improvements",   "Improvements", ICON_IMPROVEMENTS, is_soc_manager or is_detection_engineer),
-        ("audit",          "/audit",          "Audit",        ICON_AUDIT,        is_soc_manager),
-        ("config",         "/config",         "Settings",     ICON_SETTINGS,     is_soc_manager),
+    # Top-row groups. (key, href, label, icon, visible, badge_count).
+    # `href` for group tabs is the default sub-page URL.
+    groups = [
+        ("live",          "/",            "Live",          _NAV_ICON_LIVE,
+            caps["live"],          int(notifs.get("live", 0))),
+        ("trends",        "/dashboard",   "Trends",        _NAV_ICON_TRENDS,
+            caps["trends"],        0),
+        ("configuration", "/improvements" if (caps["improvements"] and not caps["configuration"])
+                          else "/config",
+            "Configuration", _NAV_ICON_CONFIG,
+            caps["configuration"] or caps["improvements"],
+            int(notifs.get("configuration", 0))),
     ]
-    items = []
-    for key, href, label, icon, visible in tabs:
+
+    # Map active page → its group + sub-page so we know which row to
+    # highlight and which sub-tab strip to render.
+    group_active, sub_active = _NAV_PAGE_GROUP.get(active, (active, active))
+
+    def _badge_html(n: int) -> str:
+        if not n or n <= 0:
+            return ""
+        text = str(n) if n < 100 else "99+"
+        return f'<span class="tab-badge">{text}</span>'
+
+    top_items = []
+    for key, href, label, icon, visible, badge in groups:
         if not visible:
             continue
-        cls = "tab active" if key == active else "tab"
-        items.append(
+        cls = "tab active" if key == group_active else "tab"
+        top_items.append(
             f'<a class="{cls}" href="{href}">'
             f'<span class="tab-icon" aria-hidden="true">{icon}</span>'
             f'<span class="tab-label">{label}</span>'
+            f'{_badge_html(badge)}'
             f'</a>'
         )
+
+    # Row 2 — sub-tabs of the active group (when there's more than one).
+    sub_rows: dict[str, list[tuple[str, str, str, str, bool, int]]] = {
+        "trends": [
+            # (sub_key, href, label, icon, visible, badge)
+            ("incidents", "/dashboard",      "Incidents",      _NAV_ICON_INCIDENTS,    True, 0),
+            ("horizon",   "/threat-horizon", "Threat Horizon", _NAV_ICON_HORIZON,      True, 0),
+            ("rules",     "/rules",          "Rules",          _NAV_ICON_RULES,        True, 0),
+        ],
+        "configuration": [
+            ("improvements", "/improvements", "Continuous Improvement", _NAV_ICON_IMPROVEMENTS,
+                caps["improvements"], int(notifs.get("improvements", 0))),
+            ("audit",        "/audit",        "Audit logs",             _NAV_ICON_AUDIT,
+                caps["configuration"], 0),
+            ("settings",     "/config",       "Settings",               _NAV_ICON_SETTINGS,
+                caps["configuration"], 0),
+        ],
+    }
+    sub_items = []
+    if group_active in sub_rows:
+        for sub_key, href, label, icon, visible, badge in sub_rows[group_active]:
+            if not visible:
+                continue
+            cls = "subtab active" if sub_key == sub_active else "subtab"
+            sub_items.append(
+                f'<a class="{cls}" href="{href}">'
+                f'<span class="subtab-icon" aria-hidden="true">{icon}</span>'
+                f'<span class="subtab-label">{label}</span>'
+                f'{_badge_html(badge)}'
+                f'</a>'
+            )
+
+    sub_strip = (
+        '<div class="subtabs">' + "".join(sub_items) + '</div>'
+        if sub_items else ''
+    )
+
     return (
         '<nav id="aisoc-nav">'
-        '  <a href="/dashboard" class="brand">'
-        '    <span class="brand-mark">'
-        '      <img src="/static/nviso-logo.png" alt="NVISO">'
-        '      <span class="tag">CRUISES</span>'
-        '    </span>'
-        f'    <span class="brand-ship">{SHIP_SVG_INLINE}</span>'
-        '  </a>'
-        '  <div class="tabs">' + "".join(items) + '</div>'
-        '  <div class="userbar">'
-        f'    <span>Signed in as <b>{current_user}</b></span>'
-        '    <a href="/logout" class="signout">Sign out</a>'
+        '  <div class="nav-row">'
+        '    <a href="/" class="brand">'
+        '      <span class="brand-mark">'
+        '        <img src="/static/nviso-logo.png" alt="NVISO">'
+        '        <span class="tag">CRUISES</span>'
+        '      </span>'
+        f'      <span class="brand-ship">{SHIP_SVG_INLINE}</span>'
+        '    </a>'
+        '    <div class="tabs">' + "".join(top_items) + '</div>'
+        '    <div class="userbar">'
+        f'      <span>Signed in as <b>{current_user}</b></span>'
+        '      <a href="/logout" class="signout">Sign out</a>'
+        '    </div>'
         '  </div>'
+        f'  {sub_strip}'
         '</nav>'
     )
 
@@ -916,8 +1128,11 @@ SHELL_BASE_CSS = """\
 <style id="aisoc-shell-base">
   body {
     margin: 0;
-    /* Push body content below the fixed nav (60px tall). */
-    padding-top: 60px;
+    /* Push body content below the fixed nav. Nav height is 48px
+       (top row) + 40px sub-tabs row when one is rendered = 88px.
+       Pages without sub-tabs (Live) get 8px of unused gap, which is
+       a small price for keeping the rule constant across pages. */
+    padding-top: 92px;
     font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     background: #ffffff;
     color: #1f2937;
@@ -4067,6 +4282,15 @@ def _fetch_sentinel_incidents() -> list[dict[str, Any]]:
             "owner": owner_display,
             "created": props.get("createdTimeUtc"),
             "last_modified": props.get("lastModifiedTimeUtc"),
+            # Rule-performance fields. Sentinel surfaces classification
+            # (TruePositive / FalsePositive / BenignPositive /
+            # Undetermined) when an analyst closes an incident, plus
+            # relatedAnalyticRuleIds — the ARM IDs of the rules that
+            # triggered it. We pass them through so /api/rules/stats
+            # can aggregate without re-fetching the source list.
+            "classification": props.get("classification"),
+            "classification_reason": props.get("classificationReason"),
+            "related_analytic_rule_ids": props.get("relatedAnalyticRuleIds") or [],
         })
     return incidents
 
@@ -5733,6 +5957,12 @@ def api_changes_stats(
     dashboard. Detection-engineer + soc-manager only (same gate as the
     page itself).
 
+    Role-filter: SOC managers see ALL changes; detection-engineers see
+    only the kinds they're allowed to act on (currently just
+    detection-rule, per _required_role_for_change_kind). This keeps a
+    DE's dashboard focused on what they actually own without exposing
+    soc-manager-only proposals (preamble + agent-instruction edits).
+
     Returns counts by status, kind, and proposing agent, plus the raw
     timestamps the dashboard needs to draw a recent-activity sparkline
     and compute time-to-decision distributions client-side. Sending
@@ -5751,11 +5981,24 @@ def api_changes_stats(
             detail="Continuous Improvement stats are restricted to soc-manager and detection-engineer.",
         )
 
+    # Visibility filter — same shape as /api/changes/pending. SOC
+    # managers see everything; detection-engineers see only changes
+    # whose required role matches one of theirs (which today is
+    # detection-rule). Anything with no role gate is universally visible.
+    is_mgr = ROLE_SOC_MANAGER in my_roles
+    def _visible(c: dict[str, Any]) -> bool:
+        if is_mgr:
+            return True
+        req = _required_role_for_change_kind(c.get("kind"))
+        return (req is None) or (req in my_roles)
+
     # Slim per-row record. The dashboard only needs metadata + the
     # decision timestamps. The full proposed/current bodies are
     # available via /api/changes/{id} if the user expands a row.
     rows: list[dict[str, Any]] = []
     for c in CHANGES.values():
+        if not _visible(c):
+            continue
         rows.append({
             "id":          c.get("id"),
             "kind":        c.get("kind"),
@@ -5796,6 +6039,242 @@ def api_changes_stats(
         "decided_count":   decided,
         "ts":              time.time(),
     }
+
+
+def _user_notification_counts(user_email: str) -> dict[str, int]:
+    """Per-section unread / actionable counts shown as nav badges.
+
+    Definitions:
+      live          — incidents currently OWNED by this user (assigned
+                      to them in Sentinel) PLUS HITL questions targeted
+                      at them. Sums to the "you have things to do"
+                      number on the SOC Room tab.
+      improvements  — pending CI proposals visible to this user
+                      (role-filtered the same way /api/changes/pending
+                      filters), so a detection-engineer's badge counts
+                      only detection-rule proposals.
+      configuration — bubbles up improvements (the only thing in
+                      Configuration that warrants a badge today). When
+                      improvements > 0 the parent badge also shows.
+
+    Best-effort + cheap. Failures return zero rather than raising —
+    a flaky badge is preferable to a broken nav.
+    """
+    counts = {"live": 0, "improvements": 0, "configuration": 0}
+    if not user_email:
+        return counts
+    me = user_email.strip().lower()
+
+    # Live: incidents I own + targeted HITL questions.
+    try:
+        try:
+            incs = _fetch_sentinel_incidents()
+        except Exception:
+            # Fall back to nothing — we'd rather show a 0 than the
+            # whole nav crashing because Sentinel is grumpy.
+            incs = []
+        for inc in incs:
+            owner = (inc.get("owner") or "").strip().lower()
+            status = (inc.get("status") or "").lower()
+            if owner == me and status not in ("closed",):
+                counts["live"] += 1
+    except Exception as e:
+        print(f"[notifs] live incidents probe failed: {e!r}", flush=True)
+    try:
+        for q in HITL_QUESTIONS.values():
+            if q.get("status") != "pending":
+                continue
+            target = (q.get("target") or "").strip().lower()
+            if target and target == me:
+                counts["live"] += 1
+    except Exception as e:
+        print(f"[notifs] live HITL probe failed: {e!r}", flush=True)
+
+    # Improvements: pending CI proposals this user is allowed to act on.
+    try:
+        my_roles = set(_user_roles(me))
+        is_mgr = ROLE_SOC_MANAGER in my_roles
+        for c in CHANGES.values():
+            if c.get("status") != "pending":
+                continue
+            if is_mgr:
+                counts["improvements"] += 1
+                continue
+            req = _required_role_for_change_kind(c.get("kind"))
+            if (req is None) or (req in my_roles):
+                counts["improvements"] += 1
+    except Exception as e:
+        print(f"[notifs] improvements probe failed: {e!r}", flush=True)
+
+    # Configuration parent — currently only improvements bubbles up.
+    counts["configuration"] = counts["improvements"]
+
+    return counts
+
+
+@app.get("/api/notifications/me")
+def api_notifications_me(request: Request) -> dict[str, Any]:
+    """Per-section badge counts for the signed-in user. Browser-session
+    only (badges are personal). Token-only callers get a 401.
+    """
+    user = _session_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return {
+        "user": user,
+        "counts": _user_notification_counts(user),
+        "ts": time.time(),
+    }
+
+
+def _aggregate_rule_stats(incidents: list[dict[str, Any]]) -> dict[str, Any]:
+    """Group Sentinel incidents by analytic rule + classify outcomes.
+
+    Sentinel's analyst-side `classification` field is the closest
+    proxy we have for TP/FP without per-incident timeline scraping.
+    Values map to:
+      TruePositive          → tp
+      FalsePositive         → fp
+      BenignPositive        → benign  (intentional but non-malicious)
+      Undetermined / null   → undetermined
+
+    Grouping key: incident title. In our lab the rule's display name
+    IS the incident title for every alert, which keeps the
+    aggregation accurate without an extra round-trip to fetch each
+    rule's display name from its ARM ID.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    cls_to_bucket = {
+        "TruePositive":   "tp",
+        "FalsePositive":  "fp",
+        "BenignPositive": "benign",
+        "Undetermined":   "undetermined",
+    }
+    for inc in incidents:
+        rule = (inc.get("title") or "(unknown rule)").strip() or "(unknown rule)"
+        g = groups.setdefault(rule, {
+            "rule":          rule,
+            "count":         0,
+            "tp":            0,
+            "fp":            0,
+            "benign":        0,
+            "undetermined":  0,
+            "open":          0,
+            "last_triggered": None,
+            "severities":    {},
+        })
+        g["count"] += 1
+        sev = (inc.get("severity") or "Unknown")
+        g["severities"][sev] = g["severities"].get(sev, 0) + 1
+        status = (inc.get("status") or "").lower()
+        if status not in ("closed",):
+            g["open"] += 1
+        cls = inc.get("classification")
+        bucket = cls_to_bucket.get(cls, "undetermined") if status == "closed" else None
+        if bucket:
+            g[bucket] += 1
+        last = inc.get("last_modified") or inc.get("created")
+        if last and (g["last_triggered"] is None or last > g["last_triggered"]):
+            g["last_triggered"] = last
+    rows = list(groups.values())
+    # Compute TP/FP ratio for each (informational only — both
+    # frontend and backend treat null as "not enough data").
+    for g in rows:
+        decided = g["tp"] + g["fp"] + g["benign"]
+        g["tp_rate"] = (g["tp"] / decided) if decided > 0 else None
+        g["fp_rate"] = (g["fp"] / decided) if decided > 0 else None
+        g["decided"] = decided
+    rows.sort(key=lambda r: r["count"], reverse=True)
+    return {
+        "rules": rows,
+        "total_incidents": sum(r["count"] for r in rows),
+        "total_rules":     len(rows),
+        "ts": time.time(),
+    }
+
+
+@app.get("/api/rules/stats")
+def api_rules_stats(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Rule-performance stats for the Trends → Rules page. Aggregates
+    over the cached Sentinel incidents list (no extra ARM round-trips
+    beyond what /api/sentinel/incidents already does).
+
+    Visible to soc-manager + detection-engineer + threat-intel-analyst
+    — same set as the Trends group itself.
+    """
+    _require_auth(request, x_pixelagents_token)
+    me = (_session_user(request) or "").strip().lower()
+    my_roles = set(_user_roles(me)) if me else set()
+    if not (
+        ROLE_SOC_MANAGER in my_roles
+        or ROLE_DETECTION_ENGINEER in my_roles
+        or ROLE_THREAT_INTEL_ANALYST in my_roles
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Rules stats are restricted to soc-manager, detection-engineer, and threat-intel-analyst.",
+        )
+    try:
+        incidents = _fetch_sentinel_incidents()
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return _aggregate_rule_stats(incidents)
+
+
+@app.get("/rules", response_class=HTMLResponse)
+def rules_view(request: Request) -> Response:
+    """Trends → Rules. Per-rule trigger counts + TP/FP ratio
+    aggregated from Sentinel incidents. Visible to the same set of
+    roles as the API endpoint above (the page checks roles itself
+    rather than relying on the nav being hidden — that would 200 a
+    bookmarked URL even for a SOC analyst)."""
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    my_roles = set(_user_roles(user))
+    if not (
+        ROLE_SOC_MANAGER in my_roles
+        or ROLE_DETECTION_ENGINEER in my_roles
+        or ROLE_THREAT_INTEL_ANALYST in my_roles
+    ):
+        denied = (
+            '<h1>Rules — restricted</h1>'
+            '<p class="subtitle">'
+            '  Rule performance stats are visible to SOC managers, '
+            '  detection engineers, and threat-intel analysts. Your '
+            '  account does not currently hold one of those roles.'
+            '</p>'
+        )
+        return HTMLResponse(
+            _render_shell(
+                active="rules",
+                current_user=user,
+                title="NVISO Cruises · Rules",
+                body_html=denied,
+                scripts=[],
+            ),
+            status_code=403,
+        )
+    body = (
+        '<h1>Rule performance</h1>'
+        '<p class="subtitle">'
+        '  How analytic rules behave in the wild — trigger volume + '
+        '  TP / FP / benign breakdown derived from incident '
+        '  classifications. Aggregated from the same Sentinel '
+        '  incidents list the dashboard reads.'
+        '</p>'
+        '<div id="aisoc-rules-root"></div>'
+    )
+    return HTMLResponse(_render_shell(
+        active="rules",
+        current_user=user,
+        title="NVISO Cruises · Rules",
+        body_html=body,
+        scripts=["/static/rules.js"],
+    ))
 
 
 @app.get("/api/changes/pending")
@@ -6862,7 +7341,8 @@ def index(request: Request) -> Response:
         'html, body, #root { background: #ffffff !important; color: #1f2937; }'
         # Reserve room at the top of the vendored canvas for the
         # sticky nav we inject above it.
-        'body { padding-top: 60px !important; }'
+        # 48px nav (Live has no sub-tabs, so single row only).
+        'body { padding-top: 48px !important; }'
         # Constrain the bundle's full-viewport canvas so a right
         # sidebar (the Agent Communication panel) fits cleanly.
         '#root { right: var(--aisoc-sidebar-width) !important; }'
