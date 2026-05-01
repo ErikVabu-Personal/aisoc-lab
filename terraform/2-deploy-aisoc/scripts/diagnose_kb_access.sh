@@ -170,6 +170,17 @@ echo "  audience:  https://search.azure.com/"
 
 probe_mcp_endpoint() {
   # probe_mcp_endpoint <label> <kb-name> <seeder-target>
+  #
+  # Note on interpretation:
+  # An unauth response of 401 vs 403 doesn't tell us if AAD auth is
+  # enabled — it depends on the service's authentication_failure_mode:
+  #   - "http401WithBearerChallenge" → unauth gets 401 + WWW-Auth
+  #   - "http403" (what we use)        → unauth gets 403
+  #   - AAD disabled entirely         → unauth gets 403
+  # So 403 here is INCONCLUSIVE for this question. Section 7 is the
+  # authoritative answer (an authenticated 200 proves AAD is on).
+  # We're really only checking endpoint reachability + that the KB
+  # exists at the URL.
   local label="$1" kb_name="$2" seeder_target="$3"
   local url="${SEARCH_EP}/knowledgebases/${kb_name}/mcp?api-version=2025-11-01-preview"
   echo
@@ -179,15 +190,9 @@ probe_mcp_endpoint() {
   code="$(curl -s -o /tmp/mcp_probe.txt -w '%{http_code}' "${url}" || echo 000)"
   echo "HTTP ${code}"
   case "${code}" in
-    401)
-      echo "OK: endpoint exists + AAD auth is enabled (WWW-Authenticate: Bearer challenge is the proof)."
-      ;;
-    403)
-      echo "DIAGNOSTIC: HTTP 403 from unauth = AAD auth DISABLED on the Search service."
-      echo "All bearer-token calls (incl. project MI's MCP enumerate) are rejected before RBAC runs."
-      echo "Fix once for both KBs (they share the service):"
-      echo "  terraform apply -target=azurerm_search_service.detection_rules"
-      echo "(the resource block needs: authentication_failure_mode = \"http403\")"
+    401|403)
+      echo "OK: endpoint exists; auth is required (expected). Whether AAD is actually enabled"
+      echo "    is determined by Section 7 below — not by this code."
       ;;
     404)
       echo "FAIL: KB '${kb_name}' is not registered on the Search service. Re-run the seeder:"
@@ -243,7 +248,7 @@ else
       ;;
     401|403)
       echo "FAIL: token rejected. Possibilities:"
-      echo "  - AAD auth is disabled at the service level (see section 6)"
+      echo "  - AAD auth is disabled at the service level"
       echo "  - User role hasn't propagated yet (wait, retry)"
       echo "  - User has the wrong role (need Search Service Contributor or Search Index"
       echo "    Data Reader/Contributor)"
@@ -259,41 +264,106 @@ else
   esac
 fi
 
+# ---- 8. Authenticated POST to MCP endpoints (user token) -----------
+#
+# Section 7 only proves the LIST endpoint works with AAD. The
+# agents talk to a different code path: POST to `/mcp` with an
+# MCP JSON-RPC body. If section 7 succeeds but this section
+# fails, the issue is MCP-specific (likely a missing service-level
+# capability for agentic retrieval).
+
+probe_mcp_authenticated() {
+  # probe_mcp_authenticated <label> <kb-name>
+  local label="$1" kb_name="$2"
+  local url="${SEARCH_EP}/knowledgebases/${kb_name}/mcp?api-version=2025-11-01-preview"
+  echo
+  echo "── ${label} (${kb_name}) ──"
+  echo "POST ${url}"
+  echo "(MCP tools/list with the user's bearer token)"
+  local code
+  code="$(curl -s -o /tmp/mcp_auth_probe.txt -w '%{http_code}' \
+    -X POST \
+    -H "Authorization: Bearer ${USER_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" \
+    --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+    --max-time 30 \
+    "${url}" || echo 000)"
+  echo "HTTP ${code}"
+  case "${code}" in
+    200|202)
+      echo "OK: MCP endpoint accepts AAD auth + the user has the right role for the MCP code path."
+      echo "    If agents still 403 here, the issue is specifically the project MI's token."
+      echo "    First 300 chars of response:"
+      head -c 300 /tmp/mcp_auth_probe.txt
+      echo
+      ;;
+    401|403)
+      echo "FAIL: MCP endpoint rejects the user's token even though section 7 succeeded."
+      echo "    The MCP code path has additional requirements beyond /knowledgebases."
+      echo "    Body:"
+      cat /tmp/mcp_auth_probe.txt
+      echo
+      ;;
+    404)
+      echo "FAIL: KB '${kb_name}' missing from the service (re-run the seeder)."
+      ;;
+    000)
+      echo "Probe timed out or unreachable."
+      ;;
+    *)
+      echo "Unexpected ${code}. Body (first 500 chars):"
+      head -c 500 /tmp/mcp_auth_probe.txt
+      echo
+      ;;
+  esac
+}
+
+print_section "8. Authenticated MCP probe (user token, POST tools/list)"
+if [ -n "${USER_TOKEN}" ]; then
+  probe_mcp_authenticated "detection-rules" "${KB_NAME}"
+  if [ -n "${CCK_KB_NAME}" ]; then
+    probe_mcp_authenticated "company-context" "${CCK_KB_NAME}"
+  fi
+else
+  echo "Skipped (no user token)."
+fi
+
 # ---- Summary -------------------------------------------------------
 
-print_section "Summary"
+print_section "Summary — authoritative interpretation"
 cat <<EOF
-If the Detection Engineer agent is still getting HTTP 403 against
-the MCP endpoint, walk this checklist in order:
+Read the sections in this order — each one rules out a layer:
 
-1. Section 6: HTTP 403 from the unauth probe means AAD auth is
-   DISABLED on the Search service. This is the most common cause
-   of "agent gets 403 even though all RBAC is correct" and the
-   one that doesn't show up in 'az role assignment list'.
-   Fix: enable AAD auth on the Search service:
-     terraform apply -target=azurerm_search_service.detection_rules
-   (the resource block must include
-    authentication_failure_mode = "http403")
+A. Section 7 (authenticated KB list with the user's token):
+   - 200 → AAD auth IS enabled, user role IS effective. ✓
+   - 401/403 → AAD disabled OR user role missing/propagating.
+       Fix the Search service's authentication_failure_mode AND
+       check section 4 for the user's role assignment.
 
-2. Section 7: HTTP 401/403 from the authenticated probe with the
-   user's token means either AAD auth is disabled (covered above)
-   or RBAC hasn't propagated. Wait 5-15 min and re-run.
+B. Section 8 (authenticated MCP POST with the user's token):
+   - 200/202 → MCP code path works with AAD; the per-KB endpoint
+       accepts authenticated requests. If agents still 403, the
+       problem is specifically the project MI's token (section
+       4 should show its role; if missing, run
+       ./scripts/deploy_prompt_agents_with_runner_tools.sh).
+   - 401/403 → MCP code path has additional requirements beyond
+       Section 7. This is the rarest failure; most likely a
+       service-level agentic-retrieval feature flag.
 
-3. Section 4: project MI is missing from the role-assignment list.
-   Fix:
-     ./scripts/deploy_prompt_agents_with_runner_tools.sh
-   (idempotent — re-runs the role grant + project-connection PUT).
+C. Section 4 (RBAC inventory):
+   - Missing project MI → run
+       ./scripts/deploy_prompt_agents_with_runner_tools.sh
 
-4. Section 5: the connection record's authType is something other
-   than 'ProjectManagedIdentity', or target / audience are wrong.
-   Fix: same script as #3.
+D. Section 5 (connection records):
+   - authType ≠ ProjectManagedIdentity → same script as C.
 
-5. Section 6: HTTP 404 on the MCP probe means the KB doesn't exist
-   on the Search service. The seeder didn't run successfully.
-   Fix:
-     terraform apply -target=null_resource.drk_search_seed
+E. Section 6 (unauth reachability):
+   - 404 → KB doesn't exist; re-run the seeder.
+   - 401/403 alone are NOT diagnostic for AAD-enabled status —
+     ignore the unauth code unless you see 404. Section 7 is
+     authoritative.
 
-6. Foundry portal + agents cache failed responses for ~60s. Hard-
-   reload any portal pages after fixing, and start a new agent
-   chat (don't reuse a stuck one).
+F. After fixing anything, Foundry caches failed agent-chat state
+   for ~60s. Start a NEW chat instead of retrying the existing one.
 EOF
