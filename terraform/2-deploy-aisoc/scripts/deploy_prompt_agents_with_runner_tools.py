@@ -476,6 +476,7 @@ def render_openapi(runner_url: str, agent_name: str) -> Dict[str, Any]:
                                                 "propose_change_to_preamble",
                                                 "propose_change_to_agent_instructions",
                                                 "propose_change_to_detection_rule",
+                                                "propose_change_to_company_context",
                                                 "fetch_url",
                                             ],
                                         },

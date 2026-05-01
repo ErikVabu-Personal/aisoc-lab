@@ -5649,9 +5649,12 @@ def _required_role_for_change_kind(kind: str | None) -> str | None:
     """Map a change kind to the human role that's allowed to approve /
     reject it.
 
-      - detection-rule       → detection-engineer (rule reviews)
-      - knowledge-preamble   → soc-manager (shared preamble across all agents)
-      - agent-instructions   → soc-manager (per-agent role tails)
+      - detection-rule        → detection-engineer (rule reviews)
+      - knowledge-preamble    → soc-manager (shared preamble across all agents)
+      - agent-instructions    → soc-manager (per-agent role tails)
+      - company-context-page  → soc-manager (markdown page in the
+                                 company-context KB corpus — fleet,
+                                 runbooks, glossary, etc.)
 
     Anything else → None, treated as "no role gate" so unknown kinds
     don't accidentally lock everyone out."""
@@ -5660,7 +5663,7 @@ def _required_role_for_change_kind(kind: str | None) -> str | None:
     k = kind.strip().lower()
     if k == "detection-rule":
         return ROLE_DETECTION_ENGINEER
-    if k in ("knowledge-preamble", "agent-instructions"):
+    if k in ("knowledge-preamble", "agent-instructions", "company-context-page"):
         return ROLE_SOC_MANAGER
     return None
 

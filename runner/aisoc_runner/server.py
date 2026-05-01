@@ -662,6 +662,7 @@ def tools_execute(
             "propose_change_to_preamble",
             "propose_change_to_agent_instructions",
             "propose_change_to_detection_rule",
+            "propose_change_to_company_context",
         ):
             pa_events_url = os.getenv("PIXELAGENTS_URL", "").strip()
             pa_token = os.getenv("PIXELAGENTS_TOKEN", "").strip()
@@ -794,6 +795,65 @@ def tools_execute(
                     "kind": "agent-instructions",
                     "target": target_agent.strip().lower(),
                     "title": title.strip(),
+                    "rationale": rationale.strip(),
+                    "proposed": proposed,
+                }
+
+            elif tool_name == "propose_change_to_company_context":
+                # SOC manager proposes an edit to one page of the
+                # company-context KB corpus (a markdown file in the
+                # company-context blob container). Same change-queue
+                # pattern as agent-instructions / preamble — it's
+                # stored as a pending change, the human reviewer
+                # approves / rejects via /changes, and the actual blob
+                # upload happens out of band (see
+                # agents/company-context/upload_company_context.sh).
+                #
+                # We don't auto-apply (yet) because the runner doesn't
+                # have storage credentials. The MVP is: agent proposes,
+                # human reads + approves, soc-manager edits the file
+                # in agents/company-context/, runs upload_company_context.sh.
+                # When we wire auto-apply later, the soc-manager-tools
+                # block in pixelagents_web/server.py will gain an
+                # _apply_company_context_change handler that PUTs the
+                # blob via the storage account's MI.
+                page = args.get("page")
+                if not isinstance(page, str) or not page.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Missing arguments.page (filename of the corpus "
+                            "page being edited, e.g. '03-account-naming.md')"
+                        ),
+                    )
+                proposed = args.get("proposed")
+                if not isinstance(proposed, str) or not proposed.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Missing arguments.proposed (the full new page "
+                            "content, markdown string)"
+                        ),
+                    )
+                page = page.strip()
+                # Normalise — page references should match the file
+                # names in agents/company-context/. Refuse path
+                # traversal explicitly.
+                if "/" in page or "\\" in page or page.startswith("."):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="page must be a bare filename, no path components",
+                    )
+                if not (page.endswith(".md") or page.endswith(".txt")):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="page must end in .md or .txt",
+                    )
+                body = {
+                    "agent": agent or "soc-manager",
+                    "kind": "company-context-page",
+                    "target": page,
+                    "title": title.strip() or page,
                     "rationale": rationale.strip(),
                     "proposed": proposed,
                 }
