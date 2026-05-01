@@ -190,20 +190,28 @@ resource "azurerm_role_assignment" "drk_search_self_contributor" {
 }
 
 # Grants the identity that's running `terraform apply` (Erik's
-# `az login` user, or the CI service principal) data-plane access
-# on the Search service, so the Foundry portal's Knowledge Bases
-# UI loads without "Failed to fetch knowledge bases for connection".
-# The portal authenticates against Search as the *logged-in user*,
-# not as a managed identity — RBAC at the management plane (Owner
-# / Contributor at subscription level) does NOT grant data-plane
-# access to AI Search. This is one of the highest-friction
-# gotchas in setting up Foundry IQ for the first time.
+# `az login` user, or the CI service principal) data + KB-management
+# access on the Search service, so the Foundry portal's Knowledge
+# Bases UI loads without "Failed to fetch knowledge bases for
+# connection".
+#
+# Why "Search Service Contributor" not "Search Index Data
+# Contributor": the portal's KB tab issues calls that need both
+# data-plane reads AND knowledge-base management surface
+# operations. The Index Data roles only cover index-level
+# documents; they don't include the KB-enumerate operation. Service
+# Contributor is the smallest role that covers everything the
+# portal needs in one role assignment. Same reason the project
+# MI grant in the Python deploy script uses this role.
+#
+# Subscription Owner alone does NOT grant any of this — Azure AI
+# Search has a notorious management-plane / data-plane RBAC split.
 resource "azurerm_role_assignment" "drk_user_to_search" {
   count                = local.drk_enabled ? 1 : 0
   scope                = azurerm_search_service.detection_rules[0].id
-  role_definition_name = "Search Index Data Contributor"
+  role_definition_name = "Search Service Contributor"
   principal_id         = data.azurerm_client_config.current.object_id
-  description          = "Deploying user can list / inspect KBs in the Foundry portal Knowledge Bases tab."
+  description          = "Deploying user can list / inspect / manage KBs in the Foundry portal."
 }
 
 

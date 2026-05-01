@@ -31,7 +31,7 @@ def _ensure_search_role_for_project_mi(
     foundry_hub: str,
     foundry_project: str,
     search_service_name: str,
-    role_definition: str = "Search Index Data Reader",
+    role_definition: str = "Search Service Contributor",
 ) -> None:
     """Idempotently grant the Foundry project's system-assigned MI a
     role on the Azure AI Search service.
@@ -51,6 +51,19 @@ def _ensure_search_role_for_project_mi(
     post-apply by deploy_foundry_project.py). So we do it here: read
     the project MI principalId via ARM, resolve the role definition,
     and PUT a deterministic role assignment on the Search service.
+
+    Why "Search Service Contributor" and not just "Search Index Data
+    Reader" / "Search Index Data Contributor":
+
+    The KB MCP endpoint's "enumerate tools" call (which Foundry hits
+    on every agent run start) is part of the *agentic retrieval*
+    feature — that's a service-level capability, not just an
+    index-level one. The Index Data roles cover document-level
+    queries against indexes, but they DON'T include the operations
+    needed to enumerate KB tools, even though indexes back the KB.
+    `Search Service Contributor` covers both planes (data + the
+    KB-management surface) which is what the MCP discovery call
+    needs.
 
     Without this the agent reports HTTP 403:
         "Access denied when connecting to the MCP server at
