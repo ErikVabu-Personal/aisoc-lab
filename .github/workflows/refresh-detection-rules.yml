@@ -1,0 +1,70 @@
+name: refresh-detection-rules
+
+# Daily refresh of the SigmaHQ rule library into the detection-rules
+# blob container, then triggers the Search indexer so the Detection
+# Engineer agent's KB stays current with upstream Sigma.
+#
+# Initial population happens at `terraform apply` time via
+# null_resource.drk_sigma_corpus, which runs the same script. This
+# workflow is purely the ongoing-freshness path.
+#
+# Authenticates to Azure via OIDC using the same federated
+# credential the other workflows use (the deploy script's bootstrap
+# step creates it).
+
+on:
+  schedule:
+    # 04:17 UTC daily. Off-peak; avoids the GitHub-cron stampede on
+    # every-hour-on-the-hour schedules. Sigma upstream merges run
+    # mostly during EU business hours so a pre-dawn refresh picks
+    # up most of yesterday's churn.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    # Manual trigger — useful before a demo or after a Sigma push
+    # you want to ingest immediately.
+
+permissions:
+  id-token: write   # OIDC
+  contents: read    # checkout this repo
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this repo (for the refresh script)
+        uses: actions/checkout@v4
+
+      - name: Verify required repo variables
+        run: |
+          missing=()
+          [ -z "${{ vars.AZURE_CLIENT_ID }}" ]                          && missing+=("AZURE_CLIENT_ID")
+          [ -z "${{ vars.AZURE_TENANT_ID }}" ]                          && missing+=("AZURE_TENANT_ID")
+          [ -z "${{ vars.AZURE_SUBSCRIPTION_ID }}" ]                    && missing+=("AZURE_SUBSCRIPTION_ID")
+          [ -z "${{ vars.AISOC_RESOURCE_GROUP }}" ]                     && missing+=("AISOC_RESOURCE_GROUP")
+          [ -z "${{ vars.AISOC_DETECTION_RULES_STORAGE_ACCOUNT }}" ]    && missing+=("AISOC_DETECTION_RULES_STORAGE_ACCOUNT")
+          [ -z "${{ vars.AISOC_DETECTION_RULES_STORAGE_CONTAINER }}" ]  && missing+=("AISOC_DETECTION_RULES_STORAGE_CONTAINER")
+          [ -z "${{ vars.AISOC_DETECTION_RULES_SEARCH_SERVICE }}" ]     && missing+=("AISOC_DETECTION_RULES_SEARCH_SERVICE")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "ERROR: missing repo variables: ${missing[*]}" >&2
+            echo "Run a phase 2 terraform apply with gh CLI authenticated to push them." >&2
+            exit 2
+          fi
+          echo "All required repo variables are set."
+
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Refresh SigmaHQ corpus + trigger indexer
+        env:
+          AISOC_DETECTION_RULES_STORAGE_ACCOUNT:   ${{ vars.AISOC_DETECTION_RULES_STORAGE_ACCOUNT }}
+          AISOC_DETECTION_RULES_STORAGE_CONTAINER: ${{ vars.AISOC_DETECTION_RULES_STORAGE_CONTAINER }}
+          AISOC_DETECTION_RULES_SEARCH_SERVICE:    ${{ vars.AISOC_DETECTION_RULES_SEARCH_SERVICE }}
+          AISOC_RESOURCE_GROUP:                    ${{ vars.AISOC_RESOURCE_GROUP }}
+        run: |
+          chmod +x terraform/2-deploy-aisoc/scripts/refresh_sigma_corpus.sh
+          terraform/2-deploy-aisoc/scripts/refresh_sigma_corpus.sh

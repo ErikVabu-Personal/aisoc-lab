@@ -61,6 +61,11 @@ resource "null_resource" "sync_github_repo_vars_phase2" {
     aisoc_runner_name                 = azurerm_container_app.runner.name
     aisoc_orchestrator_function_name  = azurerm_linux_function_app.orchestrator.name
     aisoc_soc_gateway_function_name   = azurerm_linux_function_app.soc_gateway.name
+    # The KB-storage / Search vars are only set when the
+    # detection-rules KB subsystem is enabled; nullable.
+    drk_storage_account               = local.drk_enabled ? azurerm_storage_account.detection_rules[0].name : ""
+    drk_storage_container             = local.drk_enabled ? azurerm_storage_container.detection_rules[0].name : ""
+    drk_search_service                = local.drk_enabled ? azurerm_search_service.detection_rules[0].name : ""
     always_run                        = timestamp()
   }
 
@@ -71,6 +76,13 @@ resource "null_resource" "sync_github_repo_vars_phase2" {
       AISOC_RUNNER_NAME                 = azurerm_container_app.runner.name
       AISOC_ORCHESTRATOR_FUNCTION_NAME  = azurerm_linux_function_app.orchestrator.name
       AISOC_SOC_GATEWAY_FUNCTION_NAME   = azurerm_linux_function_app.soc_gateway.name
+
+      # Surface the storage account + container + Search service
+      # names so the daily-refresh GitHub Actions workflow knows
+      # where to push the SigmaHQ rules corpus.
+      AISOC_DETECTION_RULES_STORAGE_ACCOUNT   = local.drk_enabled ? azurerm_storage_account.detection_rules[0].name : ""
+      AISOC_DETECTION_RULES_STORAGE_CONTAINER = local.drk_enabled ? azurerm_storage_container.detection_rules[0].name : ""
+      AISOC_DETECTION_RULES_SEARCH_SERVICE    = local.drk_enabled ? azurerm_search_service.detection_rules[0].name : ""
     }
   }
 

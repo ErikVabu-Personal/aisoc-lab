@@ -117,6 +117,18 @@ resource "azurerm_role_assignment" "cck_search_to_storage" {
   description          = "Company Context KB indexer reads the corpus from Blob via MI."
 }
 
+# Deploying user → Storage Blob Data Contributor on the company-context
+# storage account. Same reasoning as drk_user_to_storage in
+# detection_rules_kb.tf — needed for the upload null_resources +
+# any manual `upload_company_*.sh` runs to succeed.
+resource "azurerm_role_assignment" "cck_user_to_storage" {
+  count                = local.cck_enabled ? 1 : 0
+  scope                = azurerm_storage_account.company_context[0].id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+  description          = "Deploying user uploads the company-context + company-policies corpora."
+}
+
 # Note: the Foundry account/hub MI already has Search Index Data
 # Reader on the Search service (granted in detection_rules_kb.tf via
 # drk_foundry_to_search). The same applies to the Foundry project
@@ -240,6 +252,67 @@ resource "null_resource" "cck_search_seed_policies" {
   depends_on = [
     null_resource.cck_search_seed_context,
     azurerm_role_assignment.cck_search_to_storage,
+  ]
+}
+
+
+# ── Corpus auto-population ────────────────────────────────────────
+#
+# Two null_resources that run the per-corpus upload scripts after
+# the seeders have created the index/datasource/indexer/etc.
+# Without these, the KBs stay empty until the operator manually
+# runs upload_company_context.sh + upload_company_policies.sh —
+# which means a fresh `terraform apply` doesn't fully populate the
+# demo and the agents 404 their KB queries until the operator
+# remembers.
+#
+# Re-runs whenever any corpus file changes (filemd5 of every .md
+# in the folder hashes into the trigger). Edit a markdown page,
+# `terraform apply`, the new content lands in blob + the indexer
+# gets triggered. Closes the loop on the SOC-manager-curated KB
+# editing flow.
+
+resource "null_resource" "cck_upload_context_corpus" {
+  count = local.cck_enabled ? 1 : 0
+
+  triggers = {
+    files_hash = sha256(join("|", [
+      for f in sort(fileset("${path.module}/agents/company-context", "*.md")) :
+      "${f}=${filemd5("${path.module}/agents/company-context/${f}")}"
+    ]))
+    storage_account = azurerm_storage_account.company_context[0].name
+  }
+
+  provisioner "local-exec" {
+    working_dir = "${path.module}/agents/company-context"
+    command     = "./upload_company_context.sh"
+  }
+
+  depends_on = [
+    azurerm_role_assignment.cck_user_to_storage,
+    null_resource.cck_search_seed_context,
+  ]
+}
+
+resource "null_resource" "cck_upload_policies_corpus" {
+  count = local.cck_enabled ? 1 : 0
+
+  triggers = {
+    files_hash = sha256(join("|", [
+      for f in sort(fileset("${path.module}/agents/company-policies", "*.md")) :
+      "${f}=${filemd5("${path.module}/agents/company-policies/${f}")}"
+    ]))
+    storage_account = azurerm_storage_account.company_context[0].name
+  }
+
+  provisioner "local-exec" {
+    working_dir = "${path.module}/agents/company-policies"
+    command     = "./upload_company_policies.sh"
+  }
+
+  depends_on = [
+    azurerm_role_assignment.cck_user_to_storage,
+    null_resource.cck_search_seed_policies,
   ]
 }
 

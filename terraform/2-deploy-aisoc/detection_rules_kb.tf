@@ -195,6 +195,20 @@ resource "azurerm_role_assignment" "drk_search_to_storage" {
   description          = "Detection Rules KB indexer reads the corpus from Blob via MI."
 }
 
+# Deploying user → Storage Blob Data Contributor on the detection-rules
+# storage account, so the auto-upload null_resource (Sigma rules) +
+# any manual `az storage blob upload --auth-mode login` calls work.
+# Subscription Owner does NOT grant blob data-plane access; same
+# gotcha as Search. Without this, refresh_sigma_corpus.sh fails with
+# 403 when run from a fresh terraform apply.
+resource "azurerm_role_assignment" "drk_user_to_storage" {
+  count                = local.drk_enabled ? 1 : 0
+  scope                = azurerm_storage_account.detection_rules[0].id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+  description          = "Deploying user uploads the Sigma rules corpus + can manage the detection-rules blob container."
+}
+
 resource "azurerm_role_assignment" "drk_foundry_to_search" {
   count                = local.drk_enabled ? 1 : 0
   scope                = azurerm_search_service.detection_rules[0].id
@@ -305,6 +319,57 @@ resource "null_resource" "drk_search_seed" {
     azurerm_role_assignment.drk_search_self_contributor,
   ]
 }
+
+# ── Corpus auto-population: SigmaHQ rules ──────────────────────────
+#
+# Pulls the curated SigmaHQ/sigma rule library into the
+# detection-rules blob container, then triggers the indexer.
+# Without this, the detection-rules KB stays empty until the
+# operator manually runs scripts/refresh_sigma_corpus.sh — which
+# defeats the "deploy and demo" experience.
+#
+# Re-runs whenever any of the inputs change. The script itself is
+# idempotent: blob upload uses --overwrite, indexer trigger picks
+# up changed blobs since last run.
+#
+# Daily refresh after the initial deploy is handled by the
+# `refresh-detection-rules.yml` GitHub Actions workflow — same
+# script, run on a cron + workflow_dispatch.
+resource "null_resource" "drk_sigma_corpus" {
+  count = local.drk_enabled ? 1 : 0
+
+  triggers = {
+    # Re-run on storage/container/Search-service identity changes
+    # (i.e. on a fresh deploy). The script + the SigmaHQ upstream
+    # are NOT in the trigger set — those are refreshed by the GHA
+    # cron, not by terraform apply.
+    storage_account = azurerm_storage_account.detection_rules[0].name
+    container       = azurerm_storage_container.detection_rules[0].name
+    search_service  = azurerm_search_service.detection_rules[0].name
+  }
+
+  provisioner "local-exec" {
+    command = "${path.module}/scripts/refresh_sigma_corpus.sh"
+
+    environment = {
+      AISOC_DETECTION_RULES_STORAGE_ACCOUNT   = azurerm_storage_account.detection_rules[0].name
+      AISOC_DETECTION_RULES_STORAGE_CONTAINER = azurerm_storage_container.detection_rules[0].name
+      AISOC_DETECTION_RULES_SEARCH_SERVICE    = azurerm_search_service.detection_rules[0].name
+      AISOC_RESOURCE_GROUP                    = data.terraform_remote_state.sentinel.outputs.resource_group
+    }
+  }
+
+  depends_on = [
+    # Storage write needs the operator's data-plane RBAC on the
+    # storage account (drk_user_to_storage above) — subscription
+    # Owner doesn't grant it.
+    azurerm_role_assignment.drk_user_to_storage,
+    # The seed null_resource creates the indexer; we want the
+    # indexer to exist before we try to trigger it.
+    null_resource.drk_search_seed,
+  ]
+}
+
 
 # Project connection — RemoteTool / ProjectManagedIdentity.
 #

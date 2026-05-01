@@ -5,15 +5,18 @@ Azure via **OIDC federated credentials** (no long-lived secrets — safe
 for a public repo) and read deploy targets from repository variables so
 push-on-`main` is enough to deploy.
 
-| Workflow | Builds | Triggers on changes to |
+| Workflow | Builds / Does | Triggers on changes to |
 | --- | --- | --- |
 | `deploy-aisoc-orchestrator.yml` | Orchestrator Function App (zip deploy) | `terraform/2-deploy-aisoc/orchestrator/function_app/**` |
 | `deploy-soc-gateway.yml` | SOC Gateway Function App (zip deploy) | `terraform/2-deploy-aisoc/foundry/function_app/**` |
 | `deploy-aisoc-runner.yml` | Runner image → GHCR + force-roll Container App | `runner/**` |
 | `deploy-pixelagents-web.yml` | PixelAgents Web image → GHCR + force-roll Container App | `pixelagents_web/**` |
 | `deploy-ship-control-panel.yml` | Ship Control Panel image → GHCR + force-roll Container App | `ship-control-panel/**` |
+| `refresh-detection-rules.yml` | Re-fetches SigmaHQ rules + uploads to blob + triggers indexer | daily cron (04:17 UTC) + manual dispatch |
 
-All five also support manual `workflow_dispatch`.
+All workflows support manual `workflow_dispatch`. The
+`refresh-detection-rules.yml` one is **scheduled** — the others
+are push-driven.
 
 ## One-time setup
 
@@ -81,6 +84,9 @@ Variables that get synced:
 | `AISOC_ORCHESTRATOR_FUNCTION_NAME` | Phase 2 | orchestrator workflow |
 | `AISOC_SOC_GATEWAY_FUNCTION_NAME` | Phase 2 | gateway workflow |
 | `AISOC_PIXELAGENTS_NAME` | Phase 3 | pixelagents workflow |
+| `AISOC_DETECTION_RULES_STORAGE_ACCOUNT` | Phase 2 | refresh-detection-rules workflow |
+| `AISOC_DETECTION_RULES_STORAGE_CONTAINER` | Phase 2 | refresh-detection-rules workflow |
+| `AISOC_DETECTION_RULES_SEARCH_SERVICE` | Phase 2 | refresh-detection-rules workflow |
 
 The default repo target is `ErikVabu-Personal/aisoc-lab`. To sync to a
 fork, set the `github_repo` Terraform variable (in each phase's
