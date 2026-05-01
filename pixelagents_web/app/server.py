@@ -672,17 +672,24 @@ NAV_CSS = """\
     on the layout-critical properties so the bundle's reset styles
     can't shrink us back to invisibility.
   */
+  /*
+    The outer nav is a vertical stack: row 1 (.nav-row) holds brand
+    + top tabs + userbar; row 2 (.subtabs) holds the active group's
+    sub-pages. Without `flex-direction: column`, the two rows lay
+    out side-by-side and the subtabs strip lands in the top-right
+    of the nav. The fixed-height bookkeeping moved into the inner
+    .nav-row + .subtabs rules — the outer container is auto-sized
+    so it correctly grows from 48px (no subtabs) to 88px (subtabs
+    rendered).
+  */
   #aisoc-nav {
     position: fixed !important;
     top: 0 !important; left: 0 !important; right: 0 !important;
     z-index: 2147483000 !important;
     background: var(--aisoc-nav-bg) !important;
     border-bottom: 1px solid var(--aisoc-nav-border) !important;
-    padding: 8px 24px !important;
     display: flex !important;
-    align-items: center !important;
-    gap: 32px !important;
-    height: 60px !important;
+    flex-direction: column !important;
     box-sizing: border-box !important;
     font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
     color: var(--aisoc-nav-text) !important;
@@ -744,8 +751,9 @@ NAV_CSS = """\
   #aisoc-nav .nav-row {
     display: flex !important;
     align-items: center !important;
+    gap: 24px !important;
     height: 48px !important;
-    padding: 0 16px !important;
+    padding: 0 24px !important;
   }
   #aisoc-nav .tabs { display: flex !important; gap: 2px !important; align-items: center !important; }
   #aisoc-nav .tab {
@@ -973,6 +981,16 @@ _NAV_ICON_AUDIT = (
     'aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/>'
     '<path d="M8 9h8"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>'
 )
+_NAV_ICON_KB = (
+    # Stack of books — knowledge / library.
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+    'aria-hidden="true">'
+    '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>'
+    '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/>'
+    '<path d="M9 6h7"/><path d="M9 10h7"/>'
+    '</svg>'
+)
 _NAV_ICON_SETTINGS = (
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
     'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
@@ -998,6 +1016,7 @@ _NAV_PAGE_GROUP: dict[str, tuple[str, str]] = {
     # Configuration group.
     "improvements":   ("configuration", "improvements"),
     "audit":          ("configuration", "audit"),
+    "kb":             ("configuration", "kb"),
     "config":         ("configuration", "settings"),
 }
 
@@ -1076,6 +1095,11 @@ def _render_nav(active: str, current_user: str) -> str:
             ("improvements", "/improvements", "Continuous Improvement", _NAV_ICON_IMPROVEMENTS,
                 caps["improvements"], int(notifs.get("improvements", 0))),
             ("audit",        "/audit",        "Audit logs",             _NAV_ICON_AUDIT,
+                caps["configuration"], 0),
+            # Knowledge bases — soc-manager only. Surfaces what the
+            # agents have indexed (detection-rules / company-context /
+            # company-policies) with a manual-refresh button per KB.
+            ("kb",           "/kb",           "Knowledge",              _NAV_ICON_KB,
                 caps["configuration"], 0),
             ("settings",     "/config",       "Settings",               _NAV_ICON_SETTINGS,
                 caps["configuration"], 0),
@@ -6285,6 +6309,251 @@ def rules_view(request: Request) -> Response:
         title="NVISO Cruises · Rules",
         body_html=body,
         scripts=["/static/rules.js"],
+    ))
+
+
+# ── Knowledge bases (Configuration → Knowledge) ───────────────────
+#
+# Soc-manager-only inspection page. Lists each Foundry IQ knowledge
+# base the deploy provisioned, with its current document count and
+# a refresh button that triggers the underlying AI Search indexer.
+#
+# The page is data-driven from the AISOC_KB_DESCRIPTORS_JSON env
+# var (set by Phase 3 Terraform — see main.tf). Adding a 4th KB
+# later means editing that JSON in TF; nothing in this Python file
+# enumerates the KBs by name.
+
+def _kb_descriptors() -> list[dict[str, Any]]:
+    """Parse AISOC_KB_DESCRIPTORS_JSON. Returns [] when the env var
+    is missing or unparseable — the /kb page just shows "no KBs
+    configured" in that case rather than 500-ing."""
+    raw = (os.getenv("AISOC_KB_DESCRIPTORS_JSON") or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [d for d in parsed if isinstance(d, dict) and d.get("name")]
+    except Exception as e:
+        print(f"[kb] failed to parse AISOC_KB_DESCRIPTORS_JSON: {e!r}", flush=True)
+    return []
+
+
+def _kb_search_endpoint() -> str:
+    return (os.getenv("AISOC_KB_SEARCH_ENDPOINT") or "").strip().rstrip("/")
+
+
+def _kb_search_token() -> str:
+    """Bearer token for AI Search data plane. Uses the Container
+    App's MI via DefaultAzureCredential. The PixelAgents MI gets
+    Search Service Contributor on the service via Phase 3 TF."""
+    from azure.identity import DefaultAzureCredential  # imported lazily
+    return DefaultAzureCredential().get_token("https://search.azure.com/.default").token
+
+
+def _kb_search_service_name() -> str:
+    """Derive the service name from the endpoint URL (Phase 2 doesn't
+    export it directly; Phase 3 does this same parse for the role
+    assignment)."""
+    ep = _kb_search_endpoint()
+    if not ep.startswith("https://"):
+        return ""
+    host = ep[len("https://"):]
+    return host.split(".", 1)[0]
+
+
+@app.get("/api/kb/stats")
+def api_kb_stats(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Return one entry per configured KB with its current document
+    count + last-modified timestamp (when the indexer last finished).
+
+    Soc-manager-gated: this is a Configuration page, same gate as
+    /audit and /config.
+    """
+    user = _session_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="not signed in")
+    if ROLE_SOC_MANAGER not in set(_user_roles(user)):
+        raise HTTPException(status_code=403, detail="soc-manager only")
+
+    descriptors = _kb_descriptors()
+    endpoint    = _kb_search_endpoint()
+    if not descriptors or not endpoint:
+        return {"endpoint": endpoint, "knowledge_bases": []}
+
+    try:
+        token = _kb_search_token()
+    except Exception as e:
+        # Token failure is reported per-KB so the page still renders
+        # the descriptor metadata even when auth is broken.
+        print(f"[kb] token fetch failed: {e!r}", flush=True)
+        token = ""
+
+    out: list[dict[str, Any]] = []
+    for d in descriptors:
+        idx = d.get("index", "")
+        entry: dict[str, Any] = {
+            "name":        d.get("name"),
+            "label":       d.get("label") or d.get("name"),
+            "description": d.get("description") or "",
+            "index":       idx,
+            "indexer":     d.get("indexer", ""),
+            "agents":      d.get("agents") or [],
+            "doc_count":   None,
+            "last_run":    None,
+            "error":       None,
+        }
+        if not idx or not endpoint or not token:
+            entry["error"] = "Search endpoint or token unavailable."
+            out.append(entry)
+            continue
+
+        try:
+            # Document count — cheap data-plane call.
+            url_count = f"{endpoint}/indexes/{idx}/docs/$count?api-version=2024-07-01"
+            r = requests.get(
+                url_count,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                # The $count endpoint returns a bare integer in the
+                # response body (no JSON envelope). It might come
+                # back with a leading BOM on some service versions.
+                txt = r.text.strip().lstrip("﻿")
+                try:
+                    entry["doc_count"] = int(txt)
+                except ValueError:
+                    entry["error"] = f"unparseable count: {txt[:80]!r}"
+            else:
+                entry["error"] = f"HTTP {r.status_code} from $count"
+        except Exception as e:
+            entry["error"] = f"count fetch: {e!r}"
+
+        # Last successful indexer run — informational, best-effort.
+        indexer_name = entry["indexer"]
+        if indexer_name and not entry["error"]:
+            try:
+                url_status = f"{endpoint}/indexers/{indexer_name}/status?api-version=2024-07-01"
+                r = requests.get(
+                    url_status,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    j = r.json()
+                    last = (j.get("lastResult") or {})
+                    entry["last_run"] = {
+                        "status":     last.get("status"),
+                        "started":    last.get("startTime"),
+                        "ended":      last.get("endTime"),
+                        "items":      last.get("itemsProcessed"),
+                        "errors":     last.get("itemsFailed"),
+                    }
+            except Exception:
+                pass  # last-run is informational only
+
+        out.append(entry)
+
+    return {
+        "endpoint": endpoint,
+        "service":  _kb_search_service_name(),
+        "knowledge_bases": out,
+    }
+
+
+@app.post("/api/kb/refresh/{kb_name}")
+def api_kb_refresh(
+    kb_name: str,
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Trigger the AI Search indexer for one KB. The indexer pulls
+    its source blob/SharePoint/etc. content into the index. Doesn't
+    re-create the corpus — for that you re-run the upload helpers
+    (upload_company_*.sh / refresh_sigma_corpus.sh)."""
+    user = _session_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="not signed in")
+    if ROLE_SOC_MANAGER not in set(_user_roles(user)):
+        raise HTTPException(status_code=403, detail="soc-manager only")
+
+    descriptors = _kb_descriptors()
+    target = next((d for d in descriptors if d.get("name") == kb_name), None)
+    if not target:
+        raise HTTPException(status_code=404, detail=f"unknown KB: {kb_name!r}")
+
+    indexer_name = target.get("indexer") or ""
+    endpoint     = _kb_search_endpoint()
+    if not indexer_name or not endpoint:
+        raise HTTPException(status_code=500, detail="indexer or endpoint not configured")
+
+    try:
+        token = _kb_search_token()
+        url = f"{endpoint}/indexers/{indexer_name}/run?api-version=2024-07-01"
+        r = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=20,
+        )
+        if r.status_code in (200, 202, 204):
+            return {"ok": True, "indexer": indexer_name, "http_code": r.status_code}
+        raise HTTPException(
+            status_code=r.status_code,
+            detail=f"indexer run returned {r.status_code}: {r.text[:500]}",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"indexer run failed: {e!r}")
+
+
+@app.get("/kb", response_class=HTMLResponse)
+def kb_view(request: Request) -> Response:
+    """Configuration → Knowledge. Soc-manager-only page listing the
+    KBs the deploy provisioned, with doc counts and a refresh
+    button per KB."""
+    user = _session_user(request)
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    my_roles = set(_user_roles(user))
+    if ROLE_SOC_MANAGER not in my_roles:
+        denied = (
+            '<h1>Knowledge — restricted</h1>'
+            '<p class="subtitle">'
+            '  Knowledge-base inspection is gated to SOC managers. Your '
+            '  account does not currently hold that role.'
+            '</p>'
+        )
+        return HTMLResponse(
+            _render_shell(
+                active="kb",
+                current_user=user,
+                title="NVISO Cruises · Knowledge",
+                body_html=denied,
+                scripts=[],
+            ),
+            status_code=403,
+        )
+    body = (
+        '<h1>Knowledge bases</h1>'
+        '<p class="subtitle">'
+        '  Foundry IQ knowledge bases the agents query at runtime. '
+        '  Each card shows the underlying Azure AI Search index, '
+        '  current document count, and a refresh button that '
+        '  triggers the indexer (useful after editing a corpus).'
+        '</p>'
+        '<div id="aisoc-kb-root"></div>'
+    )
+    return HTMLResponse(_render_shell(
+        active="kb",
+        current_user=user,
+        title="NVISO Cruises · Knowledge",
+        body_html=body,
+        scripts=["/static/kb.js"],
     ))
 
 

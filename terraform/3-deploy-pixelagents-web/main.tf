@@ -159,6 +159,53 @@ resource "azurerm_container_app" "pixelagents" {
         value = "1"
       }
 
+      # Knowledge-base inspection endpoints (/kb page in the SOC UI).
+      # The page lists each KB with its current document count and
+      # exposes a refresh-now button that triggers the corresponding
+      # AI Search indexer. These env vars give the FastAPI backend
+      # what it needs to:
+      #   - call the Search service's data plane to read $count
+      #   - call the Search service's data plane to run the indexer
+      # Auth uses the Container App's MI; see the role assignment
+      # `pixelagents_search_kb_contributor` below.
+      env {
+        name  = "AISOC_KB_SEARCH_ENDPOINT"
+        value = try(data.terraform_remote_state.aisoc.outputs.detection_rules_search_endpoint, "")
+      }
+      env {
+        # JSON list of {name, label, description, index, indexer}
+        # tuples that the /kb page enumerates. Keeps the backend
+        # data-driven rather than hardcoding the three KBs in
+        # Python — easy to extend when we add a 4th source later.
+        name = "AISOC_KB_DESCRIPTORS_JSON"
+        value = jsonencode([
+          {
+            name        = "detection-rules"
+            label       = "Detection Rules"
+            description = "Sigma / KQL / writeups for the Detection Engineer agent. Auto-refreshed daily from the SigmaHQ/sigma upstream by the refresh-detection-rules workflow."
+            index       = "detection-rules-idx"
+            indexer     = "detection-rules-indexer"
+            agents      = ["detection-engineer"]
+          },
+          {
+            name        = "company-context"
+            label       = "Company Context (SOC-curated)"
+            description = "Fleet, subsystems, account naming, IR runbooks, glossary, escalation matrix, org chart. Edited by the SOC manager (markdown in blob); the indexer picks up changes within 30 min of upload."
+            index       = "company-context-idx"
+            indexer     = "company-context-indexer"
+            agents      = ["triage", "investigator", "reporter", "soc-manager", "threat-intel"]
+          },
+          {
+            name        = "company-policies"
+            label       = "Company Policies (HR/IT-curated)"
+            description = "Acceptable-use policy + asset inventory. Federated into the same Foundry IQ knowledge base as company-context (single MCP endpoint, two underlying sources)."
+            index       = "company-policies-idx"
+            indexer     = "company-policies-indexer"
+            agents      = ["triage", "investigator", "reporter", "soc-manager", "threat-intel"]
+          },
+        ])
+      }
+
       # Demo login roster — JSON object {email: password}. The server
       # falls back to a hardcoded roster if this is empty, so the
       # Container App still boots cleanly on first deploy. Stored as a
@@ -276,6 +323,40 @@ resource "azurerm_role_assignment" "pixelagents_sentinel_reader" {
   scope                = data.terraform_remote_state.sentinel.outputs.log_analytics_workspace_id
   role_definition_name = "Microsoft Sentinel Reader"
   principal_id         = local.pixelagents_principal_id
+}
+
+# AI Search data + control plane access for the /kb page in the SOC UI:
+#   - read $count on each KB index (data plane)
+#   - run the indexer manually via the refresh button (data plane)
+# Search Service Contributor covers both. Same role we use elsewhere
+# for the project MI / deploying user — the role's broad enough to
+# cover the new "list KBs from the portal" path too.
+#
+# Scope is constructed from the Search endpoint (Phase 2 doesn't
+# export the ARM id directly; the endpoint hostname's first label
+# IS the service name, which is the only piece of the ARM id that
+# isn't statically derivable from the RG).
+locals {
+  pixelagents_search_endpoint    = try(data.terraform_remote_state.aisoc.outputs.detection_rules_search_endpoint, "")
+  # https://<svc>.search.windows.net → <svc>
+  pixelagents_search_service_name = trimprefix(
+    replace(local.pixelagents_search_endpoint, ".search.windows.net", ""),
+    "https://"
+  )
+  pixelagents_search_service_id = (
+    local.pixelagents_search_service_name == ""
+      ? ""
+      : "/subscriptions/${data.terraform_remote_state.aisoc.outputs.subscription_id}/resourceGroups/${data.terraform_remote_state.sentinel.outputs.resource_group}/providers/Microsoft.Search/searchServices/${local.pixelagents_search_service_name}"
+  )
+  pixelagents_search_role_enabled = local.pixelagents_search_service_id != ""
+}
+
+resource "azurerm_role_assignment" "pixelagents_search_kb_contributor" {
+  count                = local.pixelagents_search_role_enabled ? 1 : 0
+  scope                = local.pixelagents_search_service_id
+  role_definition_name = "Search Service Contributor"
+  principal_id         = local.pixelagents_principal_id
+  description          = "PixelAgents Web reads KB doc counts + triggers indexers from the /kb page."
 }
 
 output "pixelagents_principal_id" {
