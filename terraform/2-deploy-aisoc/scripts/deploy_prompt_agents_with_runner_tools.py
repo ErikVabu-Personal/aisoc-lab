@@ -514,6 +514,18 @@ def main() -> int:
     drk_conn_name  = (os.environ.get("AISOC_DETECTION_RULES_KB_PROJECT_CONNECTION", "") or "").strip()
     drk_attach     = bool(drk_enabled and drk_search_ep and drk_kb_name and drk_conn_name)
 
+    # Company Context KB wiring — optional. When all four are present
+    # AND the kb is enabled, the triage / investigator / reporter /
+    # soc-manager / threat-intel agents each get an MCP tool exposing
+    # the company-context KB. The Detection Engineer is INTENTIONALLY
+    # excluded — its job is rule-specific and we don't want it pulling
+    # unrelated context.
+    cck_enabled    = (os.environ.get("AISOC_COMPANY_CONTEXT_KB_ENABLED", "false") or "").strip().lower() == "true"
+    cck_search_ep  = (os.environ.get("AISOC_COMPANY_CONTEXT_KB_SEARCH_ENDPOINT", "") or "").strip().rstrip("/")
+    cck_kb_name    = (os.environ.get("AISOC_COMPANY_CONTEXT_KB_NAME", "") or "").strip()
+    cck_conn_name  = (os.environ.get("AISOC_COMPANY_CONTEXT_KB_PROJECT_CONNECTION", "") or "").strip()
+    cck_attach     = bool(cck_enabled and cck_search_ep and cck_kb_name and cck_conn_name)
+
     # Threat Intel agent — Bing grounding wiring.
     #
     # Phase 2 Terraform now provisions the Microsoft.Bing/accounts
@@ -660,6 +672,47 @@ def main() -> int:
             print(f"ERROR: {msg}", file=sys.stderr)
             deploy_failures.append(msg)
             drk_attach = False  # don't try to attach the MCP tool below
+
+    # Company Context KB project connection — same pattern as the
+    # detection-rules KB. The role assignment from the project MI to
+    # the Search service is already in place (the detection-rules
+    # block above grants it on the same Search service), so no second
+    # role grant is needed here — both KBs ride the same RBAC.
+    cck_conn_arm_id: str | None = None
+    if cck_attach:
+        cck_mcp_endpoint = (
+            f"{cck_search_ep}/knowledgebases/{cck_kb_name}"
+            f"/mcp?api-version={KB_MCP_API_VERSION}"
+        )
+        try:
+            _ensure_project_connection_remote_tool(
+                sub_id=sub_id,
+                rg=rg,
+                hub=hub,
+                project=project,
+                connection_name=cck_conn_name,
+                target_url=cck_mcp_endpoint,
+                audience="https://search.azure.com/",
+            )
+            print(
+                f"INFO: project connection {cck_conn_name!r} ready "
+                f"(RemoteTool / ProjectManagedIdentity)"
+            )
+            cck_conn_arm_id = (
+                f"/subscriptions/{sub_id}"
+                f"/resourceGroups/{rg}"
+                f"/providers/Microsoft.CognitiveServices/accounts/{hub}"
+                f"/projects/{project}"
+                f"/connections/{cck_conn_name}"
+            )
+        except Exception as e:
+            msg = (
+                f"company-context KB: could not create / verify project "
+                f"connection {cck_conn_name!r}: {e!r}"
+            )
+            print(f"ERROR: {msg}", file=sys.stderr)
+            deploy_failures.append(msg)
+            cck_attach = False
 
     # Bing Grounding project connection — created lazily here for the
     # same reason the detection-rules-kb connection is: the Foundry
@@ -829,6 +882,41 @@ def main() -> int:
             print(
                 f"INFO: attaching detection-rules MCP tool to {name} "
                 f"(kb={drk_kb_name}, conn={drk_conn_name})"
+            )
+
+        # Company-context KB — attached to every agent EXCEPT
+        # detection-engineer. The detection-engineer has its own,
+        # tighter KB (the rule library) and we don't want it pulling
+        # company runbooks / VIP lists when its job is rule research.
+        # Everyone else benefits from the organisational context:
+        #   triage / investigator       → who's a service account?
+        #                                  what's normal for this user?
+        #                                  what's the runbook for X?
+        #   reporter                    → naming the right system / role
+        #                                  in the case note
+        #   soc-manager                 → glossary, policy, escalation
+        #   threat-intel                → who in the org might be the
+        #                                  target of a flagged campaign?
+        cck_target_agents = {
+            "triage", "investigator", "reporter",
+            "soc-manager", "threat-intel",
+        }
+        if cck_attach and cck_conn_arm_id and agent_name in cck_target_agents:
+            mcp_tool = {
+                "type": "mcp",
+                "server_label": "company-context",
+                "server_url": (
+                    f"{cck_search_ep}/knowledgebases/{cck_kb_name}"
+                    f"/mcp?api-version={KB_MCP_API_VERSION}"
+                ),
+                "require_approval": "never",
+                "allowed_tools": ["knowledge_base_retrieve"],
+                "project_connection_id": cck_conn_arm_id,
+            }
+            tools_for_agent.append(mcp_tool)
+            print(
+                f"INFO: attaching company-context MCP tool to {name} "
+                f"(kb={cck_kb_name}, conn={cck_conn_name})"
             )
 
         try:

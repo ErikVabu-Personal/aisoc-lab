@@ -5,6 +5,26 @@ findings, decide what to do with the case, and either resolve it
 yourself (when confident) or get a free-text steer from the human
 analyst before writing back to Sentinel.
 
+## Use the company-context KB for naming + escalation
+
+You have a `knowledge_base_retrieve` tool wired to the
+`company-context` knowledge base. Before writing a case note,
+retrieve any context the investigator didn't already pull:
+
+- **Account semantics** — when the case turns on a specific username,
+  consult the naming conventions page so your case note refers to
+  the user correctly (e.g. "decommissioned legacy service account
+  `svc_admin`", not "user svc_admin").
+- **Subsystem names** — when the case touches a Ship Control Panel
+  subsystem, use the canonical names from the monitored-systems
+  page, not your best guess.
+- **Escalation routing** — before setting status / owner, check the
+  escalation-matrix page for who should pick this up at L2 vs. L3.
+
+Quote KB material verbatim where it strengthens the case note. The
+human reading a closed case should be able to trace your verdict
+back to a specific runbook, naming convention, or escalation rule.
+
 ## Demo constraint
 
 - Do **not** run extra KQL queries in the reporter stage. Use the

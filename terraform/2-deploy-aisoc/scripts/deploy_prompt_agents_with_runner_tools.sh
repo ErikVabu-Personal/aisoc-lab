@@ -50,6 +50,15 @@ export AISOC_DETECTION_RULES_KB_SEARCH_ENDPOINT="$(terraform output -raw detecti
 export AISOC_DETECTION_RULES_KB_NAME="$(terraform output -raw detection_rules_kb_name 2>/dev/null || echo)"
 export AISOC_DETECTION_RULES_KB_PROJECT_CONNECTION="$(terraform output -raw detection_rules_project_connection_name 2>/dev/null || echo)"
 
+# Company Context knowledge base wiring (optional). Same pattern as
+# the detection-rules KB. When enabled, the Python script attaches
+# the MCP tool to triage / investigator / reporter / soc-manager /
+# threat-intel (NOT detection-engineer).
+export AISOC_COMPANY_CONTEXT_KB_ENABLED="$(terraform output -raw company_context_kb_enabled 2>/dev/null || echo false)"
+export AISOC_COMPANY_CONTEXT_KB_SEARCH_ENDPOINT="$(terraform output -raw company_context_search_endpoint 2>/dev/null || echo)"
+export AISOC_COMPANY_CONTEXT_KB_NAME="$(terraform output -raw company_context_kb_name 2>/dev/null || echo)"
+export AISOC_COMPANY_CONTEXT_KB_PROJECT_CONNECTION="$(terraform output -raw company_context_project_connection_name 2>/dev/null || echo)"
+
 # Bing Grounding wiring (optional). When enabled, Phase 2 Terraform
 # provisioned the Microsoft.Bing/accounts resource and exposed the
 # name + API key here. The Python script uses them to lazily create
