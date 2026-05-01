@@ -135,6 +135,16 @@
 # Then:
 # AISOC_BING_GROUNDING_CONNECTION="bing-grounding"
 
+# ── Tavily web search (optional but strongly recommended) ───────────
+# When set, the runner exposes a `web_search` tool to the Threat Intel
+# and Investigator agents. They use it for live internet research
+# (CVEs, IOCs, fresh threat-actor activity) without needing Foundry's
+# bing_grounding tool to be wired. Sign up at https://tavily.com — the
+# free tier covers 1000 searches/month and signup is one form.
+# Independent of bing_grounding: both can be wired at the same time;
+# the agent will use whichever is available.
+# TF_VAR_tavily_api_key="tvly-..."
+
 # ── OpenRouter (optional) ───────────────────────────────────────────
 # Only needed if you've wired the gateway to call OpenRouter as well
 # as Foundry — leave commented for the standard demo.

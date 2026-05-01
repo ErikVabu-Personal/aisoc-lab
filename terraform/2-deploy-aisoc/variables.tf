@@ -204,3 +204,19 @@ variable "runner_enable_writes" {
   type        = bool
   default     = true
 }
+
+variable "tavily_api_key" {
+  description = <<-EOT
+    Tavily Search API key (https://tavily.com — free tier covers 1000
+    searches/month). When set, the Threat Intel + Investigator agents'
+    web_search runner tool calls Tavily for live internet research.
+    Leave empty to deploy without web search; web_search returns a 503
+    with setup instructions and the agent's reply tells the human what
+    to fix. Independent of Foundry's bing_grounding tool — both can be
+    wired at the same time and the agent will prefer whichever is
+    available.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}

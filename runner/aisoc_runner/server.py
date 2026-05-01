@@ -834,6 +834,174 @@ def tools_execute(
                 raise HTTPException(status_code=r.status_code, detail=r.text)
             return {"result": r.json()}
 
+        # ── Web search + fetch (Threat Intel / Investigator) ──────────
+        # Two runner-side tools that give any agent live internet access
+        # without needing Foundry's bing_grounding tool wired up. They
+        # complement bing_grounding (when present) but don't require it.
+        #
+        #   web_search(query, max_results=5)
+        #     → Tavily-backed search. Requires TAVILY_API_KEY on the
+        #       runner. Returns clean JSON with title / url / snippet.
+        #       Tavily's free tier covers 1000 searches/month and signup
+        #       is one form. Without the key we return a 503 with a
+        #       clear setup pointer so the agent's reply tells the
+        #       human exactly what to fix.
+        #   fetch_url(url, max_chars=5000)
+        #     → Plain HTTPS fetch with a normal User-Agent. Strips
+        #       scripts/styles, returns a text excerpt capped at
+        #       max_chars. No third-party API needed.
+
+        if tool_name == "web_search":
+            query = args.get("query")
+            if not isinstance(query, str) or not query.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.query (string)",
+                )
+            max_results_raw = args.get("max_results")
+            try:
+                max_results = int(max_results_raw) if max_results_raw is not None else 5
+            except Exception:
+                max_results = 5
+            max_results = max(1, min(10, max_results))
+
+            tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
+            # Terraform writes the literal "<unset>" sentinel when no
+            # key was supplied (the Container App secret has to exist
+            # before the env can reference it). Treat it as missing.
+            if tavily_key == "<unset>":
+                tavily_key = ""
+            if not tavily_key:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "web_search not wired — TAVILY_API_KEY is not set "
+                        "on the runner. Sign up at https://tavily.com (free "
+                        "tier: 1000 searches/month), then export "
+                        "TAVILY_API_KEY in aisoc.config and re-run "
+                        "`bash aisoc_demo.sh deploy --phase 2` so Terraform "
+                        "lands the new runner secret. fetch_url still works "
+                        "without this key when you already have a URL."
+                    ),
+                )
+
+            try:
+                r = requests.post(
+                    "https://api.tavily.com/search",
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "api_key":      tavily_key,
+                        "query":        query.strip(),
+                        "max_results":  max_results,
+                        "search_depth": "basic",
+                        "include_answer": True,
+                    },
+                    timeout=30,
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"web_search upstream error: {e!r}",
+                )
+            if r.status_code >= 400:
+                raise HTTPException(
+                    status_code=r.status_code,
+                    detail=f"Tavily {r.status_code}: {r.text[:300]}",
+                )
+
+            try:
+                data = r.json()
+            except Exception:
+                data = {}
+            results = data.get("results") or []
+            slim = []
+            for item in results[:max_results]:
+                if not isinstance(item, dict):
+                    continue
+                slim.append({
+                    "title":   (item.get("title") or "")[:200],
+                    "url":     item.get("url") or "",
+                    "snippet": (item.get("content") or "")[:600],
+                    "score":   item.get("score"),
+                })
+            return {
+                "result": {
+                    "query":   query.strip(),
+                    "answer":  data.get("answer") or "",
+                    "results": slim,
+                    "count":   len(slim),
+                },
+            }
+
+        if tool_name == "fetch_url":
+            url = args.get("url")
+            if not isinstance(url, str) or not url.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing arguments.url (string)",
+                )
+            url = url.strip()
+            if not (url.startswith("http://") or url.startswith("https://")):
+                raise HTTPException(
+                    status_code=400,
+                    detail="url must start with http:// or https://",
+                )
+            max_chars_raw = args.get("max_chars")
+            try:
+                max_chars = int(max_chars_raw) if max_chars_raw is not None else 5000
+            except Exception:
+                max_chars = 5000
+            max_chars = max(500, min(20000, max_chars))
+
+            try:
+                r = requests.get(
+                    url,
+                    headers={
+                        # Some sites 403 a bare requests/python User-Agent.
+                        "User-Agent": (
+                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/124.0.0.0 Safari/537.36"
+                        ),
+                        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                    },
+                    timeout=20,
+                    allow_redirects=True,
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"fetch_url upstream error: {e!r}",
+                )
+
+            ct = (r.headers.get("Content-Type") or "").lower()
+            text = ""
+            if "html" in ct or "xml" in ct:
+                # Cheap HTML→text: strip script/style + tags. Avoids
+                # depending on BeautifulSoup so the runner image stays
+                # lean. Good enough for skimming a CVE / blog page.
+                import re as _re
+                raw = r.text
+                raw = _re.sub(r"<script\b.*?</script>", " ", raw, flags=_re.DOTALL | _re.IGNORECASE)
+                raw = _re.sub(r"<style\b.*?</style>", " ", raw, flags=_re.DOTALL | _re.IGNORECASE)
+                raw = _re.sub(r"<[^>]+>", " ", raw)
+                # Decode common HTML entities + collapse whitespace.
+                import html as _html
+                raw = _html.unescape(raw)
+                text = _re.sub(r"\s+", " ", raw).strip()
+            else:
+                text = r.text or ""
+
+            return {
+                "result": {
+                    "url":          r.url,
+                    "status":       r.status_code,
+                    "content_type": ct or None,
+                    "text":         text[:max_chars],
+                    "truncated":    len(text) > max_chars,
+                },
+            }
+
         if tool_name == "create_analytic_rule":
             # Inputs (all optional except displayName + query):
             #   displayName, description, severity (Low/Medium/High/Informational),

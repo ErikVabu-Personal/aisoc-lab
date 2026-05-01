@@ -64,6 +64,18 @@ resource "azurerm_container_app" "runner" {
     value = random_string.aisoc_write_key.result
   }
 
+  # Tavily API key for the runner's web_search tool. Optional — when
+  # var.tavily_api_key is empty we still create the Container App
+  # secret (with a sentinel "<unset>" value) so the env var is always
+  # bound; the runner code treats an unset/sentinel value as "not
+  # configured" and returns a 503 with a clear setup pointer.
+  # Conditional secret creation is messier because azurerm_container_app
+  # requires the secret to exist before any env can reference it.
+  secret {
+    name  = "tavily-api-key"
+    value = var.tavily_api_key != "" ? var.tavily_api_key : "<unset>"
+  }
+
   template {
     container {
       name   = "runner"
@@ -96,6 +108,14 @@ resource "azurerm_container_app" "runner" {
       env {
         name  = "ENABLE_WRITES"
         value = var.runner_enable_writes ? "1" : "0"
+      }
+
+      # Tavily API key for the web_search runner tool. The runner's
+      # tool handler treats "<unset>" the same as missing — see the
+      # web_search branch in runner/aisoc_runner/server.py.
+      env {
+        name        = "TAVILY_API_KEY"
+        secret_name = "tavily-api-key"
       }
     }
   }
