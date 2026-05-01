@@ -103,6 +103,19 @@ resource "azurerm_search_service" "detection_rules" {
   location            = local.location_effective
   sku                 = var.detection_rules_kb_search_sku
 
+  # Semantic ranker — REQUIRED by Foundry IQ's agentic-retrieval
+  # engine. Without it, the Foundry portal's Knowledge bases tab
+  # shows "Semantic ranker is required Creating and querying
+  # knowledge bases requires semantic ranker to be enabled on this
+  # Azure AI Search service" and the project connection's MCP
+  # endpoint refuses to list KBs.
+  #
+  # "free" gives 1000 semantic queries / month at no extra cost;
+  # plenty for the demo. Bump to "standard" if/when query volume
+  # grows. Requires Basic SKU or higher (it's a no-op on Free SKU,
+  # but Free can't host KBs anyway).
+  semantic_search_sku = "free"
+
   # System-assigned identity so the indexer can pull from Blob using
   # RBAC instead of a connection string.
   identity {
