@@ -730,14 +730,30 @@ NAV_CSS = """\
     height: 36px !important;
     display: block !important;
   }
-  #aisoc-nav .tabs { display: flex !important; gap: 4px !important; }
+  #aisoc-nav .tabs { display: flex !important; gap: 2px !important; align-items: center !important; }
   #aisoc-nav .tab {
-    padding: 7px 14px !important;
+    padding: 7px 12px !important;
     color: var(--aisoc-nav-muted) !important;
     text-decoration: none !important;
     border-radius: 4px !important;
     font-weight: 500 !important;
     font-size: 14px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 7px !important;
+  }
+  #aisoc-nav .tab .tab-icon {
+    display: inline-flex !important;
+    align-items: center !important;
+    width: 16px !important;
+    height: 16px !important;
+    flex: 0 0 16px !important;
+    color: inherit !important;
+  }
+  #aisoc-nav .tab .tab-icon svg {
+    width: 16px !important;
+    height: 16px !important;
+    display: block !important;
   }
   #aisoc-nav .tab:hover {
     background: #f3f4f6 !important;
@@ -747,6 +763,13 @@ NAV_CSS = """\
     color: var(--aisoc-nav-accent) !important;
     background: var(--aisoc-nav-active-bg) !important;
     font-weight: 700 !important;
+  }
+  /* Drop labels on narrow screens — icons stay, the tooltip
+     (browser default for <a title=>... actually <a>'s aria-hidden)
+     keeps the page navigable. Above 900px we always show labels. */
+  @media (max-width: 900px) {
+    #aisoc-nav .tab .tab-label { display: none !important; }
+    #aisoc-nav .tab { padding: 7px 10px !important; }
   }
   #aisoc-nav .userbar {
     margin-left: auto !important;
@@ -805,22 +828,69 @@ def _render_nav(active: str, current_user: str) -> str:
     is_soc_manager = ROLE_SOC_MANAGER in user_roles
     is_detection_engineer = ROLE_DETECTION_ENGINEER in user_roles
 
-    # (key, href, label, visible)
+    # Inline 16px line-style SVG icons (Lucide-style). All use
+    # currentColor so the existing .tab / .tab.active rules keep
+    # controlling the color. Kept inline so there's no additional
+    # static asset to ship + cache-bust.
+    ICON_LIVE = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+        'aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>'
+        '<circle cx="12" cy="12" r="3"/></svg>'
+    )
+    ICON_INCIDENTS = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+        'aria-hidden="true"><path d="M12 2 2 22h20L12 2Z"/>'
+        '<path d="M12 9v6"/><path d="M12 18h.01"/></svg>'
+    )
+    ICON_HORIZON = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+        'aria-hidden="true"><circle cx="12" cy="12" r="10"/>'
+        '<path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20"/>'
+        '<path d="M12 2a15 15 0 0 0 0 20"/></svg>'
+    )
+    ICON_IMPROVEMENTS = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+        'aria-hidden="true"><path d="M3 17 9 11l4 4 8-8"/>'
+        '<path d="M14 7h7v7"/></svg>'
+    )
+    ICON_AUDIT = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+        'aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/>'
+        '<path d="M8 9h8"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>'
+    )
+    ICON_SETTINGS = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+        'aria-hidden="true"><circle cx="12" cy="12" r="3"/>'
+        '<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>'
+        '</svg>'
+    )
+
+    # (key, href, label, icon_svg, visible)
     tabs = [
-        ("live",         "/",                "Live Agent View",       True),
-        ("dashboard",    "/dashboard",       "Dashboard",             True),
-        ("threat-horizon", "/threat-horizon", "Threat Horizon",        True),
-        ("improvements", "/improvements",    "Continuous Improvement",
-            is_soc_manager or is_detection_engineer),
-        ("audit",        "/audit",           "Logging & Auditing",    is_soc_manager),
-        ("config",       "/config",          "Configuration",         is_soc_manager),
+        ("live",           "/",               "Live",         ICON_LIVE,         True),
+        ("dashboard",      "/dashboard",      "Incidents",    ICON_INCIDENTS,    True),
+        ("threat-horizon", "/threat-horizon", "Horizon",      ICON_HORIZON,      True),
+        ("improvements",   "/improvements",   "Improvements", ICON_IMPROVEMENTS, is_soc_manager or is_detection_engineer),
+        ("audit",          "/audit",          "Audit",        ICON_AUDIT,        is_soc_manager),
+        ("config",         "/config",         "Settings",     ICON_SETTINGS,     is_soc_manager),
     ]
     items = []
-    for key, href, label, visible in tabs:
+    for key, href, label, icon, visible in tabs:
         if not visible:
             continue
         cls = "tab active" if key == active else "tab"
-        items.append(f'<a class="{cls}" href="{href}">{label}</a>')
+        items.append(
+            f'<a class="{cls}" href="{href}">'
+            f'<span class="tab-icon" aria-hidden="true">{icon}</span>'
+            f'<span class="tab-label">{label}</span>'
+            f'</a>'
+        )
     return (
         '<nav id="aisoc-nav">'
         '  <a href="/dashboard" class="brand">'
@@ -5652,6 +5722,80 @@ async def api_changes_create(
         flush=True,
     )
     return _change_public(record)
+
+
+@app.get("/api/changes/stats")
+def api_changes_stats(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Aggregate stats over CHANGES — feeds the Continuous Improvement
+    dashboard. Detection-engineer + soc-manager only (same gate as the
+    page itself).
+
+    Returns counts by status, kind, and proposing agent, plus the raw
+    timestamps the dashboard needs to draw a recent-activity sparkline
+    and compute time-to-decision distributions client-side. Sending
+    raw rows (with the `current` / `proposed` bodies stripped) keeps
+    the endpoint simple and the dashboard flexible.
+    """
+    _require_auth(request, x_pixelagents_token)
+    me = (_session_user(request) or "").strip().lower()
+    my_roles = set(_user_roles(me)) if me else set()
+    if not (
+        ROLE_SOC_MANAGER in my_roles
+        or ROLE_DETECTION_ENGINEER in my_roles
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Continuous Improvement stats are restricted to soc-manager and detection-engineer.",
+        )
+
+    # Slim per-row record. The dashboard only needs metadata + the
+    # decision timestamps. The full proposed/current bodies are
+    # available via /api/changes/{id} if the user expands a row.
+    rows: list[dict[str, Any]] = []
+    for c in CHANGES.values():
+        rows.append({
+            "id":          c.get("id"),
+            "kind":        c.get("kind"),
+            "status":      c.get("status"),
+            "proposed_by": c.get("proposed_by"),
+            "proposed_at": c.get("proposed_at"),
+            "title":       c.get("title"),
+            "target":      c.get("target"),
+            "reviewer":    c.get("reviewer"),
+            "reviewed_at": c.get("reviewed_at"),
+            "applied_at":  c.get("applied_at"),
+            "apply_error": c.get("apply_error"),
+        })
+    rows.sort(key=lambda r: r.get("proposed_at") or 0, reverse=True)
+
+    # Top-line counts. The dashboard re-derives the same numbers
+    # client-side for time-windowed views (last 24h / 7d) but having
+    # the totals here lets the page render before the JS pivots run.
+    by_status: dict[str, int] = defaultdict(int)
+    by_kind:   dict[str, int] = defaultdict(int)
+    by_agent:  dict[str, int] = defaultdict(int)
+    for r in rows:
+        by_status[r.get("status") or "unknown"] += 1
+        by_kind[r.get("kind") or "unknown"] += 1
+        by_agent[r.get("proposed_by") or "unknown"] += 1
+
+    decided = sum(by_status.get(s, 0) for s in ("approved", "rejected", "applied", "failed"))
+    accepted = by_status.get("approved", 0) + by_status.get("applied", 0)
+    acceptance_rate = (accepted / decided) if decided > 0 else None
+
+    return {
+        "rows":            rows,
+        "total":           len(rows),
+        "by_status":       dict(by_status),
+        "by_kind":         dict(by_kind),
+        "by_agent":        dict(by_agent),
+        "acceptance_rate": acceptance_rate,
+        "decided_count":   decided,
+        "ts":              time.time(),
+    }
 
 
 @app.get("/api/changes/pending")
