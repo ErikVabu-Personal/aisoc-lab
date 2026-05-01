@@ -121,12 +121,23 @@ resource "azurerm_search_service" "detection_rules" {
 #
 # 1) Search service MI -> Storage Blob Data Reader on the corpus.
 #    Lets the indexer read the rule files without a connection string.
-# 2) Foundry account MI -> Search Index Data Reader on the search service.
-#    Lets the agent (via the Foundry project's MI proxy) issue
-#    knowledge-base queries at runtime.
+# 2) Foundry account/hub MI -> Search Index Data Reader on the search
+#    service. Hub-level operations (e.g. Foundry's own KB management
+#    UI inside the portal) authenticate as the account MI.
 # 3) Search service MI -> Search Index Data Contributor on itself.
 #    Required for the agentic-retrieval engine to write back the
 #    semantic-rerank scoring profile during agentic queries.
+#
+# The Foundry **project** has its own system-assigned MI, distinct
+# from the account MI. The KB project connection uses
+# ProjectManagedIdentity auth, which means the project MI — not the
+# account MI — is what calls the Search MCP endpoint at runtime.
+# Terraform can't grant the role to the project MI here because the
+# project doesn't exist at apply time (it's created post-apply by
+# scripts/deploy_foundry_project.py). The role assignment happens
+# instead in scripts/deploy_prompt_agents_with_runner_tools.py via
+# `_ensure_search_role_for_project_mi`, which is idempotent and safe
+# to re-run.
 
 resource "azurerm_role_assignment" "drk_search_to_storage" {
   count                = local.drk_enabled ? 1 : 0

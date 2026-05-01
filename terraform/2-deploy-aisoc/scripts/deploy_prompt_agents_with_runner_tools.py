@@ -24,6 +24,138 @@ import sys
 from typing import Any, Dict, List
 
 
+def _ensure_search_role_for_project_mi(
+    *,
+    sub_id: str,
+    rg: str,
+    foundry_hub: str,
+    foundry_project: str,
+    search_service_name: str,
+    role_definition: str = "Search Index Data Reader",
+) -> None:
+    """Idempotently grant the Foundry project's system-assigned MI a
+    role on the Azure AI Search service.
+
+    Why this exists:
+
+    The detection-rules KB is exposed to the Detection Engineer agent
+    via a Foundry project connection of authType=ProjectManagedIdentity.
+    When Foundry initialises the agent's tool list it calls the KB's
+    MCP endpoint (https://<svc>.search.windows.net/knowledgebases/.../mcp)
+    using the **project's** managed identity — and that's a different
+    principal from the Foundry **account/hub** MI that Terraform's
+    `drk_foundry_to_search` role assignment grants.
+
+    Terraform can't grant the role to the project MI directly, because
+    the project doesn't exist at `terraform apply` time (it's created
+    post-apply by deploy_foundry_project.py). So we do it here: read
+    the project MI principalId via ARM, resolve the role definition,
+    and PUT a deterministic role assignment on the Search service.
+
+    Without this the agent reports HTTP 403:
+        "Access denied when connecting to the MCP server at
+         https://...search.windows.net/knowledgebases/.../mcp while
+         enumerating tools"
+    """
+
+    try:
+        from azure.identity import DefaultAzureCredential
+        import requests as _requests
+        import uuid
+    except Exception as e:
+        raise RuntimeError(
+            f"missing azure-identity / requests for role assignment: {e!r}"
+        ) from e
+
+    cred = DefaultAzureCredential()
+    token = cred.get_token("https://management.azure.com/.default").token
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1) Read the project's principalId. Same api-version we use for
+    #    the project-connection PUTs — keeps the surface consistent.
+    project_url = (
+        f"https://management.azure.com/subscriptions/{sub_id}"
+        f"/resourceGroups/{rg}"
+        f"/providers/Microsoft.CognitiveServices/accounts/{foundry_hub}"
+        f"/projects/{foundry_project}"
+        f"?api-version={PROJECT_CONNECTION_API_VERSION}"
+    )
+    r = _requests.get(project_url, headers=headers, timeout=30)
+    if r.status_code >= 400:
+        raise RuntimeError(
+            f"GET project for principalId returned {r.status_code}: "
+            f"{r.text[:500]}"
+        )
+    project_data = r.json()
+    principal_id = ((project_data.get("identity") or {}).get("principalId")) or ""
+    if not principal_id:
+        raise RuntimeError(
+            f"Foundry project {foundry_project!r} has no system-assigned "
+            f"principalId. deploy_foundry_project.py creates the project "
+            f"with identity=SystemAssigned, so this usually means the "
+            f"project hasn't finished provisioning yet."
+        )
+
+    # 2) Resolve the role definition id by name.
+    role_def_url = (
+        f"https://management.azure.com/subscriptions/{sub_id}"
+        f"/providers/Microsoft.Authorization/roleDefinitions"
+        f"?$filter=roleName%20eq%20'{role_definition.replace(' ', '%20')}'"
+        f"&api-version=2022-04-01"
+    )
+    r = _requests.get(role_def_url, headers=headers, timeout=30)
+    if r.status_code >= 400:
+        raise RuntimeError(
+            f"GET role definition {role_definition!r} returned "
+            f"{r.status_code}: {r.text[:500]}"
+        )
+    rd = (r.json().get("value") or [])
+    if not rd:
+        raise RuntimeError(
+            f"role definition {role_definition!r} not found in subscription"
+        )
+    role_def_id = rd[0]["id"]
+
+    # 3) PUT the role assignment with a deterministic GUID name so
+    #    repeat runs are no-ops.
+    search_scope = (
+        f"/subscriptions/{sub_id}/resourceGroups/{rg}"
+        f"/providers/Microsoft.Search/searchServices/{search_service_name}"
+    )
+    ra_name = str(uuid.uuid5(
+        uuid.NAMESPACE_OID,
+        f"{search_scope}|{principal_id}|{role_def_id}",
+    ))
+    ra_url = (
+        f"https://management.azure.com{search_scope}"
+        f"/providers/Microsoft.Authorization/roleAssignments/{ra_name}"
+        f"?api-version=2022-04-01"
+    )
+    body = {
+        "properties": {
+            "roleDefinitionId": role_def_id,
+            "principalId": principal_id,
+            "principalType": "ServicePrincipal",
+        }
+    }
+    r = _requests.put(
+        ra_url,
+        headers={**headers, "Content-Type": "application/json"},
+        json=body,
+        timeout=30,
+    )
+    if r.status_code in (200, 201):
+        return
+    # ARM returns 409 with code "RoleAssignmentExists" when the same
+    # principal already has the role at the same scope under a
+    # different assignment id. Treat that as success.
+    if r.status_code == 409 and "RoleAssignmentExists" in r.text:
+        return
+    raise RuntimeError(
+        f"role assignment PUT returned {r.status_code}: {r.text[:1000]}"
+    )
+
+
 def _ensure_project_connection_remote_tool(
     *,
     sub_id: str,
@@ -454,6 +586,48 @@ def main() -> int:
             f"{drk_search_ep}/knowledgebases/{drk_kb_name}"
             f"/mcp?api-version={KB_MCP_API_VERSION}"
         )
+
+        # Grant the Foundry project's MI 'Search Index Data Reader' on
+        # the Search service BEFORE we wire up the connection. The
+        # connection uses ProjectManagedIdentity auth, so the very
+        # first thing Foundry does after PUT-ing the connection is
+        # call the MCP endpoint to enumerate tools — and that call
+        # auths as the project MI. Without this role the call returns
+        # HTTP 403 "Access denied … while enumerating tools" (Erik's
+        # 2026-05-01 incident). Terraform grants the role to the hub/
+        # account MI, but the project MI is a different principal,
+        # created post-apply by deploy_foundry_project.py.
+        from urllib.parse import urlparse as _urlparse
+        _search_host = _urlparse(drk_search_ep).hostname or ""
+        _search_svc = _search_host.split(".", 1)[0]
+        if _search_svc:
+            try:
+                _ensure_search_role_for_project_mi(
+                    sub_id=sub_id,
+                    rg=rg,
+                    foundry_hub=hub,
+                    foundry_project=project,
+                    search_service_name=_search_svc,
+                )
+                print(
+                    f"INFO: project MI granted 'Search Index Data Reader' "
+                    f"on {_search_svc!r} (idempotent)"
+                )
+            except Exception as e:
+                # Surface as a warning, not a hard failure — the
+                # connection PUT below will still succeed; the operator
+                # will see the 403 at runtime and can re-run this
+                # script (it's idempotent) once any RBAC propagation
+                # delay clears.
+                print(
+                    f"WARN: could not grant project MI role on Search "
+                    f"service {_search_svc!r}: {e!r}. The Detection "
+                    f"Engineer agent will see HTTP 403 when enumerating "
+                    f"the KB MCP tools. Re-run this script to retry, "
+                    f"or grant 'Search Index Data Reader' manually.",
+                    file=sys.stderr,
+                )
+
         try:
             _ensure_project_connection_remote_tool(
                 sub_id=sub_id,
