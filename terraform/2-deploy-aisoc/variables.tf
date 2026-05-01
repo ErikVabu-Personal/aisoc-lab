@@ -119,6 +119,30 @@ variable "detection_rules_kb_search_sku" {
   }
 }
 
+variable "company_context_kb_enabled" {
+  type        = bool
+  description = <<-EOT
+    Stand up a second Foundry IQ knowledge base containing generic
+    company context (fleet, subsystems, account naming conventions,
+    VIP users, runbooks, glossary). Reuses the existing AI Search
+    service from the Detection Rules KB but stores its corpus in a
+    separate Storage account so the SOC manager can edit it without
+    touching the rule library.
+
+    When true, an MCP tool wired to this KB is attached to the
+    triage / investigator / reporter / soc-manager / threat-intel
+    agents. The Detection Engineer keeps only the Detection Rules
+    KB — its job is rule-specific and we don't want it pulling
+    unrelated context.
+
+    The Detection Rules KB must also be enabled
+    (detection_rules_kb_enabled = true) since the company-context
+    KB shares its Search service. Set to false to skip the
+    subsystem entirely.
+  EOT
+  default     = true
+}
+
 variable "foundry_additional_model_deployments" {
   description = <<-EOT
     Extra model deployments to create alongside the primary one. Each

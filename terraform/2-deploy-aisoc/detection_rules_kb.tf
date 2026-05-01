@@ -217,7 +217,7 @@ resource "null_resource" "drk_search_seed" {
     # Path is relative to the Terraform working directory
     # (terraform/2-deploy-aisoc) so this works whether plan/apply is
     # invoked from there directly or from the repo-root deploy script.
-    command = "${path.module}/scripts/seed_detection_rules_search.sh"
+    command = "${path.module}/scripts/seed_search_kb.sh"
 
     environment = {
       SEARCH_ENDPOINT       = local.drk_search_endpoint
@@ -231,6 +231,9 @@ resource "null_resource" "drk_search_seed" {
       KNOWLEDGE_BASE_NAME   = local.drk_knowledge_base_name
       DP_API_VERSION        = local.drk_search_dp_api_version
       KB_API_VERSION        = local.drk_search_kb_api_version
+      KS_DESCRIPTION        = "NVISO detection rule library — Sigma / KQL / writeups."
+      KB_DESCRIPTION        = "Detection rule library for the AISOC Detection Engineer agent."
+      FILE_EXTENSIONS       = ".yml,.yaml,.kql,.md,.txt,.json"
     }
   }
 

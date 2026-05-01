@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# seed_detection_rules_search.sh — populate the Detection Rules KB on
+# seed_search_kb.sh — populate a Foundry IQ knowledge base on
 # Azure AI Search via the data-plane REST API.
+#
+# Originally named seed_detection_rules_search.sh and hard-wired to
+# the Detection Rules corpus. Generalised when we added a second KB
+# (company-context) on the same Search service. The two callers pass
+# different storage accounts, container names, index/source/KB names,
+# and descriptions; everything else (auth, retry logic, idempotency)
+# is shared.
 #
 # Background
 # ----------
@@ -36,6 +43,15 @@
 #                            covers knowledgeSources/knowledgeBases —
 #                            agentic-retrieval feature is preview-only
 #                            as of April 2026)
+#   KS_DESCRIPTION           free-form description on the knowledge
+#                            source resource (shown in the Foundry
+#                            portal). Defaults to a generic string.
+#   KB_DESCRIPTION           same, but on the knowledge base.
+#   FILE_EXTENSIONS          comma-separated list passed to the
+#                            indexer's indexedFileNameExtensions
+#                            parameter. Default suits both rule
+#                            (.yml/.kql/.json/.md/.txt) and prose-doc
+#                            (.md/.txt) corpora.
 #
 # Idempotency
 # -----------
@@ -58,6 +74,9 @@ set -euo pipefail
 
 DP_API_VERSION="${DP_API_VERSION:-2024-07-01}"
 KB_API_VERSION="${KB_API_VERSION:-2025-11-01-preview}"
+KS_DESCRIPTION="${KS_DESCRIPTION:-Foundry IQ knowledge source.}"
+KB_DESCRIPTION="${KB_DESCRIPTION:-Foundry IQ knowledge base.}"
+FILE_EXTENSIONS="${FILE_EXTENSIONS:-.yml,.yaml,.kql,.md,.txt,.json}"
 
 put() {
   # put <path> <api-version> <body>
@@ -144,7 +163,7 @@ put "indexers/${INDEXER_NAME}" "${DP_API_VERSION}" "$(cat <<JSON
     "configuration": {
       "parsingMode":               "default",
       "dataToExtract":             "contentAndMetadata",
-      "indexedFileNameExtensions": ".yml,.yaml,.kql,.md,.txt,.json"
+      "indexedFileNameExtensions": "${FILE_EXTENSIONS}"
     }
   },
   "fieldMappings": [
@@ -163,7 +182,7 @@ put "knowledgeSources/${KNOWLEDGE_SOURCE_NAME}" "${KB_API_VERSION}" "$(cat <<JSO
 {
   "name": "${KNOWLEDGE_SOURCE_NAME}",
   "kind": "searchIndex",
-  "description": "NVISO detection rule library — Sigma / KQL / writeups.",
+  "description": "${KS_DESCRIPTION}",
   "searchIndexParameters": {
     "searchIndexName": "${INDEX_NAME}"
   }
@@ -194,7 +213,7 @@ echo "=== Knowledge base: ${KNOWLEDGE_BASE_NAME} ==="
 put "knowledgeBases/${KNOWLEDGE_BASE_NAME}" "${KB_API_VERSION}" "$(cat <<JSON
 {
   "name": "${KNOWLEDGE_BASE_NAME}",
-  "description": "Detection rule library for the AISOC Detection Engineer agent.",
+  "description": "${KB_DESCRIPTION}",
   "knowledgeSources": [
     { "name": "${KNOWLEDGE_SOURCE_NAME}" }
   ],
@@ -204,4 +223,4 @@ JSON
 )"
 
 echo
-echo "All Detection Rules Search resources created/updated successfully."
+echo "All Search KB resources created/updated successfully (KB: ${KNOWLEDGE_BASE_NAME})."
