@@ -42,6 +42,13 @@ type AppState = {
     enabled: boolean;
   };
 
+  // Security cameras (CCTV grid). Disabling here is a textbook
+  // attacker-tradecraft signal — surfaced as a structured
+  // `event:"security"` log line so Sentinel rules can pick it up.
+  security: {
+    camerasEnabled: boolean;
+  };
+
   // Navigation/helm
   navigation: {
     throttle: number; // 0..100
@@ -87,6 +94,7 @@ const DEFAULT_STATE: AppState = {
   stabilizers: { mode: 'AUTO', seaState: 3, finPortDeg: 4, finStbdDeg: -4 },
   connectivity: { enabled: true, signal: 0.82 },
   collision: { enabled: true },
+  security: { camerasEnabled: true },
   navigation: { throttle: 35, destination: { lng: -135.0, lat: 58.3 } },
   climate: {
     rooms: {
@@ -261,6 +269,40 @@ export async function POST(req: Request) {
     setState(next);
     const changed = diffKeys(prev.collision, next.collision, ['enabled']);
     if (changed.length) logEvent('collision', { changed, from: prev.collision, to: next.collision }, meta);
+    return NextResponse.json(next);
+  }
+
+  if (action === 'setSecurity') {
+    // Bootstrap default for older state objects that predate the
+    // security field (the in-memory store doesn't migrate; first-time
+    // toggle on a long-lived process needs this fallback).
+    const prevSecurity = prev.security || { camerasEnabled: true };
+    next = {
+      ...prev,
+      security: {
+        ...prevSecurity,
+        ...payload,
+      },
+      version: (prev.version ?? 0) + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    setState(next);
+    const changed = diffKeys(prevSecurity, next.security, ['camerasEnabled']);
+    if (changed.length) {
+      // Emit at WARN-level severity in the structured payload so a
+      // Sentinel rule that filters on j.detail.severity == "warn"
+      // can light up specifically on cameras-off events.
+      logEvent(
+        'security',
+        {
+          changed,
+          from: prevSecurity,
+          to: next.security,
+          severity: next.security.camerasEnabled ? 'info' : 'warn',
+        },
+        meta,
+      );
+    }
     return NextResponse.json(next);
   }
 

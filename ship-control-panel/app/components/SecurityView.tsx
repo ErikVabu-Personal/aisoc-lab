@@ -12,8 +12,13 @@
 // `ship-control-panel/public/security/` using the file names below.
 // Anything 16:9 (or 16:10) at modest resolution (640x360 is plenty)
 // will look right.
+//
+// The "Disable cameras" toggle in the toolbar mutates ship state via
+// /api/state setSecurity, which emits a structured `event:"security"`
+// log line — visible to Sentinel as suspicious-bridge-action signal.
 
 import React, { useEffect, useState } from 'react';
+import { useAppState } from './useAppState';
 
 type Camera = {
   id: string;
@@ -43,7 +48,7 @@ function formatStamp(d: Date): string {
   return `${y}-${m}-${day}  ${h}:${mn}:${s}`;
 }
 
-function CameraTile({ cam }: { cam: Camera }) {
+function CameraTile({ cam, enabled }: { cam: Camera; enabled: boolean }) {
   // Tracks whether the GIF actually loaded. We don't unmount the
   // fallback when it does — z-index ordering means the loaded img
   // simply covers it.
@@ -51,22 +56,33 @@ function CameraTile({ cam }: { cam: Camera }) {
   const [errored, setErrored] = useState(false);
 
   return (
-    <div className="sec-tile" data-cam={cam.id}>
+    <div
+      className={`sec-tile${enabled ? '' : ' offline'}`}
+      data-cam={cam.id}
+    >
       <div className="sec-head">
         <span className="cam-id">{cam.id}</span>
         <span className="cam-name">{cam.name}</span>
-        <span className="rec"><span className="dot"></span>REC</span>
+        {enabled ? (
+          <span className="rec"><span className="dot"></span>REC</span>
+        ) : (
+          <span className="rec offline" aria-label="Offline">OFFLINE</span>
+        )}
       </div>
 
-      {/* Fallback — visible until the gif loads. Stays mounted so a
-          slow network, a missing file, or an off-screen tile never
-          shows a broken-image icon. */}
+      {/* Fallback — visible until the gif loads OR when the camera is
+          disabled. Stays mounted so a slow network, a missing file,
+          or an off-screen tile never shows a broken-image icon. */}
       <div className="sec-fallback">
         <div className="sweep" aria-hidden="true"></div>
-        <div className="label">No signal · drop {cam.file.split('/').pop()}</div>
+        <div className="label">
+          {enabled
+            ? `No signal · drop ${cam.file.split('/').pop()}`
+            : 'Camera disabled'}
+        </div>
       </div>
 
-      {!errored && (
+      {enabled && !errored && (
         <img
           className="sec-feed"
           src={cam.file}
@@ -119,17 +135,54 @@ function HeaderClock() {
 }
 
 export function SecurityView() {
+  const { state, post } = useAppState();
+  // Optimistic-locking flag so a click doesn't fire twice while the
+  // POST is in-flight.
+  const [busy, setBusy] = useState(false);
+
+  // First-render the state may not be loaded yet; default to enabled
+  // so the grid shows live tiles by default.
+  const enabled = state?.security?.camerasEnabled ?? true;
+
+  async function onToggle() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await post('setSecurity', { camerasEnabled: !enabled });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="view">
       <div className="sec-toolbar">
-        <span className="live-pill"><span className="blink"></span>Live</span>
+        {enabled ? (
+          <span className="live-pill"><span className="blink"></span>Live</span>
+        ) : (
+          <span className="live-pill offline">All cameras disabled</span>
+        )}
         <span>{CAMERAS.length} cameras · DVR retention 30 days</span>
         <HeaderClock />
+        <button
+          type="button"
+          onClick={onToggle}
+          disabled={busy}
+          className={`btn ${enabled ? '' : 'ghost'}`}
+          style={{ padding: '8px 14px' }}
+          title={enabled
+            ? 'Disable all cameras (logged as a security state change).'
+            : 'Re-enable all cameras.'}
+        >
+          {busy
+            ? 'Working…'
+            : (enabled ? 'Disable cameras' : 'Re-enable cameras')}
+        </button>
       </div>
 
       <div className="sec-grid">
         {CAMERAS.map((cam) => (
-          <CameraTile key={cam.id} cam={cam} />
+          <CameraTile key={cam.id} cam={cam} enabled={enabled} />
         ))}
       </div>
 

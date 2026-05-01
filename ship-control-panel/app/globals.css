@@ -591,6 +591,40 @@ a{color:inherit}
   background: var(--danger);
   animation: sec-blink 1.2s ease-in-out infinite;
 }
+/* Disabled-cameras pill — reads as "intentional", not "live REC". */
+.sec-toolbar .live-pill.offline{
+  background: rgba(14,58,95,0.06);
+  border-color: var(--hairline);
+  color: var(--muted);
+}
+
+/* Offline tile — no live img, fallback shows "Camera disabled" text,
+   and the REC dot is replaced with an OFFLINE label. The whole tile
+   gets a subtle dim so the grid at-a-glance reads as "not recording". */
+.sec-tile.offline .sec-feed{ display: none; }
+.sec-tile .sec-head .rec.offline{
+  background: transparent;
+  color: rgba(255,255,255,0.55);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.10em;
+  margin-left: auto;
+}
+.sec-tile.offline::after{
+  /* Slightly stronger vignette + tint when disabled. */
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.22) 0,
+      rgba(0,0,0,0.22) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    radial-gradient(
+      circle at center,
+      transparent 50%,
+      rgba(0,0,0,0.65) 100%
+    );
+}
 @keyframes sec-blink{
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.25; }
