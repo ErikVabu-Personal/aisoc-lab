@@ -23,10 +23,13 @@ export default async function ControlPanelPage() {
   return (
     <div className="wrap">
       <div className="card">
-        {/* ── Bridge header — NVISO Cruises wordmark + system label ── */}
+        {/* ── Bridge header — NVISO logo + Cruises subtitle + system label ── */}
         <header className="bridge-header">
           <div className="bridge-brand">
-            <img src="/nviso-cruises-logo.svg" alt="NVISO Cruises" />
+            <span className="brand-mark">
+              <img src="/nviso-logo.png" alt="NVISO" />
+              <span className="brand-sub">CRUISES</span>
+            </span>
             <span className="divider" aria-hidden="true"></span>
             <div className="system">
               <span className="system-title">Bridge &amp; Operations</span>

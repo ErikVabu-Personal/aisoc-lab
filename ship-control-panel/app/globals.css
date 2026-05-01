@@ -113,13 +113,32 @@ a{color:inherit}
   border-bottom: 3px solid var(--accent);
 }
 .bridge-brand{ display: flex; align-items: center; gap: 14px; }
-.bridge-brand img{
-  height: 36px;
+/* "Logo plaque" — a small light backdrop so the *actual* NVISO logo
+   (dark grey wordmark + faceted blue bird) keeps its native colours
+   on top of the navy bridge header instead of being collapsed to a
+   flat white silhouette by a brightness/invert filter. */
+.bridge-brand .brand-mark{
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 6px 10px 4px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.18);
+  line-height: 1;
+}
+.bridge-brand .brand-mark img{
+  height: 30px;
   width: auto;
-  /* The logo is dark on light by default; on the navy header we
-     filter it to white. */
-  filter: brightness(0) invert(1);
   display: block;
+}
+.bridge-brand .brand-mark .brand-sub{
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.40em;
+  color: #0099cc;
+  padding-left: 2px;
 }
 .bridge-brand .divider{
   height: 28px;
