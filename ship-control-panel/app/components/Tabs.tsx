@@ -2,7 +2,14 @@
 
 import React from 'react';
 
-export type TabKey = 'nav' | 'engine' | 'stabilizers' | 'entertainment' | 'climate' | 'connectivity';
+export type TabKey =
+  | 'nav'
+  | 'engine'
+  | 'stabilizers'
+  | 'security'
+  | 'entertainment'
+  | 'climate'
+  | 'connectivity';
 
 export function Tabs({
   value,
@@ -15,6 +22,7 @@ export function Tabs({
     { k: 'nav', label: 'Navigation' },
     { k: 'engine', label: 'Engine room' },
     { k: 'stabilizers', label: 'Anchor' },
+    { k: 'security', label: 'Security' },
     { k: 'entertainment', label: 'Entertainment' },
     { k: 'climate', label: 'Climate' },
     { k: 'connectivity', label: 'Connectivity' },

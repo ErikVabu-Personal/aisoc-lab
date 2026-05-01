@@ -1,40 +1,80 @@
 @import "maplibre-gl/dist/maplibre-gl.css";
 
+/* ── NVISO Cruises Bridge & Operations console ─────────────────────
+   The ship-control-panel's role in the demo is "system being attacked",
+   so the look needs to read like a real crew operations surface a
+   bridge officer would tolerate, not a dark sci-fi holo console.
+   Palette borrows from NVISO Cruises' brand (deep navy + cyan accent)
+   but anchored on a soft off-white canvas with high-density
+   instrument cards — feels like a cross between a Carnival fleet
+   dashboard and an MSC bridge console.
+*/
+
 :root{
-  --bg0:#030712;
-  --bg1:#041027;
-  --panel: rgba(255,255,255,0.06);
-  --panel2: rgba(255,255,255,0.10);
-  --text:#e6f3ff;
-  --muted: rgba(230,243,255,0.72);
-  --accent:#22d3ee;
-  --accent2:#60a5fa;
-  --danger:#fb7185;
-  --ok:#34d399;
-  --ring: rgba(34,211,238,0.35);
+  --brand-navy:    #0e3a5f;        /* deep navy — header chrome, brand */
+  --brand-navy-2:  #0a2640;
+  --accent:        #0099cc;        /* NVISO Cruises cyan */
+  --accent-soft:   #33b0dd;
+  --accent-deep:   #0e6996;
+
+  --bg0:           #f3f6fa;        /* canvas — soft off-white */
+  --bg1:           #e8eef5;
+  --bg-grid:       rgba(14,58,95,0.04);
+
+  --panel:         #ffffff;        /* cards */
+  --panel-2:       #f9fbfd;
+  --panel-deep:    #0e3a5f;        /* status strips, footer */
+
+  --text:          #0e2541;        /* primary text on light */
+  --text-on-dark:  #e8f0f8;
+  --muted:         #5a6f87;
+  --hairline:      rgba(14,58,95,0.14);
+  --hairline-soft: rgba(14,58,95,0.08);
+
+  --danger:        #c0392b;
+  --warn:          #d97706;
+  --ok:            #16a07a;
+  --ring:          rgba(0,153,204,0.30);
 }
 
 *{box-sizing:border-box}
 html,body{height:100%}
 body{
   margin:0;
-  color:var(--text);
+  color: var(--text);
   background:
-    radial-gradient(1200px 700px at 20% 10%, rgba(34,211,238,0.14), transparent 55%),
-    radial-gradient(900px 600px at 80% 20%, rgba(96,165,250,0.12), transparent 55%),
-    radial-gradient(1200px 900px at 50% 100%, rgba(2,132,199,0.10), transparent 60%),
-    linear-gradient(180deg, var(--bg0), var(--bg1));
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    /* Faint horizon line + grid texture so the page reads like a
+       printed maritime chart rather than a flat surface. */
+    linear-gradient(180deg, var(--bg0) 0%, var(--bg1) 100%);
+  background-attachment: fixed;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+body::before{
+  /* Subtle hairline grid overlay — gives the canvas a "drafting board"
+     quality. position:fixed so scrolling doesn't move it. */
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 36px 36px;
+  pointer-events: none;
+  z-index: 0;
 }
 
 a{color:inherit}
 
 .wrap{
-  min-height:100vh;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  padding:24px;
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .shell{
@@ -50,13 +90,132 @@ a{color:inherit}
 
 .card{
   background: var(--panel);
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: 16px;
-  padding: 18px;
-  box-shadow:
-    0 0 0 1px rgba(255,255,255,0.02) inset,
-    0 20px 60px rgba(0,0,0,0.45);
-  backdrop-filter: blur(10px);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 0;
+  box-shadow: 0 1px 0 var(--hairline) inset;
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Bridge header — sits flush at the top, navy band, holds the
+   NVISO Cruises wordmark + ship name + sailing meta + officer
+   ribbon on the right. Mimics what you'd see above a real bridge
+   instrument cluster. */
+.bridge-header{
+  background: linear-gradient(180deg, var(--brand-navy) 0%, var(--brand-navy-2) 100%);
+  color: var(--text-on-dark);
+  padding: 14px 24px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 24px;
+  border-bottom: 3px solid var(--accent);
+}
+.bridge-brand{ display: flex; align-items: center; gap: 14px; }
+.bridge-brand img{
+  height: 36px;
+  width: auto;
+  /* The logo is dark on light by default; on the navy header we
+     filter it to white. */
+  filter: brightness(0) invert(1);
+  display: block;
+}
+.bridge-brand .divider{
+  height: 28px;
+  width: 1px;
+  background: rgba(255,255,255,0.25);
+}
+.bridge-brand .system{
+  display: flex; flex-direction: column; gap: 2px;
+}
+.bridge-brand .system-title{
+  font-size: 14px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+}
+.bridge-brand .system-sub{
+  font-size: 11px; letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(232,240,248,0.72);
+}
+
+.bridge-meta{
+  display: flex; gap: 24px; justify-self: center;
+  font-size: 11px; letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(232,240,248,0.78);
+}
+.bridge-meta .field{ display: flex; flex-direction: column; gap: 2px; }
+.bridge-meta .field .v{
+  font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
+  color: #fff; text-transform: none;
+}
+.bridge-meta .field.danger .v{ color: #ffd1ce; }
+
+.bridge-officer{
+  display: flex; align-items: center; gap: 10px;
+}
+.bridge-officer .avatar{
+  width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.30);
+  color: #fff; font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  letter-spacing: 0.04em;
+}
+.bridge-officer .name{
+  font-size: 13px; font-weight: 700;
+}
+.bridge-officer .role{
+  font-size: 10.5px; color: rgba(232,240,248,0.72);
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.bridge-officer .logout{
+  margin-left: 12px;
+  font-size: 11px; color: rgba(232,240,248,0.85);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.18);
+  padding: 6px 12px;
+  border-radius: 3px;
+  cursor: pointer; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.bridge-officer .logout:hover{ background: rgba(255,255,255,0.12); }
+
+/* Status strip — thin band under the header. Holds the live ship
+   state (heading, speed, sea state, system mode) so the operator
+   always has context regardless of which tab they're on. */
+.bridge-status{
+  background: #0e2541;
+  color: var(--text-on-dark);
+  padding: 8px 24px;
+  display: flex; gap: 28px; flex-wrap: wrap;
+  font-size: 11px; letter-spacing: 0.10em;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(255,255,255,0.10);
+}
+.bridge-status .ind{
+  display: inline-flex; gap: 8px; align-items: center;
+  color: rgba(232,240,248,0.72);
+}
+.bridge-status .ind .v{
+  color: #fff; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: none;
+}
+.bridge-status .ind.ok .v{ color: #a7f3d0; }
+.bridge-status .ind .dot{
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent-soft);
+  box-shadow: 0 0 8px rgba(51,176,221,0.7);
+}
+
+/* Main body of the bridge console — light surface holding the
+   tab strip + selected view. */
+.bridge-body{
+  padding: 20px 24px 40px;
+  max-width: 1400px;
+  margin: 0 auto;
 }
 
 .holo{
@@ -80,18 +239,21 @@ a{color:inherit}
   display:flex;
   gap:10px;
   align-items:center;
-  font-weight:800;
-  letter-spacing:0.08em;
-  text-transform:uppercase;
+  font-weight:700;
+  letter-spacing:0.04em;
+  color: var(--text);
 }
 
 .badge{
-  font-size:12px;
-  padding:4px 10px;
-  border-radius:999px;
-  background: rgba(34,211,238,0.12);
-  border:1px solid rgba(34,211,238,0.25);
-  color: rgba(230,243,255,0.92);
+  font-size:11px;
+  padding:3px 9px;
+  border-radius: 3px;
+  background: rgba(0,153,204,0.10);
+  border:1px solid rgba(0,153,204,0.30);
+  color: var(--accent-deep);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .sub{
@@ -108,14 +270,21 @@ a{color:inherit}
 }
 
 .kpi{
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 14px;
-  padding: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 12px 14px;
 }
 
-.kpiLabel{color: rgba(230,243,255,0.7); font-size:12px}
-.kpiValue{font-size:20px; font-weight:800; margin-top:4px}
+.kpiLabel{
+  color: var(--muted);
+  font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+.kpiValue{
+  font-size: 22px; font-weight: 700; margin-top: 4px;
+  color: var(--text); font-variant-numeric: tabular-nums;
+}
 
 /* Instruments */
 .inst{display:flex; flex-direction:column; gap:6px}
@@ -154,31 +323,43 @@ a{color:inherit}
 }
 
 .input{
-  width:100%;
-  padding:12px 12px;
-  border-radius:12px;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(0,0,0,0.22);
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  background: #fff;
   color: var(--text);
-  outline:none;
+  outline: none;
+  font-size: 14px;
 }
-.input:focus{box-shadow:0 0 0 4px var(--ring); border-color: rgba(34,211,238,0.35)}
+.input:focus{
+  box-shadow: 0 0 0 3px var(--ring);
+  border-color: var(--accent);
+}
 
 .btn{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  gap:10px;
-  border-radius: 12px;
-  border: 1px solid rgba(34,211,238,0.35);
-  background: linear-gradient(180deg, rgba(34,211,238,0.18), rgba(96,165,250,0.10));
-  color: rgba(230,243,255,0.95);
-  padding: 12px 12px;
-  font-weight: 800;
-  cursor:pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 3px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  padding: 10px 16px;
+  font-weight: 700; font-size: 12px;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
-.btn:hover{filter:brightness(1.08)}
-.btn:active{transform: translateY(1px)}
+.btn:hover{ background: var(--accent-deep); border-color: var(--accent-deep); }
+.btn:active{ transform: translateY(1px); }
+.btn.ghost{
+  background: transparent;
+  color: var(--text);
+  border-color: var(--hairline);
+}
+.btn.ghost:hover{ background: var(--bg-grid); color: var(--accent-deep); }
 
 .err{
   color: rgba(255,180,180,0.95);
@@ -196,12 +377,14 @@ a{color:inherit}
 }
 
 .pill{
-  font-size:12px;
-  padding:6px 10px;
-  border-radius:999px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.10);
-  color: rgba(230,243,255,0.85);
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: 3px;
+  background: var(--bg-grid);
+  border: 1px solid var(--hairline);
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .panelGrid{
@@ -216,17 +399,30 @@ a{color:inherit}
 }
 
 /* Tabs + views */
-.tabs{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap}
-.tab{
-  border-radius: 999px;
-  padding: 8px 12px;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(255,255,255,0.04);
-  color: rgba(230,243,255,0.88);
-  cursor:pointer;
-  font-weight: 800;
+.tabs{
+  display: flex; gap: 0; flex-wrap: wrap;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 16px;
 }
-.tab.active{border-color: rgba(34,211,238,0.40); background: rgba(34,211,238,0.10)}
+.tab{
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px; letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 12px 18px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.tab:hover{ color: var(--accent-deep); }
+.tab.active{
+  color: var(--accent-deep);
+  border-bottom-color: var(--accent);
+  background: rgba(0,153,204,0.04);
+}
 
 .view{margin-top:6px}
 .viewTitle{font-size:14px; font-weight:900; letter-spacing:0.04em}
@@ -325,8 +521,23 @@ a{color:inherit}
 .finNeedle{position:absolute; left:50%; bottom:10px; width:2px; height:44px; background: rgba(230,243,255,0.85);
   transform-origin: bottom center; box-shadow: 0 0 14px rgba(34,211,238,0.18)}
 
-.panel{border-radius:14px; padding:12px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.22)}
-.panelTitle{font-weight:900; margin-bottom:10px}
+.panel{
+  border-radius: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--hairline);
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(14,58,95,0.04);
+}
+.panelTitle{
+  font-weight: 700;
+  margin-bottom: 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
 .ctl{display:grid; grid-template-columns: 110px 1fr 70px; align-items:center; gap:10px; margin:10px 0; color: rgba(230,243,255,0.85)}
 .ctl input[type="range"]{width:100%}
 
@@ -353,3 +564,202 @@ a{color:inherit}
 .sat.on{opacity:1; border-color: rgba(34,211,238,0.30)}
 
 .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+
+/* ── Security view (camera grid) ────────────────────────────────────
+   Mimics a CCTV control wall — 2x3 grid of feeds, each a "live" GIF
+   (drop your files into public/security/<name>.gif). When the GIF
+   isn't present the tile shows a CSS-only "no signal" placeholder
+   with sweep lines + scanlines so the demo never has empty squares. */
+
+.sec-toolbar{
+  display: flex; gap: 12px; align-items: center;
+  margin-bottom: 14px;
+  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted);
+}
+.sec-toolbar .live-pill{
+  display: inline-flex; gap: 6px; align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(192,57,43,0.10);
+  border: 1px solid rgba(192,57,43,0.35);
+  color: var(--danger);
+  font-weight: 700; letter-spacing: 0.10em;
+}
+.sec-toolbar .live-pill .blink{
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--danger);
+  animation: sec-blink 1.2s ease-in-out infinite;
+}
+@keyframes sec-blink{
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.25; }
+}
+.sec-toolbar .clock{
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text);
+  font-weight: 700; letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.sec-grid{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 980px){
+  .sec-grid{ grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px){
+  .sec-grid{ grid-template-columns: 1fr; }
+}
+
+.sec-tile{
+  background: #0a1622;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  aspect-ratio: 16 / 10;
+  box-shadow: 0 1px 2px rgba(14,58,95,0.04);
+}
+/* Header strip — camera name + REC indicator */
+.sec-tile .sec-head{
+  position: absolute; left: 0; right: 0; top: 0;
+  padding: 8px 10px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: rgba(255,255,255,0.92);
+  background: linear-gradient(180deg, rgba(0,0,0,0.55), transparent);
+  z-index: 3;
+}
+.sec-tile .sec-head .cam-id{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: rgba(255,255,255,0.70);
+  font-size: 10px;
+}
+.sec-tile .sec-head .cam-name{
+  font-weight: 700; letter-spacing: 0.04em;
+}
+.sec-tile .sec-head .rec{
+  margin-left: auto;
+  display: inline-flex; gap: 6px; align-items: center;
+  font-size: 10px; font-weight: 700;
+  color: rgba(255,210,210,0.95);
+}
+.sec-tile .sec-head .rec .dot{
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--danger);
+  animation: sec-blink 1.2s ease-in-out infinite;
+}
+
+/* Footer strip — timestamp */
+.sec-tile .sec-foot{
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 6px 10px;
+  display: flex; gap: 8px;
+  background: linear-gradient(0deg, rgba(0,0,0,0.55), transparent);
+  z-index: 3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  color: rgba(255,255,255,0.85);
+  letter-spacing: 0.02em;
+}
+.sec-tile .sec-foot .label{
+  color: rgba(255,255,255,0.55);
+  text-transform: uppercase; letter-spacing: 0.10em;
+  font-size: 9.5px;
+}
+
+/* The actual feed — fills the tile. img element from <SecurityView>;
+   when not loaded the .sec-fallback shows beneath. */
+.sec-tile .sec-feed{
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  z-index: 1;
+  background: #0a1622;
+}
+
+/* Scanlines + vignette overlay for that "real CCTV" feel.
+   pointer-events:none so the user can still right-click etc. */
+.sec-tile::after{
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.18) 0,
+      rgba(0,0,0,0.18) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    radial-gradient(
+      circle at center,
+      transparent 60%,
+      rgba(0,0,0,0.45) 100%
+    );
+  z-index: 2;
+  mix-blend-mode: multiply;
+}
+
+/* No-signal placeholder — visible when the GIF isn't present.
+   We render it as a sibling that lives BEHIND the <img>. When the
+   img loads, it covers this. */
+.sec-tile .sec-fallback{
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(255,255,255,0.04) 0,
+      rgba(255,255,255,0.04) 12px,
+      transparent 12px,
+      transparent 24px
+    ),
+    linear-gradient(180deg, #0a1622 0%, #051019 100%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px;
+  color: rgba(255,255,255,0.55);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; letter-spacing: 0.10em; text-transform: uppercase;
+  z-index: 0;
+}
+.sec-tile .sec-fallback .sweep{
+  position: absolute; inset: 20% auto 20% 0;
+  width: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,153,204,0.12) 50%, transparent 100%);
+  animation: sec-sweep 3.5s linear infinite;
+}
+@keyframes sec-sweep{
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.sec-tile .sec-fallback .label{
+  position: relative; z-index: 1;
+  background: rgba(0,0,0,0.40);
+  padding: 6px 12px; border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.10);
+}
+
+/* Footer hint shown below the grid — tells the operator (and the
+   demo author) where to drop real GIFs. Kept subtle. */
+.sec-hint{
+  margin-top: 12px;
+  padding: 10px 14px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+.sec-hint code{
+  background: var(--bg-grid);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--accent-deep);
+}

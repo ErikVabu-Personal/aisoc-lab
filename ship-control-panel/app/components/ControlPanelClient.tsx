@@ -9,6 +9,7 @@ import { ClimateView } from './ClimateView';
 import { ConnectivityView } from './ConnectivityView';
 import { AnchorView } from './AnchorView';
 import { EntertainmentView } from './EntertainmentView';
+import { SecurityView } from './SecurityView';
 
 export function ControlPanelClient() {
   const [tab, setTab] = useState<TabKey>('nav');
@@ -16,10 +17,11 @@ export function ControlPanelClient() {
   return (
     <>
       <Tabs value={tab} onChange={setTab} />
-      <div style={{ marginTop: 12 }}>
+      <div>
         {tab === 'nav' ? <NavigationView /> : null}
         {tab === 'engine' ? <EngineRoomView /> : null}
         {tab === 'stabilizers' ? <AnchorView /> : null}
+        {tab === 'security' ? <SecurityView /> : null}
         {tab === 'entertainment' ? <EntertainmentView /> : null}
         {tab === 'climate' ? <ClimateView /> : null}
         {tab === 'connectivity' ? <ConnectivityView /> : null}
