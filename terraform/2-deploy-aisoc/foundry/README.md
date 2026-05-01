@@ -1,53 +1,102 @@
-# Foundry SOC integration (Agentic Framework) — Terraform + Python
+# SOC Gateway Function App (Phase 2)
 
-This folder complements the `azure-sentinel-test` stack by adding:
+The **SOC Gateway** is the only path the AISOC Runner has to write to
+Microsoft Sentinel. It's an Azure Functions app (Python, function-
+auth) that authenticates with the Sentinel workspace via a managed
+identity and exposes a small, deliberate set of REST endpoints that
+the Runner invokes on behalf of Foundry agents.
 
-- An Azure Function App (`soc_gateway`) that acts as a tool gateway for SOC agents.
-- Azure Key Vault to store external provider API keys (OpenRouter).
-- RBAC grants so the function can query Log Analytics and interact with Sentinel.
+```
+Foundry agent
+    │  (OpenAPI tool, bearer token)
+    ▼
+AISOC Runner ─── (HTTPS + ?code=<host-key>) ──▶  SOC Gateway  ──▶  Sentinel + Log Analytics
+```
 
-Agent definitions + workflow orchestration are deployed via a Python script (to be added) because agent resources evolve faster than Terraform providers.
+Splitting Runner ↔ Gateway is a deliberate trust-boundary move:
 
-## Why a Function gateway?
+- The **Runner** holds the agent-facing bearer token and the OpenAPI
+  schemas. It runs in a Container App with no Sentinel-write
+  identity.
+- The **Gateway** holds the Sentinel-write managed identity. It only
+  accepts requests carrying a valid host-key (`?code=`), which the
+  Runner is given on first apply by
+  `scripts/configure_runner_socgateway_key.sh`.
 
-- Centralized auth (Managed Identity)
-- Centralized policy/rate-limiting
-- Keeps secrets out of agent prompts/config
+If the Gateway code is redeployed, the host-key rotates and the
+Runner needs to be rewired — the post-apply hook in the Gateway's
+GitHub Actions workflow runs `configure_runner_socgateway_key.sh`
+automatically after every zip-deploy.
 
-## Next steps
+## Endpoints
 
-- Implement Function endpoints:
-  - `POST /kql/query`
-  - `GET /sentinel/incidents`
-  - `GET /sentinel/incidents/{id}`
-  - `PATCH /sentinel/incidents/{id}`
-  - `POST /llm/openrouter` (optional)
+| Path | Used for |
+|------|----------|
+| `POST /kql/query` | Run a KQL query against the workspace. The Runner exposes this as `kql_query`. |
+| `GET  /sentinel/incidents` | List incidents. Backs `list_incidents`. |
+| `GET  /sentinel/incidents/{id}` | Fetch one incident + its alerts + related entities. Backs `get_incident`. |
+| `PATCH /sentinel/incidents/{id}` | Owner / status / classification updates. Backs `update_incident`. |
+| `POST /sentinel/incidents/{id}/comments` | Append a comment to the case timeline. Backs `add_incident_comment` — every Triage / Investigator / Reporter run drops one. |
+| `POST /sentinel/create-rule` | Create a Sentinel analytic rule from a JSON spec. Used only by the Detection Engineer agent's `create_analytic_rule` path. |
 
-- Implement `scripts/deploy_agents.py` to create/update agents in Azure AI Foundry.
+All endpoints are `authLevel="function"`. The Gateway's host-key is
+shared once with the Runner at deploy time and rotated automatically
+on Gateway code redeploys.
+
+## Where the code lives
+
+```
+terraform/2-deploy-aisoc/foundry/
+├─ README.md                 (this file)
+└─ function_app/
+    ├─ host.json
+    ├─ requirements.txt
+    ├─ shared/
+    │   ├─ auth.py           — function-auth + MI-token helpers
+    │   ├─ sentinel.py       — Sentinel + Log Analytics REST helpers
+    │   └─ payloads.py       — request / response shapes
+    └─ SOCGateway/
+        ├─ function.json
+        └─ __init__.py       — the route dispatcher
+```
+
+The Function App resource itself is provisioned by `main.tf` in the
+parent `2-deploy-aisoc/` folder. The agent code is shipped via the
+`deploy-soc-gateway.yml` GitHub Actions workflow on every push that
+touches `terraform/2-deploy-aisoc/foundry/function_app/**`.
 
 ## Deploying the Function code
 
-This repo includes a minimal Azure Functions Python project under `foundry/function_app/`.
-
-Recommended deployment for this test stack:
+The standard path is **GitHub Actions** — push to `main` and the
+workflow takes over. For a one-off manual deploy:
 
 ```bash
-cd terraform/azure-sentinel-test/foundry/function_app
-# Create a zip (from inside function_app so host.json is at root)
+cd terraform/2-deploy-aisoc/foundry/function_app
 zip -r function_app.zip .
-# Deploy (requires Azure CLI logged in)
 az functionapp deployment source config-zip \
-  --resource-group <rg> \
-  --name <function_app_name> \
-  --src function_app.zip
+  --resource-group  $(cd ../.. && terraform output -raw resource_group) \
+  --name            $(cd ../.. && terraform output -raw soc_gateway_function_name) \
+  --src             function_app.zip
+
+# Re-wire the runner with the new host key (the redeploy rotated it).
+cd ../../scripts
+./configure_runner_socgateway_key.sh
 ```
 
-Find `<function_app_name>` from Terraform output `soc_gateway_function_name`.
+## Calling the API for debugging
 
-## Calling the API
+Pull the host key from Key Vault (Phase 1's `aisoc-kv-*` vault stores
+it) or the portal, then:
 
-All endpoints use Azure Functions `authLevel=function`.
-You can retrieve a function key in the Portal (Function App -> Functions -> SOCGateway -> Function Keys), then call:
+```bash
+KEY="<host-key>"
+APP="$(cd terraform/2-deploy-aisoc && terraform output -raw soc_gateway_function_name)"
 
-- `POST https://<app>.azurewebsites.net/api/kql/query?code=<key>`
-- `GET  https://<app>.azurewebsites.net/api/sentinel/incidents?code=<key>`
+# Recent incidents:
+curl -s "https://${APP}.azurewebsites.net/api/sentinel/incidents?code=${KEY}" | jq
+
+# A KQL query:
+curl -s -X POST "https://${APP}.azurewebsites.net/api/kql/query?code=${KEY}" \
+  -H 'content-type: application/json' \
+  -d '{"query":"SecurityIncident | take 5"}' | jq
+```

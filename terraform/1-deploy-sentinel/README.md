@@ -1,21 +1,45 @@
-# Azure Sentinel test environment (Terraform)
+# Phase 1 — Sentinel + Ship Control Panel + lab VM
 
-Creates:
-- Resource Group
-- Log Analytics Workspace
-- Microsoft Sentinel onboarding (SecurityInsights)
-- Windows 11 VM (Azure Virtual Desktop / Windows Client image)
+The foundation phase. Stands up the Microsoft Sentinel workspace
+and three things that produce telemetry into it: the Ship Control
+Panel Container App (the "victim" web app), a Windows 11 lab VM
+(for portal-side observation + manual telemetry generation), and a
+shared Key Vault used by Phases 2 and 3 for Function host keys and
+secrets.
 
-## Prereqs
+## What gets created
+
+| Resource | File | Notes |
+|----------|------|-------|
+| Resource Group | (top-level provider config) | Created if it doesn't exist; chosen via `var.resource_group_name`. |
+| Log Analytics workspace + Sentinel onboarding | `main.tf` | Workspace name is suffixed with a random 6-char string. |
+| Three analytic rules | `sentinel_rules.tf` | Repeated-failed-logins, password-spray, suspicious-user-agent. Defined as JSON ARM templates and applied via `azapi_resource`. |
+| Ship Control Panel Container App | `ship_control_panel.tf` | Public ingress, image pulled from GHCR. Logs stdout to the workspace via the App Insights connection-string in the Container App's env. |
+| Windows 11 lab VM | `main.tf` | Optional manual-trigger telemetry source. Auto-shutdown configured. RDP open from any source — throwaway demo box. |
+| Azure Monitor Agent + DCR | `main.tf` | Forwards Windows Event Logs to the workspace. |
+| Shared Key Vault | `aisoc_kv.tf` | Used by Phases 2 and 3 to publish Function host keys and Container App secrets. |
+| App Insights for the Ship Control Panel | `appinsights_shipcp.tf` | Connection-string only (no sampling configured); Container App reads it and emits trace + metrics. |
+| Defender for Endpoint onboarding | `mde_kv.tf`, `MDE.md` | Optional — disabled by default. See `MDE.md` for the manual onboarding-script step. |
+
+## Prerequisites
 
 - Terraform >= 1.6
-- Azure CLI logged in: `az login`
+- `az` CLI logged in: `az login`
 - Subscription selected: `az account set -s <SUBSCRIPTION_ID>`
+- `jq` (used to parse the analytic-rule JSON)
 
 ## Deploy
 
+The standard path is the top-level driver:
+
 ```bash
-cd terraform/azure-sentinel-test
+./aisoc_demo.sh deploy --resource-group=… --azure-location=…
+```
+
+For just this phase:
+
+```bash
+cd terraform/1-deploy-sentinel
 terraform init
 terraform apply
 ```
@@ -26,33 +50,49 @@ terraform apply
 terraform destroy
 ```
 
-## Logs flowing into Sentinel
+The top-level destroy script handles a quirk where the lab VM has
+to be running for its agent extensions to be removed cleanly — see
+the README at the repo root for details.
 
-Sentinel is just a solution on top of a Log Analytics Workspace. To get host logs into Sentinel, this stack:
-
-- installs **Azure Monitor Agent (AMA)** on the VM
-- creates a **Data Collection Rule (DCR)** to collect Windows Event Logs (Application/System/Security)
-- associates the DCR to the VM
-
-Note: the DCR uses the default ingestion endpoint (no DCE) to keep payloads simple and avoid API validation edge-cases.
-
-Once deployed, you should see events arriving in Log Analytics tables (WindowsEvent) and they’ll be available for Sentinel analytics rules.
-
-## Defender for Endpoint (MDE)
+## Defender for Endpoint
 
 There are two parts:
 
-1) **Onboard the VM to MDE** (tenant-level feature). Terraform can do this **only if you provide** the PowerShell onboarding script exported from the MDE portal.
-2) **Enable the Sentinel data connector for MDE** so MDE alerts/incidents flow into Sentinel.
+1. **Onboard the lab VM to MDE.** Terraform can do this only if you
+   provide the PowerShell onboarding script exported from the MDE
+   portal. Drop it in `mde/` and set
+   `TF_VAR_mde_onboarding_script=mde/<filename>.ps1`.
+2. **Enable the Sentinel data connector for MDE** so MDE alerts /
+   incidents flow into the workspace.
 
-This stack includes optional resources for both, but they are disabled by default.
+Both are documented in `MDE.md`. Both are disabled by default.
 
-## Notes
+## DCR + analytic-rules notes
 
-- Windows 11 images in Azure are typically "Windows 11 Enterprise multi-session" (AVD). This module uses an Azure Marketplace image reference.
-- To keep cost down, pick a small VM size and set auto-shutdown.
+- The DCR uses the default ingestion endpoint (no DCE) to keep
+  payloads simple and avoid API validation edge cases.
+- The DCR's XPath queries collect only Levels 1–3 from the Windows
+  Application / System / Security channels — enough to feed
+  Sentinel without flooding the workspace with verbose info events.
+- Analytic rules are defined as JSON ARM templates under
+  `analytic_rules/` and applied via `azapi_resource` because the
+  azurerm provider's coverage of Sentinel-rule shapes lags the
+  product. Each rule's KQL is heavily commented; edit directly +
+  re-apply.
 
-## DCR troubleshooting
+## Observability tip
 
-If you see `InvalidPayload: Data collection rule is invalid`, it's usually caused by invalid XPath queries or an output stream/table mismatch.
-This module uses a conservative set of XPath queries (Level 1-3 only) to improve compatibility.
+The Ship Control Panel logs stream to the workspace via Container
+Apps' default `ContainerAppConsoleLogs_CL` table. The base filter
+the AISOC agents use (and the one to start with for any manual
+exploration):
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where Stream_s == "stdout"
+| extend j = parse_json(Log_s)
+| where j.service == "ship-control-panel"
+```
+
+That gets you every state-change event from the panel in
+structured form (`j.event`, `j.detail`, `j.meta`).
