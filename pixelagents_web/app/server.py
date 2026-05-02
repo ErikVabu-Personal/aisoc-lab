@@ -6472,13 +6472,14 @@ def _kb_search_endpoint() -> str:
         return ""
 
     try:
+        import requests as _requests  # lazy: matches the convention used elsewhere in this file
         from azure.identity import DefaultAzureCredential
         token = DefaultAzureCredential().get_token("https://management.azure.com/.default").token
         url = (
             f"https://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}"
             f"/providers/Microsoft.Search/searchServices?api-version=2023-11-01"
         )
-        r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        r = _requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         if r.status_code == 200:
             services = (r.json() or {}).get("value", [])
             if services:
@@ -6605,6 +6606,8 @@ def api_kb_stats(
             "knowledge_bases":   out,
         }
 
+    import requests as _requests  # lazy: matches the convention used elsewhere in this file
+
     try:
         token = _kb_search_token()
     except Exception as e:
@@ -6635,7 +6638,7 @@ def api_kb_stats(
         try:
             # Document count — cheap data-plane call.
             url_count = f"{endpoint}/indexes/{idx}/docs/$count?api-version=2024-07-01"
-            r = requests.get(
+            r = _requests.get(
                 url_count,
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=10,
@@ -6659,7 +6662,7 @@ def api_kb_stats(
         if indexer_name and not entry["error"]:
             try:
                 url_status = f"{endpoint}/indexers/{indexer_name}/status?api-version=2024-07-01"
-                r = requests.get(
+                r = _requests.get(
                     url_status,
                     headers={"Authorization": f"Bearer {token}"},
                     timeout=10,
@@ -6716,9 +6719,10 @@ def api_kb_refresh(
         raise HTTPException(status_code=500, detail="indexer or endpoint not configured")
 
     try:
+        import requests as _requests  # lazy: matches the convention used elsewhere in this file
         token = _kb_search_token()
         url = f"{endpoint}/indexers/{indexer_name}/run?api-version=2024-07-01"
-        r = requests.post(
+        r = _requests.post(
             url,
             headers={"Authorization": f"Bearer {token}"},
             timeout=20,
