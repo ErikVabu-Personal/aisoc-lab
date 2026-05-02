@@ -30,12 +30,35 @@ resource "azurerm_key_vault" "aisoc" {
   purge_protection_enabled   = false
   soft_delete_retention_days = 7
 
-  # Operator access (for debugging / manual secret operations)
+  # Operator access (for debugging / manual secret operations).
+  # Bootstrap-only — creates the operator policy on the FIRST apply
+  # so the immediate `azurerm_key_vault_secret` writes can succeed
+  # under the operator's identity. Subsequent apply/destroy cycles
+  # IGNORE this block (see lifecycle below) so the operator's
+  # standalone-policy-style access can be set + maintained from
+  # Phase 2 alongside the orchestrator/runner MI policies, without
+  # the inline block here wiping them out on every refresh.
   access_policy {
     tenant_id = data.azurerm_client_config.aisoc_current.tenant_id
     object_id = data.azurerm_client_config.aisoc_current.object_id
 
     secret_permissions = ["Get", "List", "Set", "Delete", "Recover"]
+  }
+
+  # Mixing inline `access_policy` blocks with standalone
+  # `azurerm_key_vault_access_policy` resources is a documented
+  # azurerm trap: every apply, the vault resource considers the
+  # inline list authoritative and deletes anything that isn't in
+  # it. Phase 2 grants the orchestrator + runner MIs access via
+  # standalone policies; without this `ignore_changes` they get
+  # silently revoked on every Phase-1 apply.
+  #
+  # Symptom this fixes: orchestrator returns
+  #   "KeyVault secret get failed (403): The user/app 'oid=…' does
+  #    not have secrets get permission on key vault 'kv-aisoc-…'"
+  # after a Phase-1-only re-apply.
+  lifecycle {
+    ignore_changes = [access_policy]
   }
 
   tags = local.tags
