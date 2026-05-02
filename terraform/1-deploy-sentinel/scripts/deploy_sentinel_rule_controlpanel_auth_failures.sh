@@ -91,6 +91,19 @@ KQL
 # Create/Update rule via ARM (PUT is idempotent).
 URL="https://management.azure.com/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.OperationalInsights/workspaces/${LAW}/providers/Microsoft.SecurityInsights/alertRules/${RULE_ID}?api-version=2025-09-01"
 
+# Body for the alertRules ARM PUT.
+#
+# entityMappings (the new block at the bottom of properties): tells
+# Sentinel which projected columns from the KQL represent which
+# entity types. This is what populates the Entities pane on the
+# incident page — Account = the username column, IP = the
+# clientIp column. Without this block the Entities pane reads
+# "No entities found" even though the query columns clearly
+# carry both.
+#
+# Each entityType supports multiple identifier fields (Name vs
+# FullName for Account, Address vs DnsDomain for IP, …); we use
+# the simplest that matches what the query produces.
 BODY=$(jq -n --arg displayName "Control Panel: multiple failed logins (user + IP)" \
   --arg desc "Creates an incident when repeated auth.login.failure events are observed for the same username from the same client IP within 5 minutes." \
   --arg query "$QUERY" \
@@ -121,7 +134,21 @@ BODY=$(jq -n --arg displayName "Control Panel: multiple failed logins (user + IP
         }
       },
       eventGroupingSettings: { aggregationKind: "SingleAlert" },
-      tactics: ["CredentialAccess"]
+      tactics: ["CredentialAccess"],
+      entityMappings: [
+        {
+          entityType: "Account",
+          fieldMappings: [
+            { identifier: "Name", columnName: "username" }
+          ]
+        },
+        {
+          entityType: "IP",
+          fieldMappings: [
+            { identifier: "Address", columnName: "clientIp" }
+          ]
+        }
+      ]
     }
   }')
 
