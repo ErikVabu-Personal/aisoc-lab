@@ -2,8 +2,8 @@
 
 Authoritative roster for the M/S Aegir's current crew. Used by the
 SOC agents to map identities seen in logs (Ship Control Panel
-usernames, Windows VM logins, Sentinel incident "owner" assignments)
-back to actual people.
+usernames, bridge-workstation logins, Sentinel incident "owner"
+assignments) back to actual people.
 
 This page is curated by the SOC Manager + HR. When a crew change
 happens (promotion, sign-on, sign-off) the change shows up here
@@ -11,9 +11,9 @@ first; the AISOC agents pick it up on their next KB retrieval.
 
 ## Bridge officers
 
-| Person | Role | Ship Control Panel account | Lab VM account | Notes |
-|--------|------|----------------------------|----------------|-------|
-| **Jack Sparrow** | **Master / Captain** | `bo_captain` | **`jack.sparrow`** (local admin on the lab VM in Brussels) | Highest authority on board. Holds the master's account on the Ship Control Panel; uses his personal Windows account when interacting with the operations workstation in port. |
+| Person | Role | Ship Control Panel account | Workstation account | Notes |
+|--------|------|----------------------------|---------------------|-------|
+| **Jack Sparrow** | **Master / Captain** | `bo_captain` | **`jack.sparrow`** (local admin on **`BRIDGE-WS`**, the bridge workstation) | Highest authority on board. Holds the master's account on the Ship Control Panel; uses his personal Windows account when working at the bridge workstation. |
 | Anneke Lindgren | Staff Captain | `bo_lindgren` | — | Second-in-command. Full bridge privileges. |
 | Ryotaro Kobayashi | Chief Officer | `bo_kobayashi` | — | Navigation watch lead. |
 | Lukas Akkermans | Second Officer | `bo_akkermans` | — | Watchkeeper, in alternation with the staff captain. |
@@ -51,42 +51,49 @@ the naming-conventions page (`03-account-naming.md`), then resolve:
 
 - `bo_captain` → **Jack Sparrow** (master). Highest-privilege
   bridge account; activity on it is high signal.
-- Lab-VM Windows local logon for `jack.sparrow` → **Jack Sparrow**
-  using the Brussels operations workstation. He's the only person
-  who legitimately uses that account.
+- Windows local logon for `jack.sparrow` on **`BRIDGE-WS`** → **Jack Sparrow**
+  working at the bridge workstation. He's the only person
+  who legitimately uses that account, and `BRIDGE-WS` is the
+  only host that account legitimately appears on.
 - `bo_<lastname>` → bridge officer in the table above. Cross-
   reference to confirm the person is currently on watch
   (consult voyage schedule when in scope).
 - `eng_<lastname>` → engineering officer in the table above.
 - `svc_*`, `vendor_*`, `admin_*` → see naming-conventions page.
 
-## Captain-on-VM pattern (frequent demo signal)
+## Captain-on-`BRIDGE-WS` pattern (frequent demo signal)
 
-The lab VM's only interactive user is the captain (Jack Sparrow).
-That means:
+The bridge workstation (`BRIDGE-WS`) is **the captain's
+workstation**: physically on the bridge of M/S Aegir, and the only
+human who interactively logs in is Jack Sparrow under the local
+account `jack.sparrow`. That means:
 
-- Any **`auth.login.success`** on Windows for `jack.sparrow` — he's
-  on the workstation. Cross-reference the timestamp against bridge
-  activity.
-- A **failed-login burst on the Ship Control Panel originating from
-  the lab VM's public IP** while `jack.sparrow` has an active
-  Windows session is overwhelmingly likely to be the captain
-  mistyping his password — **not** an external brute-force.
+- Any **`auth.login.success`** on `BRIDGE-WS` for `jack.sparrow` —
+  the captain is on the workstation. Cross-reference the
+  timestamp against bridge activity.
+- A **failed-login burst on the Ship Control Panel originating
+  from `BRIDGE-WS`'s public IP** while `jack.sparrow` has an
+  active Windows session is overwhelmingly likely to be the
+  captain mistyping his password — **not** an external
+  brute-force.
   Verdict path:
   1. Retrieve this page + `04-runbook-credential-stuffing.md`.
-  2. Confirm the source IP belongs to the lab VM (check VM's
-     `public_ip` output or KQL on Windows logon events at the
-     same source).
-  3. Confirm `jack.sparrow` was logged into the VM during the
-     burst window (Sysmon EID 1 / Security 4624).
+  2. Confirm the source IP belongs to `BRIDGE-WS` (check the
+     workstation's `public_ip` output, or KQL on Windows logon
+     events at the same source).
+  3. Confirm `jack.sparrow` was logged into `BRIDGE-WS` during
+     the burst window (Sysmon EID 1 / Security 4624 with
+     `Computer == "BRIDGE-WS"`).
   4. Verdict: **Closed (false positive — captain mistyped at a
      workstation he was actively using).** Note the captain's
-     name + the workstation in the case note.
+     name + `BRIDGE-WS` in the case note.
 
 This pattern is the cleanest demonstration of why the SOC agents
 benefit from a KB: the data alone says "47 failed logins from a
 public IP" — looks like an attack. The KB is what tells the
-investigator that source IP belongs to the captain's workstation.
+investigator that source IP belongs to `BRIDGE-WS`, that
+`BRIDGE-WS` is the captain's workstation, and that the captain
+was actively logged in at the time.
 
 ## Editing this page
 

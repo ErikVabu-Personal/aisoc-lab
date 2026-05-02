@@ -17,7 +17,10 @@ auto_select_location_and_sku = false
 # openrouter_api_key = "sk-or-v1-..."
 resource_group_name = "rg-sentinel-test"
 workspace_name      = "law-sentinel-test"
-vm_name             = "win11-test"
+vm_name             = "bridge-workstation"
+# In-OS Windows hostname (cap 15 chars, NetBIOS — no underscores). This
+# is what shows up in Sentinel as Event.Computer.
+vm_computer_name    = "BRIDGE-WS"
 vm_size             = "Standard_D2s_v3"
 
 # Lab VM RDP is intentionally open on 3389 from any source — this is a

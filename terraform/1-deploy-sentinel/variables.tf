@@ -96,9 +96,39 @@ variable "enable_sentinel_mde_connector" {
 
 
 variable "vm_name" {
-  description = "Windows VM name"
+  description = <<-EOT
+    Azure resource name for the lab VM. Defaults to `bridge-workstation`
+    to fit the demo narrative (the captain's bridge workstation in
+    port). This is the ARM-resource name only — the in-OS Windows
+    hostname (what shows up in `Event.Computer` / `DeviceName` in
+    Sentinel) is governed separately by `vm_computer_name` because
+    Windows NetBIOS is capped at 15 chars with no underscores.
+  EOT
   type        = string
-  default     = "win11-test"
+  default     = "bridge-workstation"
+}
+
+variable "vm_computer_name" {
+  description = <<-EOT
+    In-OS Windows hostname for the lab VM. This is what Sentinel /
+    Sysmon will record as `Computer` on every event from the host,
+    and what the SOC agents see when they pivot from a username to
+    a machine. Defaults to `BRIDGE-WS` — the captain's bridge
+    workstation, abbreviated to fit Windows' 15-character NetBIOS
+    limit (no underscores allowed). The accompanying narrative
+    lives in the company-context KB (`02-monitored-systems.md`,
+    `09-endpoint-telemetry.md`, `10-org-chart.md`).
+  EOT
+  type        = string
+  default     = "BRIDGE-WS"
+
+  validation {
+    # NetBIOS rules: 1-15 chars, alphanumeric + hyphen only. No
+    # underscores, no spaces, must not start with hyphen, can't be
+    # all numeric.
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9-]{0,14}$", var.vm_computer_name))
+    error_message = "vm_computer_name must be 1-15 chars, start with a letter, and contain only letters/digits/hyphens (Windows NetBIOS limit)."
+  }
 }
 
 variable "vm_size" {

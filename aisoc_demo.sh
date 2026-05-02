@@ -387,9 +387,9 @@ if [[ "$ACTION" == "destroy" ]]; then
     vm="$( cd "$p1" && terraform output -json 2>/dev/null \
             | python3 -c 'import sys,json; d=json.load(sys.stdin); print((d.get("vm_name") or {}).get("value") or "")' \
             2>/dev/null || true )"
-    # Phase 1's main.tf default name is "win11-test" — fall back to
-    # that when the output isn't exposed.
-    [[ -z "$vm" ]] && vm="win11-test"
+    # Phase 1's main.tf default name is "bridge-workstation" — fall
+    # back to that when the output isn't exposed.
+    [[ -z "$vm" ]] && vm="bridge-workstation"
 
     if [[ -n "$rg" ]]; then
       say "Pre-destroy: ensuring Phase 1 VM '$vm' is running so extensions can be torn down"

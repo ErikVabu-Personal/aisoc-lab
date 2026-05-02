@@ -32,9 +32,9 @@ any of them should escalate to L2 immediately, not stay at L1.
 
 - `bo_captain` — vessel master; the highest-privilege bridge account.
   **Currently held by Jack Sparrow** (see `10-org-chart.md`). His
-  personal Windows account on the lab VM is `jack.sparrow` —
-  cross-reference when the source IP of a Ship Control Panel
-  login is the lab VM's public IP.
+  personal Windows account on the bridge workstation (`BRIDGE-WS`)
+  is `jack.sparrow` — cross-reference when the source IP of a
+  Ship Control Panel login is `BRIDGE-WS`'s public IP.
 - `bo_staff_captain` — second-in-command; full bridge privileges.
 - `admin_lkr` — IT admin at HQ, reaches every vessel.
 - `svc_admin` — the legacy service account. Any login is suspicious;
@@ -47,17 +47,17 @@ the systems we monitor. The org-chart page (`10-org-chart.md`) is
 the authoritative roster; this is the cheat sheet most relevant for
 triage.
 
-| Person | Ship Control Panel | Lab VM (Windows) |
-|--------|---------------------|-------------------|
+| Person | Ship Control Panel | `BRIDGE-WS` (Windows) |
+|--------|---------------------|------------------------|
 | Jack Sparrow (Captain) | `bo_captain` | `jack.sparrow` |
 
-The captain is the **only** person who legitimately logs into the
-lab VM. Any successful Windows login as `jack.sparrow` is the
-captain. The corollary is the high-signal pattern documented in
-the runbook + org-chart pages: **failed-login bursts on the Ship
-Control Panel that originate from the lab VM's IP while Jack is
-signed into Windows are usually him mistyping** — verify the
-session correlation before flagging as malicious.
+The captain is the **only** person who legitimately logs into
+`BRIDGE-WS`. Any successful Windows login as `jack.sparrow` on
+`BRIDGE-WS` is the captain. The corollary is the high-signal
+pattern documented in the runbook + org-chart pages: **failed-login
+bursts on the Ship Control Panel that originate from `BRIDGE-WS`'s
+IP while Jack is signed into Windows are usually him mistyping** —
+verify the session correlation before flagging as malicious.
 
 ## What to do with an unknown prefix
 

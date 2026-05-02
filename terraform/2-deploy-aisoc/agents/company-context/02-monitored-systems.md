@@ -6,11 +6,15 @@ Two assets are currently in scope for AISOC monitoring:
    operations surface the bridge officer uses while at sea. App
    logs flow into Sentinel via the `ContainerAppConsoleLogs_CL`
    table. **This page is about the Ship Control Panel.**
-2. The **lab VM** — a Windows 11 host with the Azure Monitor Agent
-   and Sysmon installed. Endpoint telemetry (Application / System
-   / Security event logs + Sysmon) flows into the `Event` table.
-   See `09-endpoint-telemetry.md` for the schema, base filters,
-   and pivot patterns.
+2. **`BRIDGE-WS`** — the **bridge workstation**, a Windows 11
+   host with the Azure Monitor Agent and Sysmon installed.
+   Physically on the bridge of M/S Aegir; the captain
+   (Jack Sparrow) is its only interactive user. Endpoint
+   telemetry (Application / System / Security event logs +
+   Sysmon) flows into the `Event` table where it appears as
+   `Computer == "BRIDGE-WS"`. See `09-endpoint-telemetry.md`
+   for the schema, base filters, and pivot patterns; the
+   captain ↔ host pairing is in `10-org-chart.md`.
 
 The Ship Control Panel groups its functionality into the
 following subsystems — each is a distinct tab in the UI and emits

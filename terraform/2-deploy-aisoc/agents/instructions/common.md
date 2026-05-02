@@ -37,10 +37,13 @@ Two tables are in scope:
 
 1. **`ContainerAppConsoleLogs_CL`** — Ship Control Panel application
    logs (auth + every state-changing UI event).
-2. **`Event`** — endpoint telemetry from the lab VM. Carries
-   Windows Application / System / Security event logs **and**
-   Sysmon Operational events (`Source == "Microsoft-Windows-Sysmon"`).
-   Sysmon is configured with the SwiftOnSecurity verbose baseline.
+2. **`Event`** — endpoint telemetry from `BRIDGE-WS` (the bridge
+   workstation). Carries Windows Application / System / Security
+   event logs **and** Sysmon Operational events
+   (`Source == "Microsoft-Windows-Sysmon"`). Sysmon is configured
+   with the SwiftOnSecurity verbose baseline. Per-host context
+   (who uses `BRIDGE-WS`, why it sees what it sees) lives in the
+   `company-context` KB.
 
 Tables NOT present and NOT to be referenced:
 `SecurityEvent`, `SigninLogs`, `AuditLogs`, `AuthenticationLogs`,
@@ -63,7 +66,7 @@ ContainerAppConsoleLogs_CL
 commonly `j.event`, `j.detail.username`, `j.detail.client` (source
 IP), `j.detail.userAgent`.
 
-**Endpoint (lab VM)**:
+**Endpoint (`BRIDGE-WS`)**:
 
 ```kusto
 Event

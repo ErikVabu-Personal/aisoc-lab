@@ -171,6 +171,10 @@ resource "azurerm_network_interface" "nic" {
 
 resource "azurerm_windows_virtual_machine" "vm" {
   name                = var.vm_name
+  # In-OS Windows hostname (separate from the ARM resource name).
+  # Capped at 15 chars by NetBIOS — see `vm_computer_name` variable.
+  # This is what Sentinel records as `Event.Computer`.
+  computer_name       = var.vm_computer_name
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   size                = local.selected_vm_size

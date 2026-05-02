@@ -19,6 +19,12 @@ nightly so the AISOC agents have an offline-readable reference.
 | NVISO Indexer                  | T1   | Group IT       | Search indexer. Authenticates as `svc_indexer`. |
 | Maintenance agent              | T2   | Group IT       | Pull-only firmware updates. Runs under `svc_backup`. |
 
+## Endpoint inventory (vessel-side)
+
+| Hostname     | Tier | Role                   | Owner       | Primary user           | Notes                                                                                                                |
+|--------------|------|------------------------|-------------|------------------------|----------------------------------------------------------------------------------------------------------------------|
+| **`BRIDGE-WS`** | T0   | Bridge workstation     | Vessel IT   | **Captain (Jack Sparrow)** | Windows 11 host on the bridge of M/S Aegir; the captain's interactive workstation. AMA + Sysmon installed; logs flow into Sentinel as `Event.Computer == "BRIDGE-WS"`. The only account that legitimately logs in interactively is `jack.sparrow`. **Monitored by AISOC.** |
+
 **Tier definitions (Group IT standard):**
 - **T0** — safety-of-life or revenue-of-voyage system. Loss = ship
   cannot sail safely. No experimental changes.

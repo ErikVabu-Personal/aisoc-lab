@@ -65,7 +65,7 @@ same source IP within a 15-minute window.
 
 | Pattern                                              | Verdict             |
 |------------------------------------------------------|---------------------|
-| **Burst from lab-VM IP + `jack.sparrow` had an active Windows session** | **Closed (false positive — captain mistyping at his workstation; see `10-org-chart.md`)** |
+| **Burst from `BRIDGE-WS`'s public IP + `jack.sparrow` had an active Windows session on `BRIDGE-WS`** | **Closed (false positive — captain mistyping at his bridge workstation; see `10-org-chart.md`)** |
 | Burst + zero successes + IP not on watchlist         | Closed (false positive — likely typo loop or scanner) |
 | Burst + zero successes + IP on TI watchlist          | Closed (true positive, contained — no compromise) |
 | Burst + ≥1 success on `bo_*` / `crew_*`              | Active (escalate to L2 — possible compromise) |

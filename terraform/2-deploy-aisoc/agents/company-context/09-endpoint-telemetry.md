@@ -1,6 +1,6 @@
-# Endpoint telemetry — lab VM + Sysmon
+# Endpoint telemetry — bridge workstation (`BRIDGE-WS`) + Sysmon
 
-The Phase-1 lab VM is a second monitored asset alongside the Ship
+The bridge workstation (`BRIDGE-WS`) is a second monitored asset alongside the Ship
 Control Panel. Endpoint telemetry from the VM lands in a different
 Sentinel table (`Event`, not `ContainerAppConsoleLogs_CL`) and
 exposes detail the Ship Control Panel logs can't.
@@ -35,7 +35,7 @@ Both flow into the **`Event`** table. Distinguish them by the
 ```kusto
 Event
 | where TimeGenerated > ago(1h)
-| where Computer == "<vm-name>"   // optional — filter to the lab VM
+| where Computer == "BRIDGE-WS"   // filter to the bridge workstation
 ```
 
 For Sysmon-only:
@@ -135,7 +135,7 @@ The two corpora answer different questions:
 |----------|---------|
 | Who attempted to log in? | `ContainerAppConsoleLogs_CL` (`auth.login.failure` / `success`) |
 | Was a security toggle flipped? | `ContainerAppConsoleLogs_CL` (`event="security"` / `connectivity` / `collision`) |
-| What process did *that* on the lab VM? | `Event` (Sysmon EID 1, 11, 12) |
+| What process did *that* on the bridge workstation (`BRIDGE-WS`)? | `Event` (Sysmon EID 1, 11, 12) |
 | Did the host phone out somewhere? | `Event` (Sysmon EID 3, 22) |
 | Did anything inject into another process? | `Event` (Sysmon EID 8, 10) |
 | Was a privileged Windows event audited? | `Event` (Source="Security", e.g. EID 4624 logon, 4672 special privilege) |
@@ -151,7 +151,7 @@ If a query returns no rows for `Source == "Microsoft-Windows-Sysmon"`,
 the install or the DCR forwarding may have failed. Diagnostic
 ladder:
 
-1. RDP into the lab VM, check
+1. RDP into the bridge workstation (`BRIDGE-WS`), check
    `C:\ProgramData\AISOC\Sysmon\install.log` — every install step
    is logged there.
 2. On the VM, run `Get-Service Sysmon64` — should be `Running`.
@@ -159,6 +159,6 @@ ladder:
    `Get-WinEvent -LogName 'Microsoft-Windows-Sysmon/Operational' -MaxEvents 5`
    — confirms the channel is producing.
 4. In the workspace, check for any rows from this Computer:
-   `Event | where Computer == "<vm-name>" | take 5`. If no rows
+   `Event | where Computer == "BRIDGE-WS" | take 5`. If no rows
    appear, the AMA isn't forwarding from this host (check the
    DCR association in the portal).
