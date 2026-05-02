@@ -472,6 +472,172 @@ def _assign_incident_owner(
         )
 
 
+def _post_incident_comment(
+    runner_url: str,
+    runner_bearer: str,
+    incident_number: Any,
+    incident_id: Any,
+    body_text: str,
+    *,
+    agent_slug: str = "orchestrator",
+) -> bool:
+    """Post a Sentinel incident comment via the runner. Returns True on
+    apparent success.
+
+    Why this exists in the orchestrator: relying on the agent itself
+    to call `add_incident_comment` was unreliable — the model would
+    sometimes finish its turn without invoking the tool, leaving the
+    case timeline missing the agent's writeback. Having the
+    orchestrator post the agent's reply text as the comment after
+    the agent run is a deterministic backstop: even if the agent
+    forgets to call the tool, the comment lands.
+
+    `body_text` is the agent's full reply text; we trust the prompt to
+    have shaped it as the spine. If the spine is missing, the comment
+    is still useful (raw agent output is better than no comment at
+    all, and the human reading the case can spot the deviation).
+    """
+    if not body_text or not body_text.strip():
+        print(
+            f"[orchestrator] skipping {agent_slug} comment — empty body",
+            flush=True,
+        )
+        return False
+
+    args: dict[str, Any] = {"message": body_text}
+    if incident_number is not None:
+        args["incidentNumber"] = incident_number
+    elif incident_id is not None:
+        args["incidentId"] = incident_id
+    else:
+        return False
+
+    try:
+        result = _runner_post(
+            runner_url,
+            runner_bearer,
+            {"tool_name": "add_incident_comment", "arguments": args},
+            agent=agent_slug,
+        )
+        body = result.get("result") if isinstance(result, dict) else None
+        if isinstance(body, dict) and body.get("ok") is False:
+            err = body.get("error") or body
+            print(
+                f"[orchestrator] comment post for {agent_slug} rejected: {err}",
+                flush=True,
+            )
+            return False
+        return True
+    except Exception as e:
+        print(
+            f"[orchestrator] comment post for {agent_slug} raised: {e!r}",
+            flush=True,
+        )
+        return False
+
+
+# Closure marker the reporter is supposed to write on the **Next:**
+# line of its case-note spine. We match liberally — any of the
+# variants (Closed (false positive), Closed/True Positive, Closed
+# - benign true positive, …) maps to a status update we trigger
+# from the orchestrator side.
+import re as _re
+
+_CLOSURE_RE = _re.compile(
+    r"\*\*Next:\*\*[^\n]*\bStatus[^\n]*\bClosed\b[^\n]*",
+    _re.IGNORECASE,
+)
+_CLASSIFICATION_KEYWORDS: list[tuple[str, str]] = [
+    # Order matters — "benign true positive" before "true positive"
+    # so the more specific match wins.
+    ("benign true positive", "BenignPositive"),
+    ("benign positive",      "BenignPositive"),
+    ("false positive",       "FalsePositive"),
+    ("true positive",        "TruePositive"),
+]
+
+
+def _detect_reporter_closure(reporter_text: str) -> str | None:
+    """If the reporter's reply text says it's closing the incident,
+    return the Sentinel classification value (FalsePositive /
+    TruePositive / BenignPositive). Otherwise None.
+
+    Driven by the spine's `**Next:** Status set to Closed (…)` line.
+    A successful match means the orchestrator should call
+    update_incident with status=Closed + that classification —
+    independent of whether the reporter agent actually called the
+    tool itself."""
+    if not reporter_text:
+        return None
+    m = _CLOSURE_RE.search(reporter_text)
+    if not m:
+        return None
+    line_lower = m.group(0).lower()
+    for needle, classification in _CLASSIFICATION_KEYWORDS:
+        if needle in line_lower:
+            return classification
+    # Default classification when we can detect "Closed" but not the
+    # specific verdict — Undetermined is the safest.
+    return "Undetermined"
+
+
+def _close_incident(
+    runner_url: str,
+    runner_bearer: str,
+    incident_number: Any,
+    incident_id: Any,
+    classification: str,
+) -> bool:
+    """Set incident.status=Closed + classification via the runner.
+
+    Backstop for the case where the reporter's case note says it's
+    closing the incident but the agent never actually called
+    `update_incident`. We parse the reporter reply text for a
+    closure marker (see _detect_reporter_closure) and call this if
+    we find one.
+    """
+    args: dict[str, Any] = {
+        "properties": {
+            "status": "Closed",
+            "classification": classification,
+        }
+    }
+    if incident_number is not None:
+        args["incidentNumber"] = incident_number
+    elif incident_id is not None:
+        args["id"] = incident_id
+    else:
+        return False
+
+    try:
+        result = _runner_post(
+            runner_url,
+            runner_bearer,
+            {"tool_name": "update_incident", "arguments": args},
+            agent="reporter",
+        )
+        body = result.get("result") if isinstance(result, dict) else None
+        if isinstance(body, dict) and body.get("ok") is False:
+            err = body.get("error") or body
+            print(
+                f"[orchestrator] closure (Closed/{classification}) rejected: {err}",
+                flush=True,
+            )
+            return False
+        print(
+            f"[orchestrator] incident closed by orchestrator backstop: "
+            f"classification={classification}",
+            flush=True,
+        )
+        return True
+    except Exception as e:
+        print(
+            f"[orchestrator] closure raised: {e!r}",
+            flush=True,
+        )
+        return False
+
+
 def _handle_incident_assign(req: func.HttpRequest) -> func.HttpResponse:
     """Standalone owner / status writeback. Called by pixelagents_web
     when an analyst edits the Owner or Status cell on the dashboard.
@@ -770,13 +936,26 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             project_endpoint,
             "triage",
             user_text=(
-                "You are the TRIAGE agent. Use the AISOC Runner OpenAPI tool to fetch incident and context. "
-                "Return a concise triage summary and immediate next steps. "
-                "End your run with a Sentinel comment writeback that follows the spine in your instructions "
-                "(header / Run / Summary / Findings / Confidence / Next).\n\n"
+                "You are the TRIAGE agent. Use the AISOC Runner OpenAPI tool "
+                "to fetch incident and context. Return a triage summary "
+                "matching the spine in your instructions (header / Run / "
+                "Summary / Entities / Findings / Confidence / Next).\n\n"
+                "Do NOT call `add_incident_comment` yourself — the "
+                "orchestrator will post your reply text as the Sentinel "
+                "comment after your run completes. Just produce the spine "
+                "in your final reply.\n\n"
                 + run_context_block
                 + f"INCIDENT_REF:\n{incident_json}"
             ),
+        )
+        # Backstop: post the agent's reply text as a Sentinel comment.
+        # Replaces the agent-side `add_incident_comment` call, which
+        # was unreliable (model would sometimes skip the tool).
+        _post_incident_comment(
+            runner_url, runner_bearer,
+            incident_number, incident_id,
+            triage_out,
+            agent_slug="triage",
         )
         _phase_end(
             phase="triage",
@@ -879,20 +1058,24 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             project_endpoint,
             "investigator",
             user_text=(
-                "You are the INVESTIGATOR agent. Use the AISOC Runner OpenAPI tool "
-                "to fetch incident details and run relevant KQL queries. Ground "
-                "findings in evidence and produce a short timeline + verdict. You "
-                "may call `ask_human` mid-investigation when you genuinely need a "
-                "human-in-the-loop steer (clarifying scope, picking between "
-                "competing hypotheses, confirming an assumption). Use the "
-                "CONFIDENCE_THRESHOLD below to decide how readily to do so — at "
-                "the same incident_number so the question shows up under the "
-                "right case in the human's queue.\n\n"
-                "You MUST end your run by calling `add_incident_comment` with a "
-                "body matching the spine in your instructions (header / Run / "
-                "Summary / Entities (resolved) / Findings / Timeline / Confidence "
-                "/ Next). Skipping the comment is treated as a failed run — the "
-                "reporter and the SOC manager rely on it as the hand-off marker.\n\n"
+                "You are the INVESTIGATOR agent. Use the AISOC Runner "
+                "OpenAPI tool to fetch incident details and run relevant "
+                "KQL queries. Ground findings in evidence and produce a "
+                "short timeline + verdict. You may call `ask_human` "
+                "mid-investigation when you genuinely need a human-in-the-"
+                "loop steer (clarifying scope, picking between competing "
+                "hypotheses, confirming an assumption). Use the "
+                "CONFIDENCE_THRESHOLD below to decide how readily to do "
+                "so — at the same incident_number so the question shows "
+                "up under the right case in the human's queue.\n\n"
+                "Do NOT call `add_incident_comment` yourself — the "
+                "orchestrator will post your reply text as the Sentinel "
+                "comment after your run completes. Just produce the "
+                "spine in your final reply (header / Run / Summary / "
+                "Entities (resolved) / Findings / Timeline / Confidence "
+                "/ Next). The orchestrator treats your reply text AS the "
+                "comment body, so include the spine literally — no extra "
+                "prose around it.\n\n"
                 + run_context_block
                 + _confidence_block("investigator")
                 + triggering_user_block
@@ -900,6 +1083,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 + f"INCIDENT_REF:\n{incident_json}\n\n"
                 + f"TRIAGE_OUTPUT:\n{_clip(triage_out, 4000)}"
             ),
+        )
+        # Backstop: post the investigator's reply text as a Sentinel
+        # comment. Same reason as the triage backstop above.
+        _post_incident_comment(
+            runner_url, runner_bearer,
+            incident_number, incident_id,
+            inv_out,
+            agent_slug="investigator",
         )
         _phase_end(
             phase="investigator",
@@ -927,38 +1118,47 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 project_endpoint,
                 "reporter",
                 user_text=(
-                    "You are the REPORTER agent. Produce an executive summary, "
-                    "draft a Sentinel-ready case note, and decide what to do "
-                    "next. You are authorised to write back to Sentinel directly "
-                    "— including closing the incident outright via "
-                    "`update_incident` with `status: Closed` — when you are "
-                    "sufficiently confident the case is a false positive or "
-                    "otherwise resolved. When you are only reasonably sure, "
-                    "call `ask_human` for a free-text approval at the same "
-                    "incident_number, then write back. Use the "
-                    "CONFIDENCE_THRESHOLD below to calibrate how readily to "
-                    "ask vs. act.\n\n"
-                    "Required tool sequence (do all of this — skipping any "
-                    "step is treated as a failed run):\n"
+                    "You are the REPORTER agent. Produce a Sentinel-ready "
+                    "case note that drives the verdict + status decision. "
+                    "When you are reasonably sure but not certain, call "
+                    "`ask_human` for a free-text approval at the same "
+                    "incident_number, then continue. Use the "
+                    "CONFIDENCE_THRESHOLD below to calibrate how readily "
+                    "to ask vs. act on your own.\n\n"
+                    "Required tool sequence:\n"
                     "1. Call `get_template({\"kind\": \"incident-comment\"})` "
-                    "FIRST, before drafting anything. The returned `content` is "
-                    "your case-note skeleton — keep all section headings and "
-                    "the order, replace the bracketed placeholders with "
-                    "incident-specific content. NEVER write a short "
-                    "free-form comment in place of the template.\n"
+                    "FIRST, before drafting anything. The returned "
+                    "`content` is your case-note skeleton — keep all "
+                    "section headings and order, replace bracketed "
+                    "placeholders with incident-specific content. NEVER "
+                    "write a short free-form comment in place of the "
+                    "template.\n"
                     "2. In the `**Run:**` line, substitute the literal "
-                    "`RUN_ID` and `RUN_STARTED_AT` values from the run-context "
-                    "block below — never angle-bracket placeholders.\n"
-                    "3. Call `add_incident_comment` with the filled-in "
-                    "template as the body.\n"
-                    "4. If your verdict is to close the incident "
-                    "(branch A — confident close), follow up with "
-                    "`update_incident` setting `properties.status` to "
-                    "`Closed` and `properties.classification` to the "
-                    "appropriate value (`FalsePositive` / `TruePositive` / "
-                    "`BenignPositive`). Saying you'll close the incident in "
-                    "the comment text WITHOUT calling `update_incident` "
-                    "leaves the case open in Sentinel — that's a regression.\n\n"
+                    "`RUN_ID` and `RUN_STARTED_AT` values from the "
+                    "run-context block below — never angle-bracket "
+                    "placeholders.\n\n"
+                    "Do NOT call `add_incident_comment` or `update_incident` "
+                    "yourself. The orchestrator handles both writebacks "
+                    "based on your reply:\n"
+                    "  - your reply text IS the comment body (filled "
+                    "    template, including the **Next:** Status set to "
+                    "    Closed (...) line that drives the closure "
+                    "    decision);\n"
+                    "  - if your reply's `**Next:**` line says "
+                    "    `Status set to Closed (<verdict>)`, the "
+                    "    orchestrator closes the incident in Sentinel "
+                    "    with classification matching <verdict> "
+                    "    (FalsePositive / TruePositive / BenignPositive).\n"
+                    "Implication: be precise on the **Next:** line. The "
+                    "orchestrator parses it. Examples it understands:\n"
+                    "  **Next:** Status set to Closed (false positive — duplicate alert).\n"
+                    "  **Next:** Status set to Closed (true positive, contained).\n"
+                    "  **Next:** Status set to Closed (benign true positive — captain mistyped).\n"
+                    "  **Next:** Status set to Active (escalated to L3 — see comment).\n"
+                    "If you write 'Status set to Active' (anything that "
+                    "isn't Closed), the orchestrator leaves the incident "
+                    "open. So don't say you'll close in prose if you mean "
+                    "the case stays Active.\n\n"
                     + run_context_block
                     + _confidence_block("reporter")
                     + triggering_user_block
@@ -991,6 +1191,27 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             usage=rep_raw.get("usage"),
             workflow_run_id=workflow_run_id,
         )
+        # Backstop: post the reporter's reply text as a Sentinel
+        # comment AND, if the reply's `**Next:**` line says it's
+        # closing the incident, drive the closure ourselves.
+        # NEEDS_REINVESTIGATION takes precedence — if the reporter
+        # is asking for another investigator pass, don't post the
+        # comment yet (the next iteration will produce the final one).
+        _maybe_note = _extract_reinvestigation(rep_out)
+        if not _maybe_note:
+            _post_incident_comment(
+                runner_url, runner_bearer,
+                incident_number, incident_id,
+                rep_out,
+                agent_slug="reporter",
+            )
+            _classification = _detect_reporter_closure(rep_out)
+            if _classification:
+                _close_incident(
+                    runner_url, runner_bearer,
+                    incident_number, incident_id,
+                    _classification,
+                )
 
         # Reinvestigation loop — if the reporter emits NEEDS_REINVESTIGATION,
         # re-run the investigator with the human's feedback as extra context

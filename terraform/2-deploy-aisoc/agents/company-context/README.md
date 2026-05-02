@@ -21,6 +21,7 @@ conventions, runbooks, glossary.
 | `08-escalation.md`                   | Escalation matrix, oncall, approved tooling |
 | `09-endpoint-telemetry.md`           | `BRIDGE-WS` + Sysmon — schema, base filter, common Sysmon EIDs, KQL pivot patterns |
 | `10-org-chart.md`                    | Authoritative roster (bridge officers, engineering, SOC team) + the captain-on-`BRIDGE-WS` correlation pattern that resolves false positives on the credential-stuffing alert via SCP source-IP → workstation → Windows-logon-user |
+| `11-ship-control-panel-logging.md`   | Canonical SCP logging schema: `ContainerAppConsoleLogs_CL` shape, base filter, `event` catalogue, `detail.*` field reference, time-window guidance, "table looks empty" diagnostic ladder |
 
 ## Uploading to the blob container
 

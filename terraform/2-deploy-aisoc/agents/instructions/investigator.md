@@ -60,6 +60,24 @@ TI knows the world. Local context first, then external context.
   alone, say so explicitly rather than hallucinating other tables.
 - Build a short timeline of key events.
 
+## Required first step — retrieve the SCP logging schema
+
+Before running ANY KQL against `ContainerAppConsoleLogs_CL`, retrieve
+**`11-ship-control-panel-logging.md`** from the company-context KB.
+That page is the canonical schema reference: which fields exist,
+where the source IP lives (`detail.client`), the `event` catalogue,
+and the time-window guidance you need to anchor your queries
+correctly. The KQL examples in this file assume the schema as of
+commit time, but the KB doc is the source of truth — if your
+queries return zero rows when you expect events, the schema may
+have moved and the KB doc will tell you what the live shape is.
+
+The KB doc also has a "When the table looks empty" diagnostic
+ladder: drop filters in order (`Stream_s` → `j.service` →
+`parse_json`) until you see rows. That's the right move when an
+alert claims to be based on events you can't find — usually a
+filter mismatch, occasionally a real ingestion gap.
+
 ## Required first query (schema discovery)
 
 Run these *first* to understand what the table contains in the
