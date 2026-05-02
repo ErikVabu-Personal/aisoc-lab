@@ -1724,12 +1724,46 @@ async def _auto_pickup_loop() -> None:
         await asyncio.sleep(AUTO_PICKUP_INTERVAL_SEC)
 
 
+def _incident_already_handled(inc: dict[str, Any]) -> bool:
+    """An incident is considered already-handled (and should be
+    excluded from auto-pickup on startup) if its status has moved
+    past New, OR a human has explicitly claimed ownership.
+
+    The reverse is what we want to KEEP eligible for auto-pickup
+    after a restart: status == 'New' AND owner == 'Unassigned'.
+    Those are incidents Sentinel created but no one — no human, no
+    agent run — has touched yet. Marking them seen on every restart
+    was a bug: a redeploy between incident creation and the first
+    auto-pickup tick (e.g. a CI image push, or just unlucky timing)
+    permanently stranded them in the Unassigned/New state with no
+    way to recover other than manual `Run workflow`."""
+    status = (inc.get("status") or "").strip().lower()
+    if status and status != "new":
+        return True
+    owner_field = inc.get("owner")
+    if isinstance(owner_field, dict):
+        owner_name = (owner_field.get("name") or owner_field.get("email") or "").strip()
+    elif isinstance(owner_field, str):
+        owner_name = owner_field.strip()
+    else:
+        owner_name = ""
+    owner_lower = owner_name.lower()
+    if owner_name and owner_lower not in ("unassigned", "none", "-"):
+        return True
+    return False
+
+
 async def _prime_seen_incidents() -> None:
-    """Mark every currently-known incident number as 'seen' so the
-    auto-pickup loop only triggers on incidents that arrive AFTER
-    startup. Without this, every container restart with auto-pickup
-    enabled would replay all existing 'New' incidents through triage
-    one-by-one — not what users expect when the toggle is on."""
+    """Mark already-handled incidents as 'seen' so the auto-pickup
+    loop doesn't replay them after a restart, while LEAVING fresh
+    `New + Unassigned` incidents eligible for pickup.
+
+    Why not "mark everything seen": the original implementation did
+    that, which meant a container restart between incident creation
+    and the first auto-pickup tick (image redeploy, ACA revision
+    flip, anything) permanently stranded those incidents in the
+    Unassigned/New state. The corrected logic is "skip what's
+    already in flight or done," not "skip everything."""
     import asyncio
 
     try:
@@ -1738,14 +1772,20 @@ async def _prime_seen_incidents() -> None:
         _auto_pickup_set_event(f"Startup prime failed: {e!r}")
         return
     primed = 0
+    eligible = 0
     for inc in incidents:
         num = inc.get("number")
-        if isinstance(num, int):
+        if not isinstance(num, int):
+            continue
+        if _incident_already_handled(inc):
             AUTO_PICKUP["seen_incidents"].add(num)
             primed += 1
+        else:
+            eligible += 1
     _auto_pickup_set_event(
-        f"Startup primed — {primed} existing incident(s) marked seen; "
-        f"only newly-arriving incidents will trigger workflows"
+        f"Startup primed — marked {primed} already-handled incident(s) seen; "
+        f"{eligible} New+Unassigned incident(s) remain eligible for auto-pickup "
+        f"on the next tick"
     )
 
 
@@ -2371,14 +2411,23 @@ async def api_soc_manager_review(
 
 
 def _auto_pickup_public_state() -> dict[str, Any]:
-    """Snapshot suitable for the JSON API (sets aren't JSON-serializable)."""
+    """Snapshot suitable for the JSON API (sets aren't JSON-serializable).
+
+    Exposes seen_incidents as a sorted list — the most actionable
+    thing to know when troubleshooting "why didn't auto-pickup fire
+    on incident #N" is: is N in the seen set? If yes, the loop
+    will skip it on every tick.
+    """
+    seen = sorted(AUTO_PICKUP.get("seen_incidents") or [])
     return {
         "enabled": bool(AUTO_PICKUP.get("enabled")),
         "interval_sec": AUTO_PICKUP_INTERVAL_SEC,
         "last_check_ts": AUTO_PICKUP.get("last_check_ts"),
         "last_event": AUTO_PICKUP.get("last_event"),
         "last_event_ts": AUTO_PICKUP.get("last_event_ts"),
-        "seen_count": len(AUTO_PICKUP.get("seen_incidents") or ()),
+        "seen_count": len(seen),
+        "seen_incidents": seen,
+        "in_flight_incident": CURRENT_INCIDENT.get("incident_number"),
     }
 
 
@@ -2389,6 +2438,36 @@ def api_auto_pickup_get(
 ) -> dict[str, Any]:
     _require_auth(request, x_pixelagents_token)
     return _auto_pickup_public_state()
+
+
+@app.post("/api/auto_pickup/reset_seen")
+def api_auto_pickup_reset_seen(
+    request: Request,
+    x_pixelagents_token: str | None = Header(default=None, alias="x-pixelagents-token"),
+) -> dict[str, Any]:
+    """Clear the 'seen' set so the auto-pickup loop re-evaluates
+    every Sentinel incident on the next tick. Use this when an
+    incident is stuck in `New + Unassigned` because it landed in
+    Sentinel during a window when PA-Web was restarting (the prime
+    swept it under the rug).
+
+    Soc-manager-only — same gate as other admin endpoints. Resetting
+    has the side effect of replaying any `New + Unassigned` incident
+    (with the smarter prime logic from `_incident_already_handled`,
+    that's exactly what you want).
+    """
+    user = _session_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="not signed in")
+    if ROLE_SOC_MANAGER not in set(_user_roles(user)):
+        raise HTTPException(status_code=403, detail="soc-manager only")
+    cleared = len(AUTO_PICKUP.get("seen_incidents") or ())
+    AUTO_PICKUP["seen_incidents"] = set()
+    _auto_pickup_set_event(
+        f"seen set cleared by {user.get('email', 'unknown')} "
+        f"({cleared} entries dropped) — next tick will re-evaluate every incident"
+    )
+    return {"ok": True, "cleared": cleared, **_auto_pickup_public_state()}
 
 
 # ── Agent confidence temperature (per-agent) ─────────────────────────
