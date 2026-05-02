@@ -356,7 +356,22 @@ resource "azurerm_role_assignment" "pixelagents_search_kb_contributor" {
   scope                = local.pixelagents_search_service_id
   role_definition_name = "Search Service Contributor"
   principal_id         = local.pixelagents_principal_id
-  description          = "PixelAgents Web reads KB doc counts + triggers indexers from the /kb page."
+  description          = "PixelAgents Web manages indexers (run/reset) from the /kb page (control-plane role)."
+}
+
+# Search Service Contributor is CONTROL plane only — it lets the
+# /kb page enumerate indexers and trigger runs, but it does NOT
+# grant read access to documents inside an index. The /kb page's
+# `$count` call hits document content, so it needs the data-plane
+# role too. Without this you get HTTP 403 from /docs/$count even
+# though every other Search call works. (Same gotcha that bit the
+# agents earlier — Search RBAC splits the two planes.)
+resource "azurerm_role_assignment" "pixelagents_search_index_reader" {
+  count                = local.pixelagents_search_role_enabled ? 1 : 0
+  scope                = local.pixelagents_search_service_id
+  role_definition_name = "Search Index Data Reader"
+  principal_id         = local.pixelagents_principal_id
+  description          = "PixelAgents Web reads /docs/$count from each KB index (data-plane role)."
 }
 
 output "pixelagents_principal_id" {
