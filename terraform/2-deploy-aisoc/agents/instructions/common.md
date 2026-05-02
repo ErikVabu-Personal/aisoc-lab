@@ -33,23 +33,34 @@ it stays inline.
 
 ### Sentinel scope
 
-Two tables are in scope:
+Three tables are in scope:
 
 1. **`ContainerAppConsoleLogs_CL`** — Ship Control Panel application
    logs (auth + every state-changing UI event).
-2. **`Event`** — endpoint telemetry from `BRIDGE-WS` (the bridge
-   workstation). Carries Windows Application / System / Security
-   event logs **and** Sysmon Operational events
-   (`Source == "Microsoft-Windows-Sysmon"`). Sysmon is configured
-   with the SwiftOnSecurity verbose baseline. Per-host context
-   (who uses `BRIDGE-WS`, why it sees what it sees) lives in the
-   `company-context` KB.
+2. **`SecurityEvent`** — Windows audit events from `BRIDGE-WS`
+   (the bridge workstation). Native Sentinel-parsed table; rows
+   are individual security audit events with proper columns
+   (`Account`, `AccountName`, `LogonType`, `IpAddress`,
+   `WorkstationName`, `Process`, `CommandLine`, …). Use this for
+   any user / logon / process-create question — EID 4624 (logon
+   success), 4625 (failure), 4634 (logoff), 4672 (special privilege),
+   4688 (process create), 4720 (account created), 4740 (locked
+   out).
+3. **`Event`** — Application / System / Sysmon from `BRIDGE-WS`.
+   Sysmon writes to the `Microsoft-Windows-Sysmon/Operational`
+   channel (`Source == "Microsoft-Windows-Sysmon"`) with the
+   SwiftOnSecurity verbose config. Schema is loose — body lives
+   in `EventData` as XML; `parse_xml()` it for fields beyond
+   `Source`, `EventID`, `Computer`, `RenderedDescription`.
+
+Per-host context (who uses `BRIDGE-WS`, why it sees what it sees)
+lives in the `company-context` KB.
 
 Tables NOT present and NOT to be referenced:
-`SecurityEvent`, `SigninLogs`, `AuditLogs`, `AuthenticationLogs`,
-Entra / Azure AD tables, DnsEvents, EDR / firewall tables. If a
-question can only be answered by data outside the two tables
-above, say so rather than speculating.
+`SigninLogs`, `AuditLogs`, `AuthenticationLogs`, Entra / Azure AD
+tables, DnsEvents, EDR / firewall tables. If a question can only
+be answered by data outside the three tables above, say so rather
+than speculating.
 
 ### Base filters
 
@@ -66,11 +77,23 @@ ContainerAppConsoleLogs_CL
 commonly `j.event`, `j.detail.username`, `j.detail.client` (source
 IP), `j.detail.userAgent`.
 
-**Endpoint (`BRIDGE-WS`)**:
+**Endpoint — Windows audit (`SecurityEvent`)** — for who-logged-in /
+process-create / privilege questions, columns are pre-parsed:
+
+```kusto
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where Computer == "BRIDGE-WS"
+// then filter by EventID, AccountName, LogonType, IpAddress, …
+```
+
+**Endpoint — everything else (`Event`)** — Sysmon and generic
+Windows logs:
 
 ```kusto
 Event
 | where TimeGenerated > ago(1h)
+| where Computer == "BRIDGE-WS"
 // optionally: | where Source == "Microsoft-Windows-Sysmon"
 ```
 

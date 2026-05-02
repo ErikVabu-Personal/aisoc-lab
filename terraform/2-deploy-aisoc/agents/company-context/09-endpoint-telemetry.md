@@ -1,9 +1,22 @@
 # Endpoint telemetry — bridge workstation (`BRIDGE-WS`) + Sysmon
 
-The bridge workstation (`BRIDGE-WS`) is a second monitored asset alongside the Ship
-Control Panel. Endpoint telemetry from the VM lands in a different
-Sentinel table (`Event`, not `ContainerAppConsoleLogs_CL`) and
-exposes detail the Ship Control Panel logs can't.
+The bridge workstation (`BRIDGE-WS`) is a second monitored asset
+alongside the Ship Control Panel. Endpoint telemetry from the host
+lands in two different Sentinel tables, depending on which Windows
+channel produced it:
+
+- **`SecurityEvent`** — Security channel (Windows audit events:
+  4624 logon-success, 4625 logon-failure, 4634 logoff, 4672
+  special-privilege-assigned, 4688 process-create, etc.). This
+  table is **fully columnized** — `Account`, `AccountName`,
+  `LogonType`, `IpAddress`, `WorkstationName`, `Process`,
+  `CommandLine`, etc. are all first-class fields you can `where`
+  and `summarize` on directly.
+- **`Event`** — everything else from the host: Application /
+  System logs and Sysmon. These channels don't have a structured
+  Sentinel-native table; the body lives in `EventData` as XML and
+  needs `parse_xml()` per-query for fields beyond `Source`,
+  `EventID`, `Computer`, and `RenderedDescription`.
 
 Use this page when you need to pivot from a Ship-Control-Panel
 event into "what was happening on the host at the same time", or
@@ -11,31 +24,45 @@ when an alert is purely host-side.
 
 ## What's collected, where it lands
 
-Two channels merge into the `Event` table via the AMA agent + DCR:
+| Channel | Table | Why |
+|---------|-------|-----|
+| `Security` (audit events: 4624 / 4625 / 4634 / 4672 / 4688 / 4720 / 4740 / …) | **`SecurityEvent`** | Native Sentinel table; columns parsed per Microsoft's schema. Use this for any user / logon / process question. |
+| `Application` / `System` | `Event` | Generic Windows logs; no structured table needed for this corpus. |
+| `Microsoft-Windows-Sysmon/Operational` | `Event` | Sysmon writes here. No separate Sysmon table; parse `EventData` XML for fields. |
 
-1. **Windows Event Logs** — Application / System / Security at
-   Levels 1–3 (Critical / Error / Warning) plus Security Level 4
-   (Information — that's where audit events live, e.g. logon
-   success / process creation auditing).
-2. **Sysmon** — `Microsoft-Windows-Sysmon/Operational` channel.
-   All Sysmon events are Level=4 by design. The host runs the
-   SwiftOnSecurity verbose config, so the channel is
-   comprehensive.
+**Rule of thumb when choosing a table:**
 
-Both flow into the **`Event`** table. Distinguish them by the
-`Source` field:
+- "who logged in / from where / how" → **`SecurityEvent`**
+- "what process ran / what network connection happened / what
+  file/registry change happened" → **`Event`** filtered to
+  `Source == "Microsoft-Windows-Sysmon"`
 
-| Source | Channel | Notes |
-|--------|---------|-------|
-| `Application` / `System` / `Security` | Windows core channels | Standard Windows logging. |
-| `Microsoft-Windows-Sysmon` | Sysmon Operational | Endpoint detection signal — what we look at first. |
+## Base filter — Security audit events (`SecurityEvent`)
 
-## Base filter for endpoint queries
+```kusto
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where Computer == "BRIDGE-WS"
+```
+
+`SecurityEvent` columns you'll use most:
+
+| Column | Meaning |
+|--------|---------|
+| `EventID` | 4624 (logon success), 4625 (failure), 4634 (logoff), 4672 (special priv), 4688 (process create), 4720 (account created), 4740 (account locked out), … |
+| `Account` | `DOMAIN\user` form, e.g. `BRIDGE-WS\jack.sparrow` |
+| `AccountName` | bare username, e.g. `jack.sparrow` |
+| `LogonType` | 2 = interactive at console, 3 = network, 7 = unlock, 10 = RemoteInteractive (RDP), 11 = CachedInteractive |
+| `IpAddress` / `WorkstationName` | source of the logon (4624 / 4625) |
+| `Process` / `ProcessName` / `CommandLine` | for 4688 process-create |
+| `LogonProcessName`, `AuthenticationPackageName` | how the logon was performed |
+
+## Base filter — Application / System / Sysmon (`Event`)
 
 ```kusto
 Event
 | where TimeGenerated > ago(1h)
-| where Computer == "BRIDGE-WS"   // filter to the bridge workstation
+| where Computer == "BRIDGE-WS"
 ```
 
 For Sysmon-only:
@@ -165,12 +192,13 @@ The two corpora answer different questions:
 
 | Question | Look in |
 |----------|---------|
-| Who attempted to log in? | `ContainerAppConsoleLogs_CL` (`auth.login.failure` / `success`) |
-| Was a security toggle flipped? | `ContainerAppConsoleLogs_CL` (`event="security"` / `connectivity` / `collision`) |
-| What process did *that* on the bridge workstation (`BRIDGE-WS`)? | `Event` (Sysmon EID 1, 11, 12) |
+| Who attempted to log in to the **SCP**? | `ContainerAppConsoleLogs_CL` (`auth.login.failure` / `success`) |
+| Was an SCP security toggle flipped? | `ContainerAppConsoleLogs_CL` (`event="security"` / `connectivity` / `collision`) |
+| Who logged in / failed to log in / logged off **on the host**? | **`SecurityEvent`** (EID 4624 / 4625 / 4634) |
+| What process did *that* on the bridge workstation (`BRIDGE-WS`)? | **`SecurityEvent`** (EID 4688 process create — has `Process` / `CommandLine` parsed) AND `Event` (Sysmon EID 1 — has full process tree via ProcessGuid) |
 | Did the host phone out somewhere? | `Event` (Sysmon EID 3, 22) |
 | Did anything inject into another process? | `Event` (Sysmon EID 8, 10) |
-| Was a privileged Windows event audited? | `Event` (Source="Security", e.g. EID 4624 logon, 4672 special privilege) |
+| Was a privileged Windows event audited? | **`SecurityEvent`** (4672 special privilege, 4720 account created, 4740 account locked out) |
 
 In practice the investigator should query **both** when
 investigating a suspicious user — the Ship Control Panel auth
@@ -191,6 +219,12 @@ ladder:
    `Get-WinEvent -LogName 'Microsoft-Windows-Sysmon/Operational' -MaxEvents 5`
    — confirms the channel is producing.
 4. In the workspace, check for any rows from this Computer:
-   `Event | where Computer == "BRIDGE-WS" | take 5`. If no rows
-   appear, the AMA isn't forwarding from this host (check the
-   DCR association in the portal).
+   `Event | where Computer == "BRIDGE-WS" | take 5` (Sysmon /
+   Application / System) and
+   `SecurityEvent | where Computer == "BRIDGE-WS" | take 5` (audit
+   events). If both return zero rows, the AMA isn't forwarding
+   from this host at all (check the DCR association in the
+   portal). If only one is empty, that channel's stream binding
+   in the DCR is broken — Security → `SecurityEvent` (via
+   `Microsoft-SecurityEvent` stream), other channels → `Event`
+   (via `Microsoft-Event` stream).

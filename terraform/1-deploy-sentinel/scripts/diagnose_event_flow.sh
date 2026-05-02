@@ -86,34 +86,47 @@ assoc_count="$(az monitor data-collection rule association list \
 echo "  DCR associations on this VM: ${assoc_count}"
 echo
 
-# ── 4. Workspace ingestion: any Event rows in the last hour? ────
+# ── 4. Workspace ingestion: any Event / SecurityEvent rows? ────
 echo "── [4] Sentinel — events in the last 1h ───────────────────────"
 if [[ -z "$WSID" ]]; then
   echo "  ⚠ no workspace id output; can't query KQL."
 else
-  # `Event | summarize count() by Source` shows whether any Windows
-  # channel is ingesting. If this returns 0 rows, AMA is not
-  # forwarding ANYTHING (extension dead, RBAC, DCR not associated).
+  # If both Event and SecurityEvent are empty, AMA isn't forwarding
+  # ANYTHING (extension dead, RBAC, DCR not associated). If Event
+  # has rows but SecurityEvent does not, the Microsoft-SecurityEvent
+  # stream binding in the DCR is missing/misconfigured.
   q1='Event | where TimeGenerated > ago(1h) | summarize count() by Source | order by count_ desc'
   echo "  Query: Event | summarize count() by Source (last 1h)"
   az monitor log-analytics query --workspace "$WSID" --analytics-query "$q1" \
     -o table 2>/dev/null \
     | sed 's/^/    /' \
     || echo "    (query failed — check 'az login' + Log Analytics Reader role)"
+  echo
+  q1b='SecurityEvent | where TimeGenerated > ago(1h) | summarize count() by EventID | order by count_ desc | take 10'
+  echo "  Query: SecurityEvent | summarize count() by EventID (last 1h, top 10)"
+  az monitor log-analytics query --workspace "$WSID" --analytics-query "$q1b" \
+    -o table 2>/dev/null \
+    | sed 's/^/    /' \
+    || echo "    (query failed)"
 fi
 echo
 
 # ── 5. The headline events: 4624 / 4625 in the last 1h ──────────
 echo "── [5] 4624 (logon success) + 4625 (logon failure), last 1h ──"
 if [[ -n "$WSID" ]]; then
-  q2='Event | where TimeGenerated > ago(1h) | where Source == "Security" and EventID in (4624,4625) | summarize count() by EventID, Computer | order by EventID asc'
+  # SecurityEvent is the Sentinel-native parsed table — this is
+  # where 4624 / 4625 land when the DCR streams Security via
+  # Microsoft-SecurityEvent. Native columns (AccountName,
+  # LogonType) come back, no XML parsing needed.
+  q2='SecurityEvent | where TimeGenerated > ago(1h) | where EventID in (4624,4625) | summarize count() by EventID, Computer, AccountName | order by EventID asc'
   az monitor log-analytics query --workspace "$WSID" --analytics-query "$q2" \
     -o table 2>/dev/null \
     | sed 's/^/    /' \
     || echo "    (query failed)"
   echo
-  echo "  No rows = audit subcategory not firing (auditpol) OR DCR is"
-  echo "  filtering out Level=0. After the fix:"
+  echo "  No rows = either the audit subcategory isn't firing"
+  echo "  (auditpol) or the DCR's Microsoft-SecurityEvent stream"
+  echo "  isn't routing Security to SecurityEvent. After the fix:"
   echo "    1. terraform apply  (refreshes DCR + re-runs Sysmon CSE)"
   echo "    2. RDP into the VM, log out + back in (generate 4624 / 4634)"
   echo "    3. wait 5-15 min for AMA to subscribe and forward"

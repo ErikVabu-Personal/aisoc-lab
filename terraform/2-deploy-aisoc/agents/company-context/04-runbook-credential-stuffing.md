@@ -46,16 +46,20 @@ same source IP within a 15-minute window.
         and step 7 (Threat Intel).
 
    b. **Who was interactively signed in at that host during the
-      burst?** Pivot on the discovered `Computer`:
+      burst?** Pivot on the discovered `Computer` against the
+      `SecurityEvent` table — Windows audit events land there
+      with proper columns (`AccountName`, `LogonType`,
+      `IpAddress`, `WorkstationName` are first-class fields, not
+      XML buried in `EventData`):
 
       ```kusto
-      Event
+      SecurityEvent
       | where Computer == "<host-from-step-2a>"
       | where TimeGenerated between (
           (datetime(<burst-start>) - 5m) ..
           (datetime(<burst-end>) + 5m))
-      | where Source == "Security" and EventID == 4624
-      | project TimeGenerated, AccountName, LogonType
+      | where EventID == 4624
+      | project TimeGenerated, AccountName, LogonType, IpAddress, WorkstationName
       ```
 
       A 4624 with `LogonType in (2, 10, 11)` (interactive,
