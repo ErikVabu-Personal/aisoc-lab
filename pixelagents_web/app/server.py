@@ -1047,14 +1047,26 @@ def _render_nav(active: str, current_user: str) -> str:
     notifs = _user_notification_counts(current_user)
 
     # Top-row groups. (key, href, label, icon, visible, badge_count).
-    # `href` for group tabs is the default sub-page URL.
+    # `href` for group tabs is the default sub-page URL — by convention
+    # the LEFTMOST visible sub-tab. Trends always lands on Incidents
+    # (`/dashboard`); Configuration always lands on Continuous
+    # Improvement (`/improvements`) so a soc-manager opening
+    # Configuration sees the queue first, not the Settings cog.
+    # If a future role only has `caps["configuration"]` and not
+    # `caps["improvements"]`, fall back to /audit (the next visible
+    # sub-tab).
+    if caps["improvements"]:
+        configuration_href = "/improvements"
+    elif caps["configuration"]:
+        configuration_href = "/audit"
+    else:
+        configuration_href = "/improvements"  # group is hidden anyway
     groups = [
         ("live",          "/",            "Live",          _NAV_ICON_LIVE,
             caps["live"],          int(notifs.get("live", 0))),
         ("trends",        "/dashboard",   "Trends",        _NAV_ICON_TRENDS,
             caps["trends"],        0),
-        ("configuration", "/improvements" if (caps["improvements"] and not caps["configuration"])
-                          else "/config",
+        ("configuration", configuration_href,
             "Configuration", _NAV_ICON_CONFIG,
             caps["configuration"] or caps["improvements"],
             int(notifs.get("configuration", 0))),

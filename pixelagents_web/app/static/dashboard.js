@@ -316,6 +316,33 @@
     #${ROOT_ID} .runs-badge.ok   { border-color: #22c55e; color: #166534; background: rgba(34,197,94,0.10); }
     #${ROOT_ID} .runs-badge.run  { border-color: #0099cc; color: #1e40af; background: rgba(0,153,204,0.10); }
 
+    /* Row action buttons — Actions column. Shared style for the
+       button (timeline) and anchor (Sentinel) variants so the row
+       reads as one icon group. */
+    #${ROOT_ID} .row-action-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px;
+      margin: 0 2px;
+      padding: 0;
+      border: 1px solid rgba(14,37,65,0.18);
+      border-radius: 4px;
+      background: #ffffff;
+      color: #2c5680;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+      text-decoration: none;
+      user-select: none;
+      transition: background 80ms ease, border-color 80ms ease;
+    }
+    #${ROOT_ID} .row-action-btn:hover {
+      background: rgba(0,153,204,0.10);
+      border-color: #2c5680;
+    }
+    #${ROOT_ID} .row-action-btn.disabled {
+      color: #9ca3af; cursor: not-allowed; background: #f3f4f6;
+    }
+
     #${ROOT_ID} tr.runs-row > td {
       padding: 0 14px 12px !important;
       background: #f9fafb;
@@ -600,6 +627,7 @@
         + '<th style="width:220px;">Owner</th>'
         + '<th class="cost" style="width:120px;">Cost</th>'
         + '<th style="width:90px;">Runs</th>'
+        + '<th style="width:110px;text-align:center;">Actions</th>'
         + '</tr></thead>';
       body += '<tbody>';
       for (const inc of filtered) {
@@ -704,12 +732,42 @@
         }
         body += '</td>';
 
+        // Actions cell — two icon buttons:
+        //   1. Timeline — opens the in-page incident-details panel
+        //      (agent phases, tool calls, HITL Q&A, human actions).
+        //      Same handler as clicking the # column, exposed as an
+        //      explicit button so it's discoverable without hovering
+        //      the number for the title-tooltip.
+        //   2. Sentinel — opens the Microsoft Sentinel incident blade
+        //      in a new tab. Equivalent to the "View in Sentinel"
+        //      jump from the Live view's incidents panel.
+        {
+          const sentinelHref = sentinelPortalUrl(inc) || '';
+          body += '<td style="text-align:center;white-space:nowrap;">';
+          body += `<button type="button" class="row-action-btn" data-open-incident="${num}" `
+                + `title="Show how this incident moved through our queues — agent phases, tool calls, HITL questions, human actions">`
+                + `📋</button>`;
+          if (sentinelHref) {
+            body += `<a class="row-action-btn" href="${sentinelHref}" `
+                  + `target="_blank" rel="noopener" `
+                  + `title="Open #${num} in Microsoft Sentinel (new tab)">`
+                  + `↗</a>`;
+          } else {
+            body += `<span class="row-action-btn disabled" `
+                  + `title="No Sentinel link — incident has no ARM id">`
+                  + `↗</span>`;
+          }
+          body += '</td>';
+        }
+
         body += '</tr>';
 
         // Expanded sub-row: list of runs with click-to-show details.
+        // colspan must match the column count above (now 8 after the
+        // Actions column).
         if (isExpanded) {
           const list = runsDetail[String(num)] || [];
-          body += '<tr class="runs-row"><td colspan="7">';
+          body += '<tr class="runs-row"><td colspan="8">';
           if (!list.length) {
             body += '<div class="runs-empty">No runs yet.</div>';
           } else {
