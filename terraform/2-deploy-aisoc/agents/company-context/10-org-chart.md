@@ -80,53 +80,114 @@ account `jack.sparrow`.
 The SCP itself does NOT distinguish the captain from any other
 bridge officer — they all sign in as the shared `administrator`
 account. So a Ship Control Panel log line by itself can't tell you
-*who* the human was. The trick is **cross-source correlation**:
+*who* the human was. The trick is **data-driven correlation**:
+the source IP of the burst is some address — random, deployment-
+specific, and NOT something the KB knows in advance. The agent
+discovers what that IP belongs to from telemetry, then uses the KB
+to attach role / identity meaning to what it finds.
 
   SCP event (auth.login.failure for `administrator`)
-    └─ has a `detail.client` field — the SOURCE IP of the request
-        └─ resolves to a workstation in the bridge LAN (`BRIDGE-WS`)
-            └─ which has Windows logon events (Security 4624)
-                └─ telling you which interactive user was at the
-                   keyboard at that moment (`jack.sparrow` →
-                   the captain)
+    └─ has a `detail.client` field — some source IP X.X.X.X
+        └─ Is X.X.X.X a managed host? (data check: are we
+           receiving endpoint telemetry traceable to it?)
+            └─ If yes, which `Computer` is producing the logs that
+               correlate with that IP, and who is interactively
+               signed in there? (data check: Windows 4624 +
+               Sysmon network events around the burst window)
+                └─ KB lookup: what is that user's role, and what
+                   is that workstation's role? (`jack.sparrow` →
+                   captain, `BRIDGE-WS` → captain's workstation)
 
-That's the chain. The agent is expected to reproduce it from data
-without the KB pre-naming the captain on the SCP side.
+The KB is consulted only at the **last** step — to interpret what
+the data already revealed. The IP-to-host link is never in the KB;
+it can't be (it changes every deployment). The role-and-identity
+context is.
 
 **Verdict path for a credential-stuffing-looking burst against
 `administrator`:**
 
-  1. Retrieve this page + `04-runbook-credential-stuffing.md`.
-  2. From the SCP `auth.login.failure` events, take the source IP
-     (`detail.client`).
-  3. Resolve the IP to a host. The bridge workstation `BRIDGE-WS`
-     is in the asset inventory in the `company-policies` KB; its
-     public IP is the egress IP of the bridge LAN. If the SCP's
-     source IP matches, the burst is coming from a known
-     workstation — not from the open internet.
-  4. Confirm a human was actively at that workstation during the
-     burst window. Query the `Event` table for
-     `Computer == "BRIDGE-WS"` and Security `EventID in (4624, 4625)`
-     in the same time window. A 4624 (interactive logon, type 2 or
-     10) for `jack.sparrow` already in session before the burst
-     means the captain was at the keyboard.
+  1. From the SCP `auth.login.failure` events, take the source IP
+     (`detail.client` field). Call it X.X.X.X.
+
+  2. **Is X.X.X.X a managed / internal host?** Check whether the
+     `Event` table is receiving endpoint telemetry traceable to
+     X.X.X.X around the burst window. The cleanest signal is
+     Sysmon network events (EID 3) where the destination is the
+     SCP — the `Computer` column on those events names the host
+     making the connection:
+
+     ```kusto
+     Event
+     | where TimeGenerated between (
+         (datetime(<burst-start>) - 5m) ..
+         (datetime(<burst-end>) + 5m))
+     | where Source == "Microsoft-Windows-Sysmon" and EventID == 3
+     | extend ed = parse_xml(EventData)
+     | extend Data = ed.DataItem.EventData.Data
+     | extend DestIp   = tostring(Data[14]["#text"])
+     | extend DestPort = tostring(Data[16]["#text"])
+     | where DestPort in ("80","443")
+     | summarize n=count(), ports=make_set(DestPort) by Computer, DestIp
+     | order by n desc
+     ```
+
+     If a `Computer` shows up here making outbound connections to
+     the SCP during the burst window, that's the host the burst
+     came from. (Confirmation: the burst's source IP X.X.X.X
+     should correspond to the egress NAT of the segment that
+     `Computer` is on — typically inferable from the asset
+     inventory in the `company-policies` KB, but the
+     `Computer` field is the authoritative answer.) If no host
+     shows up, the source is unmanaged — proceed with the normal
+     credential-stuffing runbook.
+
+  3. **Who was interactively signed in at that host during the
+     burst?** Pivot on the `Computer` discovered in step 2:
+
+     ```kusto
+     Event
+     | where Computer == "<host-from-step-2>"
+     | where TimeGenerated between (
+         (datetime(<burst-start>) - 5m) ..
+         (datetime(<burst-end>) + 5m))
+     | where Source == "Security" and EventID == 4624
+     | project TimeGenerated, AccountName, LogonType
+     ```
+
+     A 4624 with `LogonType in (2, 10, 11)` for the same account
+     spanning the burst window means a human was physically (or
+     RDP-)using that workstation while the SCP burst happened.
+
+  4. **KB lookup — role and identity context.** Now retrieve this
+     org chart and the asset inventory (in the `company-policies`
+     KB):
+     - Look up the `Computer` from step 2 in the asset inventory.
+       If it's `BRIDGE-WS`, this org chart says it's the
+       **captain's workstation**.
+     - Look up the `AccountName` from step 3 in this org chart.
+       If it's `jack.sparrow`, this page says it's the **master
+       (Jack Sparrow)**.
+
   5. Verdict:
-     - **Match (IP = `BRIDGE-WS`'s public IP, `jack.sparrow`
-       interactively signed in):** Closed (false positive —
-       captain mistyped the shared `administrator` password at
-       his workstation). Note "Jack Sparrow @ `BRIDGE-WS`" in the
-       case note even though the SCP username was `administrator`.
-     - **No match:** treat as a real burst — proceed with the
-       credential-stuffing runbook.
+     - **Captain-on-`BRIDGE-WS` (host = `BRIDGE-WS`, user =
+       `jack.sparrow`):** Closed (false positive — the captain
+       mistyped the shared `administrator` password at his
+       workstation). Attribute the burst to "Jack Sparrow @
+       `BRIDGE-WS`" in the case note even though the SCP log line
+       said `administrator`.
+     - **Managed host but a different identity:** treat as a
+       compromised internal workstation; escalate.
+     - **Unmanaged source (step 2 returned nothing):** treat as a
+       real external burst; proceed with the credential-stuffing
+       runbook.
 
 This pattern is the cleanest demonstration of why the SOC agents
-benefit from a KB. The raw SCP data alone says "47 failed logins
-for `administrator` from a public IP" — looks like an external
-attack. The KB tells the investigator that *source IPs of bridge
-LAN egress map to workstations*, *workstations have Windows logs
-that name the interactive user*, and that **`BRIDGE-WS` is
-specifically the captain's**. Connecting those facts is the
-investigator's job; the KB just gives it the facts to connect.
+benefit from a KB. The data answers most of the question — *which*
+host, *which* user — without needing the KB at all. The KB is
+what turns a username and a hostname into "the captain at the
+captain's workstation". Without the KB, the agent stops at "user
+`jack.sparrow` on `BRIDGE-WS`" and lacks the organisational
+context to express the verdict in human terms.
 
 ## Editing this page
 

@@ -8,34 +8,66 @@ same source IP within a 15-minute window.
 
 1. Confirm scope. Run the standard auth-failures KQL with a
    widened window (60 min); pivot by `username` and `clientIp`.
-2. **Source-IP triage — is this an internal source?** Before
-   reaching for Threat Intel, retrieve the org-chart
-   (`10-org-chart.md`) and the asset inventory (in the
-   `company-policies` KB) and check whether `clientIp` matches an
-   asset we know:
-   - **`BRIDGE-WS`'s public IP (the bridge workstation)** — query
-     the `Event` table for Windows logon events around the burst
-     window:
-     ```kusto
-     Event
-     | where Computer == "BRIDGE-WS"
-     | where TimeGenerated between (
-         (datetime(<burst-start>) - 5m) ..
-         (datetime(<burst-end>) + 5m))
-     | where Source == "Security" and EventID == 4624 and
-             AccountName == "jack.sparrow"
-     ```
-     If `jack.sparrow` was interactively logged in on `BRIDGE-WS`
-     during the burst, the burst is overwhelmingly likely to be
-     the captain mistyping the shared `administrator` password
-     at his workstation — see "Captain-on-`BRIDGE-WS` pattern"
-     in the org chart. The SCP username on the failed-login
-     events will read `administrator`; that's expected, it's the
-     shared bridge account, and it's the source-IP-plus-Windows
-     correlation that identifies the captain.
-   - Any other internal asset — flag for L2 review; we don't
-     normally see internal hosts authenticating to the Ship
-     Control Panel.
+2. **Source-IP triage — is this an internal / managed source?**
+   The burst's `clientIp` is a deployment-specific address; do
+   NOT expect to find it pre-named in the KB. Discover what it
+   belongs to **from telemetry**:
+
+   a. Query `Event` (Sysmon network connections, EID 3) for any
+      managed host making outbound connections to the SCP around
+      the burst window:
+
+      ```kusto
+      Event
+      | where TimeGenerated between (
+          (datetime(<burst-start>) - 5m) ..
+          (datetime(<burst-end>) + 5m))
+      | where Source == "Microsoft-Windows-Sysmon" and EventID == 3
+      | extend ed = parse_xml(EventData)
+      | extend Data = ed.DataItem.EventData.Data
+      | extend DestIp   = tostring(Data[14]["#text"])
+      | extend DestPort = tostring(Data[16]["#text"])
+      | where DestPort in ("80","443")
+      | summarize n=count() by Computer, DestIp
+      | order by n desc
+      ```
+
+      - **Result has a `Computer`:** the burst is from a managed
+        internal workstation; that `Computer` is the source. Hold
+        onto the host name and continue to (b).
+      - **Result is empty:** no managed host was reaching the SCP
+        during the burst — treat as a genuine external source.
+        Continue to step 3 below (success-correlation) and step 7
+        (Threat Intel).
+
+   b. Pivot on the discovered `Computer` and check who was
+      interactively signed in at the same time:
+
+      ```kusto
+      Event
+      | where Computer == "<host-from-step-2a>"
+      | where TimeGenerated between (
+          (datetime(<burst-start>) - 5m) ..
+          (datetime(<burst-end>) + 5m))
+      | where Source == "Security" and EventID == 4624
+      | project TimeGenerated, AccountName, LogonType
+      ```
+
+      A 4624 with `LogonType in (2, 10, 11)` (interactive,
+      RemoteInteractive, CachedInteractive) for an account
+      spanning the burst window means a human was physically (or
+      RDP-)using that workstation while the SCP burst happened.
+
+   c. **Now** retrieve the org chart (`10-org-chart.md`) and the
+      asset inventory (in the `company-policies` KB) to put role
+      meaning on the names you found:
+        - the `Computer` from (a) → workstation role / owner
+        - the `AccountName` from (b) → person + role
+      The classic match is `Computer = BRIDGE-WS` +
+      `AccountName = jack.sparrow` → **the captain at the
+      captain's workstation**, mistyping the shared `administrator`
+      password. See "Captain-on-`BRIDGE-WS` pattern" in the org
+      chart.
 3. Check whether **any** login succeeded for the same `username` /
    `clientIp` pair. A successful login during or right after the
    burst flips this from a brute-force attempt to a confirmed
@@ -73,9 +105,10 @@ same source IP within a 15-minute window.
 
 | Pattern                                              | Verdict             |
 |------------------------------------------------------|---------------------|
-| **Burst against `administrator` from `BRIDGE-WS`'s public IP + `jack.sparrow` had an active Windows session on `BRIDGE-WS`** | **Closed (false positive — captain mistyping at his bridge workstation; see `10-org-chart.md`)** |
-| Burst + zero successes + IP not on watchlist         | Closed (false positive — likely typo loop or scanner) |
-| Burst + zero successes + IP on TI watchlist          | Closed (true positive, contained — no compromise) |
+| **Burst against `administrator` correlates (Sysmon EID 3) to managed host `BRIDGE-WS`, with `jack.sparrow` interactively signed in (4624) during the burst** | **Closed (false positive — captain mistyping at his bridge workstation; see `10-org-chart.md`)** |
+| Burst correlates to a managed host that is NOT `BRIDGE-WS`, OR a different interactive user | Active (escalate to L2 — internal workstation potentially compromised) |
+| Burst does NOT correlate to any managed host + zero successes + IP not on watchlist | Closed (false positive — likely typo loop or scanner) |
+| Burst does NOT correlate to any managed host + zero successes + IP on TI watchlist | Closed (true positive, contained — no compromise) |
 | Burst + ≥1 success on `crew_*`                       | Active (escalate to L2 — possible compromise) |
 | Burst + ≥1 success on `svc_*` or `admin_*`           | Active (escalate to L3 — confirmed compromise) |
 | Success + post-auth state change to security/conn    | Active (escalate to incident commander — active intrusion) |

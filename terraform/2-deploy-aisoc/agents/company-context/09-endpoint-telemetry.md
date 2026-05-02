@@ -83,6 +83,36 @@ Event
 
 ## Pivot patterns
 
+**Is a given external IP a managed / internal host?** When an SCP
+event names a `detail.client` IP and you want to know if that IP
+belongs to a host you have telemetry from, pivot via Sysmon EID 3:
+managed hosts log every outbound connection they make. If the SCP
+saw inbound traffic from IP X.X.X.X, the host that originated that
+traffic logged its outbound to the SCP at the same time.
+
+```kusto
+// Time window = the burst window ± 5 min
+Event
+| where TimeGenerated between ((datetime(<start>) - 5m) .. (datetime(<end>) + 5m))
+| where Source == "Microsoft-Windows-Sysmon" and EventID == 3
+| extend ed = parse_xml(EventData)
+| extend Data = ed.DataItem.EventData.Data
+| extend DestIp   = tostring(Data[14]["#text"])
+| extend DestPort = tostring(Data[16]["#text"])
+| where DestPort in ("80","443")
+| summarize n=count() by Computer, DestIp
+| order by n desc
+```
+
+If a `Computer` shows up here making outbound connections to the
+SCP during the window, the burst is from a **managed internal
+workstation**: the `Computer` field is the host name. If the
+result is empty, the source IP is unmanaged — likely external.
+
+This is the canonical first move in the credential-stuffing
+runbook (`04-runbook-credential-stuffing.md`) and the
+Captain-on-`BRIDGE-WS` pattern (`10-org-chart.md`).
+
 **Process tree from a single suspicious process.** Sysmon writes
 ProcessGuid (a unique ID) — chain it parent ↔ child:
 
