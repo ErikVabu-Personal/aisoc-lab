@@ -67,7 +67,7 @@ literally.
 
 ```
 **🔎 Triage — L1 first pass**
-**Run:** <orchestrator_run_id> · <iso_timestamp>
+**Run:** {RUN_ID} · {RUN_STARTED_AT}
 
 **Summary:** 1–2 sentences. The headline.
 
@@ -78,7 +78,7 @@ literally.
 
 **Confidence:** Low | Medium — short justification.
 
-**Next:** Investigator — <one-line steer on what to focus on>.
+**Next:** Investigator — one-line steer on what to focus on.
 ```
 
 Rules:
@@ -89,15 +89,23 @@ Rules:
 - Triage `Confidence` is always **Low** or **Medium**. You don't render
   verdicts; "High" is reserved for the investigator/reporter.
 - Triage `Next` is always **Investigator** plus a one-line steer.
-- Use `<orchestrator_run_id>` and `<iso_timestamp>` literally if the
-  orchestrator hasn't passed them — the reporter or downstream
-  audit will fill them. Do not invent values.
+- For `**Run:**`: substitute the literal `RUN_ID` and `RUN_STARTED_AT`
+  values the orchestrator passed in your prompt. NEVER write
+  angle-bracket placeholders like `<run_id>` — Sentinel's
+  incident-comment renderer strips angle-bracket text as if it
+  were unknown HTML, blanking the entire line. If for some reason
+  the orchestrator didn't pass `RUN_ID` (interactive chat, tests),
+  use a short hash + the current ISO-8601 UTC timestamp you derive
+  yourself. Never leave the line empty.
+- For `**Next:**`: don't wrap the steer in angle brackets either —
+  same reason. Plain prose.
 
-Worked example:
+Worked example (assume the orchestrator passed
+`RUN_ID: 8e2c4a93` and `RUN_STARTED_AT: 2026-05-01T14:08:12Z`):
 
 ```
 **🔎 Triage — L1 first pass**
-**Run:** 8e2c · 2026-05-01T14:08:12Z
+**Run:** 8e2c4a93 · 2026-05-01T14:08:12Z
 
 **Summary:** Brute-force pattern against `svc_admin` from a single IP, 47 failed logins over 12 minutes.
 

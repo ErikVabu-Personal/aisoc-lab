@@ -4671,19 +4671,30 @@ def _is_triage_assignment(value: str) -> bool:
     return s in {"triage", "triage agent", "triage-agent", "triageagent"}
 
 
-async def _trigger_triage_only(incident_number: int, triggering_user: str | None) -> dict[str, Any]:
-    """Kick off a triage_only orchestrator run for the given incident.
-    The orchestrator's _set_incident_status will move the incident
-    from New → Active during the run, and its _assign_incident_owner
-    will set owner.assignedTo to "Triage Agent" for the duration.
-    No investigator / reporter / closure happens — just triage."""
+async def _trigger_full_workflow(incident_number: int, triggering_user: str | None) -> dict[str, Any]:
+    """Kick off the FULL orchestrator pipeline (triage → investigator
+    → reporter → human handoff) for the given incident.
+
+    This used to be `_trigger_triage_only` and invoked the orchestrator
+    with `mode="triage_only"` — which by design ran just triage and
+    handed the incident BACK to the human who triggered it. That
+    contradicted the triage prompt's stated rule ("Triage runs always
+    escalate to the investigator") and produced visible regressions
+    in Sentinel: a triage run from the dashboard would write a
+    triage comment and then immediately reassign the incident to the
+    triggering user instead of advancing to the investigator agent.
+
+    Now: every dashboard-side trigger (right-click → reassign to
+    Triage Agent, or set status to New for re-triage) invokes the
+    full pipeline. The previous-name function is gone.
+    """
 
     try:
         return await _orchestrate_one(
             incident_number,
-            mode="triage_only",
+            mode="full",
             writeback=True,
-            trigger="manual-triage",
+            trigger="manual-workflow",
             triggering_user=triggering_user,
         )
     except OrchestratorError as e:
@@ -4795,17 +4806,19 @@ async def api_incident_set_owner(
     owner = owner.strip()
 
     if _is_triage_assignment(owner):
-        # Triage path — fire the workflow.
+        # Triage path — fire the full workflow. The orchestrator
+        # handles the triage → investigator → reporter chain and
+        # the final human handoff.
         _audit_record(
             incident_number,
             kind="re_triage",
             actor=triggering_user,
             details={"reason": "owner reassigned to Triage Agent"},
         )
-        result = await _trigger_triage_only(incident_number, triggering_user)
+        result = await _trigger_full_workflow(incident_number, triggering_user)
         return {
             "ok": True,
-            "action": "triage-triggered",
+            "action": "workflow-triggered",
             "incident_number": incident_number,
             "orchestrator_result": result,
         }
@@ -4875,20 +4888,20 @@ async def api_incident_set_status(
         )
 
     if status == "New":
-        # Trigger a fresh triage. The run moves the status to Active
-        # as it kicks off — that's expected behaviour, the user's
-        # intent was "re-triage this" rather than "literally store
-        # 'New' in Sentinel."
+        # Trigger a fresh full workflow. The run moves the status to
+        # Active as it kicks off — that's expected behaviour, the
+        # user's intent was "re-run the agents on this" rather than
+        # "literally store 'New' in Sentinel."
         _audit_record(
             incident_number,
             kind="re_triage",
             actor=triggering_user,
             details={"reason": "status flipped to New"},
         )
-        result = await _trigger_triage_only(incident_number, triggering_user)
+        result = await _trigger_full_workflow(incident_number, triggering_user)
         return {
             "ok": True,
-            "action": "re-triage-triggered",
+            "action": "workflow-triggered",
             "incident_number": incident_number,
             "orchestrator_result": result,
         }

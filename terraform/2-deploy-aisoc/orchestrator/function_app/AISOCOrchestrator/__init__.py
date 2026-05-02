@@ -745,12 +745,36 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             incident_id=incident_id,
             workflow_run_id=workflow_run_id,
         )
+        # Run-context block — gives the agent the literal values it
+        # should drop into the comment-spine `**Run:**` line. Without
+        # this, the triage prompt told the agent to fall back to the
+        # angle-bracket placeholder text (`<orchestrator_run_id>`),
+        # which Sentinel's incident-comment renderer then strips as
+        # if it were an unknown HTML tag — leaving the activity log
+        # with a blank `Run:` line and visually empty body.
+        from datetime import datetime, timezone
+        run_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        # Short, human-friendly handle that's still unique within the
+        # demo. Full UUID is overkill for an audit comment line.
+        run_short = workflow_run_id[:8]
+        run_context_block = (
+            f"RUN_ID: {run_short}\n"
+            f"RUN_STARTED_AT: {run_started_at}\n"
+            "Use these values literally when filling the `**Run:**` line "
+            "of the comment spine. Never write angle-bracket placeholders "
+            "like `<orchestrator_run_id>` — Sentinel's comment renderer "
+            "strips them as HTML, leaving the line blank.\n\n"
+        )
+
         triage_out, triage_raw = _invoke_agent(
             project_endpoint,
             "triage",
             user_text=(
                 "You are the TRIAGE agent. Use the AISOC Runner OpenAPI tool to fetch incident and context. "
-                "Return a concise triage summary and immediate next steps.\n\n"
+                "Return a concise triage summary and immediate next steps. "
+                "End your run with a Sentinel comment writeback that follows the spine in your instructions "
+                "(header / Run / Summary / Findings / Confidence / Next).\n\n"
+                + run_context_block
                 + f"INCIDENT_REF:\n{incident_json}"
             ),
         )
