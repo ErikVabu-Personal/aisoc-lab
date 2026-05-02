@@ -68,7 +68,6 @@ than speculating.
 
 ```kusto
 ContainerAppConsoleLogs_CL
-| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
 | where j.service == "ship-control-panel"
 ```

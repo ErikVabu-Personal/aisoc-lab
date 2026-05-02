@@ -56,22 +56,98 @@ emits local `engine.clutch` and `engine.fuelMix` events for visual
 feedback — those events DO NOT reach Sentinel and you cannot detect
 on them.
 
-## Table + base filter
+## Authoritative reference query (mirrors the live analytic rule)
+
+The single most reliable way to find the events the SCP analytic
+rule fired on is to run the rule's own query. The
+`Control Panel: multiple failed logins (user + IP)` analytic rule
+uses this exact pattern:
 
 ```kusto
 ContainerAppConsoleLogs_CL
-| where Stream_s == "stdout"
+| where TimeGenerated > ago(15m)
+| where Log_s has "auth.login.failure"
 | extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
+| where isnotnull(j)
+| extend event    = tostring(j.event),
+         username = tostring(j.detail.username),
+         clientIp = tostring(j.detail.client),
+         userAgent= tostring(j.detail.userAgent)
+| where event == "auth.login.failure"
 ```
 
-`j` then exposes the structured event. From here you `extend` the
-specific fields you care about.
+**This is the canonical investigation query.** The rule fires
+when this returns rows, so by definition any incident from the
+SCP rule has rows visible to it. If you run a variant of this
+query in the alert's time window and get zero rows, your variant
+has drifted from the rule — find the difference, don't conclude
+"there's no data."
 
-`Stream_s == "stdout"` filters out stderr (Node startup banners,
-warnings) so `parse_json(Log_s)` is reliable. `j.service ==
-"ship-control-panel"` disambiguates SCP events from any future
-neighbour app in the same Container App environment.
+Note what this query does NOT do:
+
+- **No `Stream_s == "stdout"` filter.** Container Apps log
+  forwarding does populate `Stream_s`, but several configurations
+  route Next.js server-action output to stderr (or leave the
+  field nulled) and the filter then drops every auth event. The
+  detection rule sidesteps this by not using the filter at all
+  and relying on the `Log_s has "auth.login.failure"` substring
+  pre-filter to be cheap enough.
+- **No `j.service == "ship-control-panel"` filter.** The
+  `Log_s has "auth.login.failure"` substring is already specific
+  enough to the SCP — no other service emits that string.
+  Filtering on `j.service` is fine for queries with a broader
+  pre-filter (e.g. when you don't have a tight `Log_s has`
+  match), but isn't load-bearing here.
+
+## Generic base filter (for queries that DON'T have a specific
+substring to pre-filter on)
+
+When you're hunting for state events (anchor / connectivity /
+security / climate / …) — none of which have a single substring
+as distinctive as `auth.login.failure` — the safer base filter is
+broader:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > <bound>
+| extend j = parse_json(Log_s)
+| where isnotnull(j) and tostring(j.service) == "ship-control-panel"
+```
+
+This parses every log line in the window, then filters on the
+parsed `service` field. More expensive than the auth pattern
+(parses every row, including stderr) but not query-disqualifying;
+the SCP volume is low.
+
+**Avoid `Stream_s == "stdout"` as a base filter.** It's a
+plausible-looking optimization but in practice the field's value
+varies between Container App revisions and Next.js versions, and
+the safe assumption is that filtering on it will silently drop
+real data. The detection rule didn't use it for a reason — neither
+should you.
+
+## "Why is my query returning nothing when the alert fires?" — meta rule
+
+If the SCP analytic rule has fired (an incident exists, status
+"New" or "Active"), the rule's KQL DEFINITIVELY found rows in the
+alert's evaluation window. So:
+
+- Your investigation query in the same window must also return
+  rows. If it doesn't, the difference between your query and the
+  authoritative reference query above IS the bug.
+- The most common drift is an extra filter you've added that the
+  rule doesn't have. `Stream_s == "stdout"`, an `ago(60m)` window
+  too narrow for a delayed auto-pickup, a `j.service` filter
+  that's slightly miscased — any of these can zero-out a query
+  that should be finding rows.
+- Strip your query down to the authoritative reference above.
+  Run it. If THAT returns rows, re-introduce your filters one at
+  a time until you find the one that drops everything. That's
+  your bug.
+
+This is the single most valuable diagnostic move when the table
+"looks empty." Don't conclude "no data" until you've reproduced
+the rule's own query and confirmed it also returns nothing.
 
 ## Two log shapes you'll encounter
 
@@ -189,12 +265,15 @@ omit the field.
 
 ### "All failed logins for a user, last 2 hours"
 
+Mirrors the analytic rule's pattern (`Log_s has` pre-filter, no
+`Stream_s` filter, `isnotnull(j)` guard):
+
 ```kusto
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(2h)
-| where Stream_s == "stdout"
+| where Log_s has "auth.login.failure"
 | extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
+| where isnotnull(j)
 | extend event    = tostring(j.event),
          username = tostring(j.detail.username),
          clientIp = tostring(j.detail.client),
@@ -209,9 +288,9 @@ ContainerAppConsoleLogs_CL
 ```kusto
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(1h)
-| where Stream_s == "stdout"
+| where Log_s has "auth.login.failure"
 | extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
+| where isnotnull(j)
 | extend event    = tostring(j.event),
          username = tostring(j.detail.username),
          clientIp = tostring(j.detail.client)
@@ -223,29 +302,58 @@ ContainerAppConsoleLogs_CL
 | order by failures desc
 ```
 
+### "Did any logins succeed for that user/IP pair?"
+
+When the investigator wants to know whether the brute-force ever
+got in. Same `Log_s has` pre-filter pattern, broadened to capture
+both outcomes:
+
+```kusto
+let u  = "<username>";
+let ip = "<clientIp>";
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(2h)
+| where Log_s has "auth.login."
+| extend j = parse_json(Log_s)
+| where isnotnull(j)
+| extend event    = tostring(j.event),
+         username = tostring(j.detail.username),
+         clientIp = tostring(j.detail.client)
+| where username == u and clientIp == ip
+| where event in ("auth.login.success", "auth.login.failure")
+| summarize count() by event
+```
+
 ### "Did cameras go off in the last 30 minutes?"
+
+State-event query — note `clientIp` is in `j.meta.client`, not
+`j.detail.client` (Shape B; see "Two log shapes you'll
+encounter" above):
 
 ```kusto
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(30m)
-| where Stream_s == "stdout"
+| where Log_s has "\"event\":\"security\""
 | extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
+| where isnotnull(j)
 | where tostring(j.event) == "security"
 | where tostring(j.detail.severity) == "warn"
-| extend clientIp = tostring(j.meta.client)   // Shape B!
+| extend clientIp = tostring(j.meta.client)
 | project TimeGenerated, clientIp,
           to_camerasEnabled = tobool(j.detail.to.camerasEnabled)
 ```
 
 ### "Any state change from a given IP, last 30 minutes" (mixed shapes)
 
+For broader queries that span both auth and state events, drop
+the `Log_s has` substring pre-filter and use the generic base
+filter — pay the cost of parsing every row:
+
 ```kusto
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(30m)
-| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
+| where isnotnull(j) and tostring(j.service) == "ship-control-panel"
 // Coalesce both shapes — auth events keep client in detail; state
 // events keep it in meta.
 | extend clientIp = tostring(coalesce(j.detail.client, j.meta.client)),
@@ -265,9 +373,8 @@ let burstStart = datetime("<success-event-time>");
 let ip = "<source-ip>";
 ContainerAppConsoleLogs_CL
 | where TimeGenerated between (burstStart .. (burstStart + 15m))
-| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
+| where isnotnull(j) and tostring(j.service) == "ship-control-panel"
 | extend event    = tostring(j.event),
          clientIp = tostring(coalesce(j.detail.client, j.meta.client))
 | where clientIp == ip
@@ -302,38 +409,47 @@ sat in Sentinel's queue for tens of minutes before auto-pickup ran.
 
 ## When the table looks empty
 
-If the base filter (`Stream_s == "stdout"` + `j.service ==
-"ship-control-panel"`) returns zero rows for a window where you'd
-expect events, walk this ladder in order — drop one filter at a
-time until you see rows, then you've found the culprit:
+If your query returns zero rows for a window where the analytic
+rule has fired (or you have other reason to expect events), walk
+this ladder. **Order matters** — drop filters one at a time,
+starting with the one most likely to be wrong.
 
-1. **Drop the time window** first. Try `ago(24h)` — confirms
-   whether the ingestion is alive at all and just events haven't
-   reached the narrow window you tried.
-
-2. **Drop the `j.service` filter:**
+1. **Drop `Stream_s` first.** This is the #1 cause of "agent
+   queries return nothing while the rule fires." Run:
    ```kusto
    ContainerAppConsoleLogs_CL
    | where TimeGenerated > ago(15m)
-   | where Stream_s == "stdout"
+   | summarize count() by Stream_s
+   ```
+   If you see rows under `Stream_s == ""` (empty) or
+   `Stream_s == "stderr"` and not under `Stream_s == "stdout"`,
+   that's exactly the gotcha. **Drop the Stream_s filter from
+   your query and re-run.** Several Next.js / Container Apps
+   combinations route server-action `console.log` output to
+   stderr, or leave the field nulled — the live analytic rule
+   sidesteps this by not filtering on `Stream_s` at all.
+
+2. **Drop the time window.** Try `ago(24h)`. Confirms whether
+   the ingestion is alive at all and just events haven't reached
+   the narrow window you tried.
+
+3. **Drop the `j.service` filter:**
+   ```kusto
+   ContainerAppConsoleLogs_CL
+   | where TimeGenerated > ago(15m)
    | extend j = parse_json(Log_s)
    | summarize count() by service = tostring(j.service)
    ```
-   Confirms what `service` values are actually present. If the SCP
-   was deployed under a different service string, the filter is
-   why you're seeing nothing.
+   Confirms what `service` values are actually present. If the
+   SCP was deployed under a different service string, the filter
+   is why you're seeing nothing.
 
-3. **Drop the `Stream_s` filter:**
-   ```kusto
-   ContainerAppConsoleLogs_CL
-   | where TimeGenerated > ago(15m)
-   | summarize count() by ContainerName_s, Stream_s
-   ```
-   Confirms which streams are producing logs. If only stderr is
-   producing rows, the SCP isn't running cleanly — read the
-   stderr text to see why.
+4. **Run the authoritative reference query** (the auth-failure
+   one at the top of this page) verbatim. If THAT returns rows,
+   diff it against your query field-by-field — your extra
+   filter is your bug.
 
-4. **Drop `parse_json` and look at raw `Log_s`:**
+5. **Drop `parse_json` and look at raw `Log_s`:**
    ```kusto
    ContainerAppConsoleLogs_CL
    | where TimeGenerated > ago(15m)
@@ -344,7 +460,7 @@ time until you see rows, then you've found the culprit:
    Confirms log lines are reaching the workspace at all, and shows
    their literal shape so you can adapt the parsing.
 
-If step 4 returns nothing, the Container App's diagnostic settings
+If step 5 returns nothing, the Container App's diagnostic settings
 aren't pointed at the workspace — escalate to the operator; not a
 SOC fix.
 

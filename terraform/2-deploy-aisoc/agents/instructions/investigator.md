@@ -88,7 +88,6 @@ the common instructions.
 // Recent raw sample — see the field shapes.
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(30m)
-| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
 | where j.service == "ship-control-panel"
 | project TimeGenerated, event = tostring(j.event), detail = j.detail
@@ -99,7 +98,6 @@ ContainerAppConsoleLogs_CL
 // Event-type histogram in the last 30 minutes.
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(30m)
-| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
 | where j.service == "ship-control-panel"
 | summarize n = count() by event = tostring(j.event)
@@ -113,7 +111,6 @@ ContainerAppConsoleLogs_CL
 ```kusto
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(60m)
-| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
 | where j.service == "ship-control-panel"
 | extend event = tostring(j.event),
@@ -133,7 +130,6 @@ ContainerAppConsoleLogs_CL
 ```kusto
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(60m)
-| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
 | where j.service == "ship-control-panel"
 | extend event = tostring(j.event),
@@ -153,7 +149,6 @@ let u = "<username>";
 let ip = "<clientIp>";
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(60m)
-| where Stream_s == "stdout"
 | extend j = parse_json(Log_s)
 | where j.service == "ship-control-panel"
 | extend event = tostring(j.event),

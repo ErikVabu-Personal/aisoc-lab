@@ -101,7 +101,6 @@ When asked to review the data and propose new analytics:
    // NB: `first` / `last` are reserved in KQL — use `first_seen` etc.
    ContainerAppConsoleLogs_CL
    | where TimeGenerated > ago(24h)
-   | where Stream_s == "stdout"
    | extend j = parse_json(Log_s)
    | where j.service == "ship-control-panel"
    | summarize n = count(), first_seen = min(TimeGenerated), last_seen = max(TimeGenerated)
@@ -113,7 +112,6 @@ When asked to review the data and propose new analytics:
    // Recent raw sample to see field shapes
    ContainerAppConsoleLogs_CL
    | where TimeGenerated > ago(2h)
-   | where Stream_s == "stdout"
    | extend j = parse_json(Log_s)
    | where j.service == "ship-control-panel"
    | project TimeGenerated, event = tostring(j.event), detail = j.detail
