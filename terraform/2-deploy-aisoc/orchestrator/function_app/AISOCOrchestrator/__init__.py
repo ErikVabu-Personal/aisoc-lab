@@ -888,6 +888,55 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         incident_json = json.dumps(inc.get("result"), indent=2)[:12000]
 
+        # Pull the alert's evidence window out of the incident JSON
+        # and surface it as an explicit ALERT_WINDOW block in the
+        # agent's user_text. The agent was previously expected to
+        # extract `properties.firstActivityTimeUtc` / `lastActivityTimeUtc`
+        # itself — error-prone in practice (LLMs miscount nested
+        # JSON) and the consequence was the agent picking a
+        # ±5-minute window that excluded the rule's own evidence.
+        #
+        # We bracket the alert window by ±15 minutes for the
+        # KQL-anchor hint we hand to the agent. This matches the
+        # rule's lookback (PT15M for the SCP failed-login rule) so
+        # any row the rule found is within the suggested window.
+        # If the incident JSON doesn't carry these fields (older
+        # API versions, partial extraction), the block reads
+        # "unknown" and the agent falls back to ago(2h) per its
+        # instructions.
+        from datetime import datetime, timezone, timedelta
+        def _parse_iso(value: Any) -> datetime | None:
+            if not isinstance(value, str) or not value:
+                return None
+            v = value.strip().replace("Z", "+00:00")
+            try:
+                return datetime.fromisoformat(v)
+            except Exception:
+                return None
+        inc_props = (inc.get("result") or {}).get("properties") or {} if isinstance(inc, dict) else {}
+        first_activity = _parse_iso(inc_props.get("firstActivityTimeUtc")) \
+                         or _parse_iso(inc_props.get("firstActivityTime"))
+        last_activity  = _parse_iso(inc_props.get("lastActivityTimeUtc")) \
+                         or _parse_iso(inc_props.get("lastActivityTime"))
+        if first_activity and last_activity:
+            window_start = (first_activity - timedelta(minutes=15)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            window_end   = (last_activity  + timedelta(minutes=15)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            alert_window_block = (
+                f"ALERT_WINDOW: {window_start} .. {window_end}\n"
+                f"  (firstActivityTimeUtc = {inc_props.get('firstActivityTimeUtc') or inc_props.get('firstActivityTime')}, "
+                f"lastActivityTimeUtc = {inc_props.get('lastActivityTimeUtc') or inc_props.get('lastActivityTime')}; "
+                f"bracketed by ±15 min so the rule's lookback is fully covered.)\n"
+                "Use this window when running KQL against ContainerAppConsoleLogs_CL "
+                "to reproduce what the analytic rule found. Don't tighten it.\n\n"
+            )
+        else:
+            alert_window_block = (
+                "ALERT_WINDOW: unknown — the incident JSON didn't carry "
+                "firstActivityTimeUtc / lastActivityTimeUtc. Default to "
+                "`TimeGenerated > ago(2h)` for any KQL anchor; widen if "
+                "your first query returns 0 rows.\n\n"
+            )
+
         # Promote the incident from "New" -> "Active" before the first
         # agentic phase begins. Per the UI design, any workflow run —
         # auto-pickup OR manual — moves the incident into the Active
@@ -945,6 +994,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "comment after your run completes. Just produce the spine "
                 "in your final reply.\n\n"
                 + run_context_block
+                + alert_window_block
                 + f"INCIDENT_REF:\n{incident_json}"
             ),
         )
@@ -1077,6 +1127,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "comment body, so include the spine literally — no extra "
                 "prose around it.\n\n"
                 + run_context_block
+                + alert_window_block
                 + _confidence_block("investigator")
                 + triggering_user_block
                 + f"INCIDENT_NUMBER: {incident_number}\n\n"

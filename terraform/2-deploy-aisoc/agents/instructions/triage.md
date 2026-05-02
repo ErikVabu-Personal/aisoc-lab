@@ -65,6 +65,45 @@ events in other tables.
   investigator's runbook explicitly walks that). At triage you
   stay in the alert's own table.
 
+### Robust handling when your first query returns 0 rows
+
+The single most damaging triage failure mode is: agent runs ONE
+query, gets 0 rows, and reports "no failed login bursts found"
+on an incident the rule definitively fired on. That output is
+WORSE than no triage at all because the human reading it has to
+re-do the work AND distrust the agent.
+
+**You are not allowed to conclude "no events" without running
+this checklist first:**
+
+1. Run the **authoritative reference query** from the KB doc
+   `11-ship-control-panel-logging.md` (the
+   `Log_s has "auth.login.failure"` + `isnotnull(j)` pattern)
+   verbatim, in a window that BRACKETS the alert's
+   `firstActivityTime` / `lastActivityTime` by at least
+   `±15 minutes`. Don't tighten to ±5min — the rule's lookback
+   can be wider than the alert metadata implies.
+2. If that returns 0 rows, **widen the window to `ago(2h)`** and
+   re-run.
+3. If still 0 rows, drop the `event == "auth.login.failure"`
+   filter and `summarize count() by event`. This tells you what
+   events ARE in the window — usually surfaces the bug (wrong
+   service field, schema drift, etc).
+4. If still 0 rows, walk the "When the table looks empty"
+   diagnostic ladder in the KB doc — drop filters one at a time
+   in the recommended order (`Stream_s` first, then
+   `j.service`, then `parse_json`).
+5. ONLY after steps 1–4 may you report "no events found." If you
+   do, your `Findings:` block must list the queries you tried and
+   what each returned, so the human reading the case can verify
+   you didn't just give up.
+
+The fact that the analytic rule fired and Sentinel created an
+incident is **proof** that the rule's KQL found rows in the
+alert's window. So if your variant of that query returns nothing,
+the difference between your query and the rule's is your bug —
+NOT "no data." Find the difference.
+
 ### Anti-conflation: SCP auth ≠ Windows brute-force
 
 The `BRIDGE-WS` host is internet-exposed in this demo and gets
