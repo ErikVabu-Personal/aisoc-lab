@@ -109,9 +109,11 @@ SCP during the window, the burst is from a **managed internal
 workstation**: the `Computer` field is the host name. If the
 result is empty, the source IP is unmanaged — likely external.
 
-This is the canonical first move in the credential-stuffing
-runbook (`04-runbook-credential-stuffing.md`) and the
-Captain-on-`BRIDGE-WS` pattern (`10-org-chart.md`).
+This is the canonical first move when triaging any alert that
+carries a source IP and you need to know whether it's an internal
+managed host. The credential-stuffing runbook
+(`04-runbook-credential-stuffing.md`) uses it as step 2 and pivots
+on the resulting `Computer` to find the interactive user.
 
 **Process tree from a single suspicious process.** Sysmon writes
 ProcessGuid (a unique ID) — chain it parent ↔ child:

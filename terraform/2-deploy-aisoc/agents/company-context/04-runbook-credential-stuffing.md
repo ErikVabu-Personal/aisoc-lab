@@ -10,12 +10,17 @@ same source IP within a 15-minute window.
    widened window (60 min); pivot by `username` and `clientIp`.
 2. **Source-IP triage — is this an internal / managed source?**
    The burst's `clientIp` is a deployment-specific address; do
-   NOT expect to find it pre-named in the KB. Discover what it
-   belongs to **from telemetry**:
+   NOT expect to find it pre-named in the KB. The KB carries org
+   facts (people, roles, asset inventory), not network topology.
+   Discover what the IP belongs to **from telemetry**, then look
+   up identity context in the KB:
 
-   a. Query `Event` (Sysmon network connections, EID 3) for any
-      managed host making outbound connections to the SCP around
-      the burst window:
+   a. **Are we receiving endpoint logs traceable to that IP?**
+      Managed hosts log every outbound connection they make
+      (Sysmon EID 3). If the SCP saw inbound from this IP, a
+      managed host originating that traffic logged its own
+      outbound at the same time — and the `Computer` field on
+      those events names it.
 
       ```kusto
       Event
@@ -32,16 +37,16 @@ same source IP within a 15-minute window.
       | order by n desc
       ```
 
-      - **Result has a `Computer`:** the burst is from a managed
-        internal workstation; that `Computer` is the source. Hold
-        onto the host name and continue to (b).
-      - **Result is empty:** no managed host was reaching the SCP
-        during the burst — treat as a genuine external source.
-        Continue to step 3 below (success-correlation) and step 7
-        (Threat Intel).
+      - **A `Computer` shows up** → burst comes from a managed
+        internal workstation. Hold the host name and continue
+        to (b).
+      - **Result is empty** → no managed host was reaching the
+        SCP during the burst window. Source is unmanaged / external.
+        Skip (b)–(c) and continue with step 3 (success-correlation)
+        and step 7 (Threat Intel).
 
-   b. Pivot on the discovered `Computer` and check who was
-      interactively signed in at the same time:
+   b. **Who was interactively signed in at that host during the
+      burst?** Pivot on the discovered `Computer`:
 
       ```kusto
       Event
@@ -58,23 +63,31 @@ same source IP within a 15-minute window.
       spanning the burst window means a human was physically (or
       RDP-)using that workstation while the SCP burst happened.
 
-   c. **Now** retrieve the org chart (`10-org-chart.md`) and the
-      asset inventory (in the `company-policies` KB) to put role
-      meaning on the names you found:
-        - the `Computer` from (a) → workstation role / owner
-        - the `AccountName` from (b) → person + role
-      The classic match is `Computer = BRIDGE-WS` +
-      `AccountName = jack.sparrow` → **the captain at the
-      captain's workstation**, mistyping the shared `administrator`
-      password. See "Captain-on-`BRIDGE-WS` pattern" in the org
-      chart.
+   c. **Contextualise the host and user names.** Retrieve the
+      asset inventory (in the `company-policies` KB) for the
+      `Computer` from (a), and the org chart (`10-org-chart.md`)
+      for the `AccountName` from (b). Combine the role / owner
+      meaning the KB returns with the timing evidence from (b):
+
+        - If the workstation has a known primary user (per the
+          KB), and that primary user is the same person who was
+          interactively signed in during the burst, the most
+          plausible explanation is that person mistyping the
+          shared SCP password from their own workstation.
+          Express that conclusion using the KB-supplied role
+          and name in the case note even though the SCP log
+          line carried only `administrator`.
+        - If the workstation's primary user (or expected user
+          set) does NOT match who was signed in, the burst
+          becomes a compromised-workstation signal — escalate
+          to L2 / L3 per the verdict mapping below.
 3. Check whether **any** login succeeded for the same `username` /
    `clientIp` pair. A successful login during or right after the
    burst flips this from a brute-force attempt to a confirmed
-   compromise — UNLESS the source-IP triage in step 2 puts the
-   burst on a captain-on-`BRIDGE-WS` session, in which case a
-   successful login is just the captain finally typing it
-   correctly.
+   compromise — UNLESS step 2 already attributed the burst to a
+   legitimate user mistyping at their own managed workstation, in
+   which case a successful login is just that user finally
+   typing it correctly.
 4. Geolocate `clientIp`. Cross-check against the user's typical
    location. NVISO Cruiseways crew and bridge officers should not
    be logging in from countries outside the voyage's port-call
@@ -89,7 +102,8 @@ same source IP within a 15-minute window.
 7. Consult Threat Intel (`query_threat_intel`) for the source IP —
    credential-stuffing IPs typically appear on AbuseIPDB /
    GreyNoise block lists. **Skip this step** if step 2 already
-   resolved the burst as the captain-on-`BRIDGE-WS` pattern.
+   resolved the burst to a managed internal workstation with a
+   legitimate user signed in.
 
 ## Containment steps (recommendation only — humans execute)
 
@@ -105,8 +119,8 @@ same source IP within a 15-minute window.
 
 | Pattern                                              | Verdict             |
 |------------------------------------------------------|---------------------|
-| **Burst against `administrator` correlates (Sysmon EID 3) to managed host `BRIDGE-WS`, with `jack.sparrow` interactively signed in (4624) during the burst** | **Closed (false positive — captain mistyping at his bridge workstation; see `10-org-chart.md`)** |
-| Burst correlates to a managed host that is NOT `BRIDGE-WS`, OR a different interactive user | Active (escalate to L2 — internal workstation potentially compromised) |
+| **Burst correlates (Sysmon EID 3) to a managed host AND that host's primary user (per the KB) is interactively signed in (4624) during the burst window** | **Closed (false positive — legitimate user mistyping at their own workstation). Attribute the burst to that user + workstation in the case note even though the SCP log line shows the shared `administrator` account.** |
+| Burst correlates to a managed host but the interactive user is NOT that host's expected primary user | Active (escalate to L2 — internal workstation potentially compromised) |
 | Burst does NOT correlate to any managed host + zero successes + IP not on watchlist | Closed (false positive — likely typo loop or scanner) |
 | Burst does NOT correlate to any managed host + zero successes + IP on TI watchlist | Closed (true positive, contained — no compromise) |
 | Burst + ≥1 success on `crew_*`                       | Active (escalate to L2 — possible compromise) |

@@ -14,15 +14,25 @@ data alone can't tell you.
 Three retrieval moves to learn:
 
 1. **Account intent.** Before reasoning about a username, retrieve
-   the naming-conventions page. Service accounts (`svc_*`), the
-   shared bridge `administrator` account, and admin / IT accounts
-   (`admin_*`) get materially different verdicts from regular crew,
-   even with the same evidence. Note: SCP usernames alone do NOT
-   identify the human at the keyboard for the shared `administrator`
-   account — pivot on `detail.client` (source IP) and the `Event`
-   table (Windows logon events on the workstation owning that IP)
-   to attribute. The `10-org-chart.md` page documents the
-   canonical Captain-on-`BRIDGE-WS` example.
+   the naming-conventions page. Different account categories
+   (service accounts, shared / generic accounts, admin accounts,
+   per-person crew accounts) get materially different verdicts
+   from the same evidence. Some accounts are **shared** — meaning
+   the username alone does not identify the human at the keyboard.
+   When you encounter one, do not stop at the username; pivot to
+   other data sources to identify the human:
+     - the source IP recorded on the alert (`detail.client` for
+       SCP events) is the entry point;
+     - check whether your endpoint telemetry maps that IP to a
+       host you have logs from (e.g. via Sysmon EID 3 outbound
+       connections to the alerted application);
+     - if it does, find which interactive user was signed in on
+       that host during the alert window (Security 4624 with
+       `LogonType in (2, 10, 11)`);
+     - then return to the KB to look up role / context for the
+       hostname and the username you found.
+   The KB carries org facts (people, roles, asset inventory), not
+   network topology. Combine the two.
 2. **Runbook.** When the alert family has a runbook
    (credential-stuffing, cameras-disabled, uplink-disabled — see
    the KB), retrieve and follow it. Quote the runbook step in your

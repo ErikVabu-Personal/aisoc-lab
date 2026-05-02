@@ -15,12 +15,13 @@ SCP logins were out of scope at the time. As a result, the
 keyboard**.
 
 To attribute an SCP event to a specific person, the SOC has to
-cross-reference the source IP (`detail.client` field) against the
-asset inventory (workstation-IP map in the `company-policies` KB)
-and the Windows authentication logs on that workstation
-(`Event` table, Source = `Security`, EID 4624). The
-"Captain-on-`BRIDGE-WS` pattern" in `10-org-chart.md` walks the
-canonical example end-to-end.
+pivot on the source IP recorded on the SCP event (`detail.client`),
+check whether endpoint telemetry maps that IP to a managed host
+(Sysmon EID 3 outbound to the SCP), and check who was interactively
+signed in there at the time (Security 4624). The "Source-IP triage"
+step in `04-runbook-credential-stuffing.md` is the canonical
+procedure; the KB then provides role / identity context for the
+host and user names that emerge.
 
 ## Prefixes (per-person SCP accounts, where they exist)
 
@@ -50,9 +51,8 @@ any of them should escalate to L2 immediately, not stay at L1.
 - **`administrator`** (SCP) — the shared bridge operational account
   (see top of this page). Failed-login bursts AGAINST `administrator`
   are common-but-noisy; the verdict turns on the **source IP** of
-  the burst, not on the username. See "Captain-on-`BRIDGE-WS`
-  pattern" in `10-org-chart.md` for the canonical IP-driven
-  attribution chain.
+  the burst, not on the username. The Source-IP triage step in
+  `04-runbook-credential-stuffing.md` is the canonical procedure.
 - `admin_lkr` — IT admin at HQ, reaches every vessel.
 - `svc_admin` — the legacy service account. Any login is suspicious;
   a successful one is a near-certain compromise indicator.
@@ -69,12 +69,16 @@ triage.
 | Jack Sparrow (Captain) | `administrator` (the shared bridge account) | `jack.sparrow` | `BRIDGE-WS` |
 
 `jack.sparrow` is the **only** account that legitimately signs in
-interactively on `BRIDGE-WS`. The corollary is the high-signal
-pattern documented in the runbook + org-chart pages: **failed-login
-bursts on the SCP for `administrator` that originate from
-`BRIDGE-WS`'s public IP while `jack.sparrow` has an active Windows
-session on that host are usually the captain mistyping** — verify
-the IP-and-Windows-session correlation before flagging as malicious.
+interactively on `BRIDGE-WS`. Combined with the SCP shared-account
+note at the top of this page, the implication for any
+investigation is generic: an SCP `administrator` event by itself
+identifies neither the human nor the source machine. The standard
+pivot is data-driven — find the source IP in the SCP event, check
+whether endpoint telemetry maps it to a managed host (Sysmon EID 3
+to the SCP), and check who was interactively signed in there
+(Security 4624). The KB then attaches role / identity meaning to
+those names; the "Source-IP triage" step in
+`04-runbook-credential-stuffing.md` walks the procedure.
 
 ## What to do with an unknown account
 
