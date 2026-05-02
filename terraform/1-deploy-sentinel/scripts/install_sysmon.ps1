@@ -41,6 +41,61 @@ try {
     Log "PowerShell: $($PSVersionTable.PSVersion)"
     Log "OS: $((Get-CimInstance Win32_OperatingSystem).Caption)"
 
+    # ---------------------------------------------------------------
+    # Audit policy — enable the subcategories whose events we forward
+    # to Sentinel. By default Windows 11 Pro has SOME logon auditing
+    # but it's incomplete (e.g. Logoff is often Failure-only). Make
+    # it explicit so the demo doesn't depend on whatever the OEM
+    # baseline shipped.
+    #
+    # Reference EIDs we care about:
+    #   4624 logon success         (Audit Logon)
+    #   4625 logon failure         (Audit Logon)
+    #   4634 logoff                (Audit Logoff)
+    #   4672 special priv assigned (Audit Special Logon)
+    #   4688 process create        (Audit Process Creation)
+    #   4720 user account created  (Audit User Account Mgmt)
+    #   4740 account locked out    (Audit Account Lockout)
+    # auditpol writes to Local Security Policy and survives reboot.
+    # All of these subcategories are advanced audit policy — enabling
+    # them does NOT require GPO; auditpol.exe is sufficient.
+    # ---------------------------------------------------------------
+    Log "Configuring audit policy (auditpol.exe)..."
+    $auditCommands = @(
+        @('Logon',                    'enable', 'enable'),
+        @('Logoff',                   'enable', 'enable'),
+        @('Account Lockout',          'enable', 'enable'),
+        @('Special Logon',            'enable', 'enable'),
+        @('Process Creation',         'enable', 'enable'),
+        @('Process Termination',      'enable', 'disable'),
+        @('User Account Management',  'enable', 'enable'),
+        @('Security Group Management','enable', 'enable'),
+        @('Sensitive Privilege Use',  'enable', 'enable')
+    )
+    foreach ($cmd in $auditCommands) {
+        $sub = $cmd[0]; $succ = $cmd[1]; $fail = $cmd[2]
+        $argList = @('/set', "/subcategory:$sub", "/success:$succ", "/failure:$fail")
+        try {
+            $out = & auditpol.exe @argList 2>&1
+            Log ("  auditpol /subcategory:'{0}' /success:{1} /failure:{2}  ->  {3}" -f $sub, $succ, $fail, ($out -join '; '))
+        } catch {
+            Log ("  WARN: auditpol failed for '{0}': {1}" -f $sub, $_.Exception.Message)
+        }
+    }
+
+    # Process-creation EID 4688 carries the command line ONLY when
+    # this registry value is set. Without it, you get the .exe path
+    # but not the args — which is most of what you actually want for
+    # detection. Idempotent.
+    try {
+        New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit' `
+                         -Name 'ProcessCreationIncludeCmdLine_Enabled' `
+                         -Value 1 -PropertyType DWord -Force | Out-Null
+        Log "Enabled command-line logging in EID 4688."
+    } catch {
+        Log "WARN: could not enable cmdline-in-4688: $($_.Exception.Message)"
+    }
+
     # CustomScriptExtension stages fileUris into a working directory
     # we can find via the well-known plugin path. The sysmonconfig
     # XML is one of the URIs we passed in `settings.fileUris` —

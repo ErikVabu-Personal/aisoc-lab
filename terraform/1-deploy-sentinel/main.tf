@@ -227,26 +227,33 @@ resource "azurerm_monitor_data_collection_rule" "dcr" {
       name    = "windows-events"
       streams = ["Microsoft-Event"]
 
-      # Application / System / Security on the standard severity
-      # bands. Security needs Level=4 (Information) too — most
-      # audit events (logon, process creation, special privilege
-      # use) ride that level.
+      # XPath filters for what AMA pulls off the host into the
+      # `Event` table.
+      #
+      # Application / System: standard severity bands.
+      #
+      # Security: NO level filter. This is deliberate, and the
+      # commonest Sentinel-DCR gotcha hides here. Windows audit
+      # events — 4624 (logon success), 4625 (logon failure), 4634
+      # (logoff), 4672 (special privilege), 4688 (process create) —
+      # are all emitted with `Level=0` (LogAlways), NOT `Level=4`
+      # (Information) like the Event Viewer "Information" badge
+      # implies. A filter of (Level=1..4) silently drops every
+      # audit event. The fix is either Level=0 OR no filter at all.
+      # For a demo VM the volume is trivial; we take the simpler
+      # `Security!*` approach.
       #
       # Sysmon writes to its OWN channel
-      # (`Microsoft-Windows-Sysmon/Operational`). All Sysmon events
-      # are Level=4 (Information), so we must include Level 4 here
-      # or nothing forwards. The `*` xpath is broad on purpose —
-      # Sysmon's config (sysmonconfig.xml on the host) is the
-      # authoritative filter; we don't double-filter at the AMA.
-      #
-      # The Sysmon channel is appended only when var.enable_sysmon
-      # is true. If you've turned Sysmon off, leaving the xpath in
-      # is harmless (AMA logs a warn for the missing channel) but
-      # we keep the toggle clean.
+      # (`Microsoft-Windows-Sysmon/Operational`). Sysmon events
+      # are Level=4 (Information). Filter is broad — Sysmon's
+      # config (sysmonconfig.xml on the host) is the authoritative
+      # gate; we don't double-filter at the AMA. The channel is
+      # appended only when var.enable_sysmon is true; otherwise
+      # AMA would log a warn for a missing channel.
       x_path_queries = concat([
         "Application!*[System[(Level=1 or Level=2 or Level=3)]]",
         "System!*[System[(Level=1 or Level=2 or Level=3)]]",
-        "Security!*[System[(Level=1 or Level=2 or Level=3 or Level=4)]]",
+        "Security!*",
         ], var.enable_sysmon ? [
         "Microsoft-Windows-Sysmon/Operational!*[System[(Level=1 or Level=2 or Level=3 or Level=4)]]",
       ] : [])

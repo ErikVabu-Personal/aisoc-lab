@@ -61,6 +61,16 @@ output "sentinel_enabled" {
   value = var.sentinel_enabled
 }
 
+output "vm_name" {
+  value       = azurerm_windows_virtual_machine.vm.name
+  description = "Azure resource name of the Windows VM (lab/bridge workstation)."
+}
+
+output "vm_computer_name" {
+  value       = azurerm_windows_virtual_machine.vm.computer_name
+  description = "In-OS Windows hostname (NetBIOS) — what shows up as Event.Computer in Sentinel."
+}
+
 output "vm_public_ip" {
   value = azurerm_public_ip.pip.ip_address
 }

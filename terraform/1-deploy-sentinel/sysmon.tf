@@ -63,6 +63,17 @@ variable "sysmon_config_url" {
 # extension downloads BOTH the install script AND the config XML
 # from the URLs above (CSE handles the download to its working
 # directory, the script picks up the staged config from there).
+#
+# Re-run trigger:
+#   CSE extensions are sticky — once the first apply succeeds (or
+#   fails), Azure won't re-run the same `settings` block on a later
+#   `terraform apply`. That's a problem for us: every time we patch
+#   install_sysmon.ps1 we want the VM to pick up the new version.
+#   Solution: include the local script's filemd5 in `settings` so
+#   any edit changes the JSON, which forces Azure to delete the
+#   extension and re-deploy it (re-running the script). Use a
+#   harmless field name (`scriptHash`) that the CSE itself ignores
+#   but Terraform/Azure see as a settings change.
 resource "azurerm_virtual_machine_extension" "sysmon" {
   count = var.enable_sysmon ? 1 : 0
 
@@ -83,6 +94,10 @@ resource "azurerm_virtual_machine_extension" "sysmon" {
     # -File is the safest way to invoke a downloaded .ps1 (no
     # quoting horrors).
     commandToExecute = "powershell.exe -ExecutionPolicy Bypass -NoProfile -File install_sysmon.ps1"
+    # Harmless cache-buster: changes whenever the local install
+    # script changes, which forces the extension to re-deploy and
+    # re-run on the VM. The CSE handler ignores unknown keys.
+    scriptHash = filemd5("${path.module}/scripts/install_sysmon.ps1")
   })
 
   tags = local.tags
