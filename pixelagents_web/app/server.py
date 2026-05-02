@@ -6416,6 +6416,13 @@ def _kb_descriptors_source() -> str:
 
 _KB_SEARCH_ENDPOINT_CACHE: dict[str, str] = {}
 
+# When env-var + ARM lookup both fail we capture *why* here so the
+# /kb page can show an actionable error ("AZURE_RESOURCE_GROUP
+# missing", "ARM 403", etc.) instead of just "lookup failed".
+# Module-level so api_kb_stats can read it after _kb_search_endpoint()
+# returns "". Kept fresh per call.
+_KB_SEARCH_ENDPOINT_LAST_ERROR: dict[str, str] = {"reason": "", "hint": ""}
+
 def _kb_search_endpoint() -> str:
     """The Search service URL the /kb page queries. Read from
     AISOC_KB_SEARCH_ENDPOINT first; if absent, look it up from
@@ -6428,7 +6435,16 @@ def _kb_search_endpoint() -> str:
     pick it up yet (the new image push from CI is what triggers
     that). Cached for 5 min to avoid hammering ARM on every page
     refresh.
+
+    Side effect: writes _KB_SEARCH_ENDPOINT_LAST_ERROR with a
+    machine-readable `reason` + human-readable `hint` whenever the
+    lookup fails. The /kb page surfaces those to the user.
     """
+    # Reset diagnostics on every call so a successful resolve clears
+    # any stale error text from the previous attempt.
+    _KB_SEARCH_ENDPOINT_LAST_ERROR["reason"] = ""
+    _KB_SEARCH_ENDPOINT_LAST_ERROR["hint"]   = ""
+
     direct = (os.getenv("AISOC_KB_SEARCH_ENDPOINT") or "").strip().rstrip("/")
     if direct:
         return direct
@@ -6438,12 +6454,25 @@ def _kb_search_endpoint() -> str:
     if cached and time.time() < cached_until:
         return cached
 
+    sub = (os.getenv("AZURE_SUBSCRIPTION_ID") or "").strip()
+    rg  = (os.getenv("AZURE_RESOURCE_GROUP")  or "").strip()
+    if not sub or not rg:
+        missing = []
+        if not sub: missing.append("AZURE_SUBSCRIPTION_ID")
+        if not rg:  missing.append("AZURE_RESOURCE_GROUP")
+        _KB_SEARCH_ENDPOINT_LAST_ERROR["reason"] = "env-missing"
+        _KB_SEARCH_ENDPOINT_LAST_ERROR["hint"]   = (
+            f"AISOC_KB_SEARCH_ENDPOINT is not set on this revision, and "
+            f"the ARM-lookup fallback can't run because {', '.join(missing)} "
+            f"is also missing. Most likely cause: the PixelAgents Container "
+            f"App was redeployed (image push) but Phase 3 Terraform hasn't "
+            f"been applied since AISOC_KB_SEARCH_ENDPOINT was added. "
+            f"Run `terraform apply` in `terraform/3-deploy-pixelagents-web/`."
+        )
+        return ""
+
     try:
         from azure.identity import DefaultAzureCredential
-        sub = (os.getenv("AZURE_SUBSCRIPTION_ID") or "").strip()
-        rg  = (os.getenv("AZURE_RESOURCE_GROUP")  or "").strip()
-        if not sub or not rg:
-            return ""
         token = DefaultAzureCredential().get_token("https://management.azure.com/.default").token
         url = (
             f"https://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}"
@@ -6459,8 +6488,34 @@ def _kb_search_endpoint() -> str:
                     _KB_SEARCH_ENDPOINT_CACHE["value"] = endpoint
                     _KB_SEARCH_ENDPOINT_CACHE["until"] = str(time.time() + 300)  # 5 min
                     return endpoint
+            _KB_SEARCH_ENDPOINT_LAST_ERROR["reason"] = "arm-empty"
+            _KB_SEARCH_ENDPOINT_LAST_ERROR["hint"]   = (
+                f"ARM returned 0 search services in resource group `{rg}` "
+                f"(subscription `{sub[:8]}…`). Has Phase 2 been applied? "
+                f"Run `terraform apply` in `terraform/2-deploy-aisoc/`."
+            )
+        elif r.status_code in (401, 403):
+            _KB_SEARCH_ENDPOINT_LAST_ERROR["reason"] = f"arm-{r.status_code}"
+            _KB_SEARCH_ENDPOINT_LAST_ERROR["hint"]   = (
+                f"ARM returned HTTP {r.status_code} listing search services in "
+                f"`{rg}`. The PixelAgents managed identity needs at least "
+                f"Reader on the resource group (or Search Service Reader on "
+                f"the service). Phase 3 Terraform grants this — re-apply if "
+                f"the role assignment was lost."
+            )
+        else:
+            body = (r.text or "")[:200]
+            _KB_SEARCH_ENDPOINT_LAST_ERROR["reason"] = f"arm-{r.status_code}"
+            _KB_SEARCH_ENDPOINT_LAST_ERROR["hint"]   = (
+                f"ARM lookup returned HTTP {r.status_code}: {body}"
+            )
     except Exception as e:
         print(f"[kb] search-endpoint ARM fallback failed: {e!r}", flush=True)
+        _KB_SEARCH_ENDPOINT_LAST_ERROR["reason"] = "arm-exception"
+        _KB_SEARCH_ENDPOINT_LAST_ERROR["hint"]   = (
+            f"ARM-lookup raised {type(e).__name__}. Check the Container App "
+            f"logs for the full traceback."
+        )
     return ""
 
 
@@ -6507,13 +6562,47 @@ def api_kb_stats(
         "env" if os.getenv("AISOC_KB_SEARCH_ENDPOINT") else
         ("arm-fallback" if endpoint else "missing")
     )
-    if not descriptors or not endpoint:
+    endpoint_error_reason = _KB_SEARCH_ENDPOINT_LAST_ERROR.get("reason", "")
+    endpoint_error_hint   = _KB_SEARCH_ENDPOINT_LAST_ERROR.get("hint",   "")
+
+    # When endpoint is missing we still want to render the cards —
+    # otherwise the page reads "builtin defaults" + "no KBs configured"
+    # which is contradictory and unhelpful. Return descriptor metadata
+    # with a per-card error pointing at the root cause we just
+    # captured in _KB_SEARCH_ENDPOINT_LAST_ERROR.
+    if not descriptors:
         return {
             "endpoint":          endpoint,
             "service":           _kb_search_service_name(),
             "descriptors_source": descriptors_src,
             "endpoint_source":    endpoint_src,
+            "endpoint_error":    {"reason": endpoint_error_reason, "hint": endpoint_error_hint},
             "knowledge_bases":   [],
+        }
+    if not endpoint:
+        out: list[dict[str, Any]] = []
+        for d in descriptors:
+            out.append({
+                "name":        d.get("name"),
+                "label":       d.get("label") or d.get("name"),
+                "description": d.get("description") or "",
+                "index":       d.get("index", ""),
+                "indexer":     d.get("indexer", ""),
+                "agents":      d.get("agents") or [],
+                "doc_count":   None,
+                "last_run":    None,
+                "error":       (
+                    "Search endpoint not configured — counts unavailable. "
+                    "See banner above for the root cause."
+                ),
+            })
+        return {
+            "endpoint":          endpoint,
+            "service":           _kb_search_service_name(),
+            "descriptors_source": descriptors_src,
+            "endpoint_source":    endpoint_src,
+            "endpoint_error":    {"reason": endpoint_error_reason, "hint": endpoint_error_hint},
+            "knowledge_bases":   out,
         }
 
     try:
@@ -6595,6 +6684,7 @@ def api_kb_stats(
         "service":           _kb_search_service_name(),
         "descriptors_source": descriptors_src,
         "endpoint_source":    endpoint_src,
+        "endpoint_error":    {"reason": "", "hint": ""},
         "knowledge_bases":   out,
     }
 

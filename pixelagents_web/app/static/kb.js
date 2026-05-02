@@ -186,7 +186,7 @@
           : []),
         ...(payload.endpoint_source === 'missing'
           ? [el('span', { class: 'kb-meta-hint kb-meta-warn' },
-              ' · WARNING: Search endpoint not found (env var unset, ARM lookup failed)')]
+              ' · Search endpoint not configured — see banner below')]
           : []),
       ),
       el('button', {
@@ -196,6 +196,24 @@
       }, 'Reload counts'),
     );
     root.appendChild(meta);
+
+    // Actionable banner when the endpoint is missing. The server
+    // captures *why* (env var missing, ARM 403, ARM returned 0
+    // services, etc.) and we surface it verbatim so the operator
+    // doesn't have to dig into Container App logs.
+    if (payload.endpoint_source === 'missing' && payload.endpoint_error) {
+      const err = payload.endpoint_error;
+      const hint = err.hint || 'AISOC_KB_SEARCH_ENDPOINT is not set on this revision and ARM lookup failed.';
+      root.appendChild(el('div', { class: 'kb-banner' },
+        el('div', { class: 'kb-banner-title' },
+          'Search endpoint not configured'
+        ),
+        el('div', { class: 'kb-banner-body' }, hint),
+        err.reason
+          ? el('div', { class: 'kb-banner-meta' }, `reason: ${err.reason}`)
+          : null,
+      ));
+    }
 
     const list = el('div', { class: 'kb-list' });
     const kbs = payload.knowledge_bases || [];
@@ -394,6 +412,31 @@
       color: #6a7e94;
       border: 1px dashed rgba(14,37,65,0.15);
       border-radius: 3px;
+    }
+    #aisoc-kb-root .kb-banner {
+      margin-bottom: 14px;
+      padding: 12px 16px;
+      background: rgba(176,116,6,0.06);
+      border: 1px solid rgba(176,116,6,0.30);
+      border-left: 3px solid #b07406;
+      border-radius: 3px;
+    }
+    #aisoc-kb-root .kb-banner-title {
+      font-weight: 600;
+      color: #6e4504;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    #aisoc-kb-root .kb-banner-body {
+      color: #2a4566;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    #aisoc-kb-root .kb-banner-meta {
+      margin-top: 6px;
+      color: #6a7e94;
+      font-size: 11.5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
   `;
   document.head.appendChild(style);
