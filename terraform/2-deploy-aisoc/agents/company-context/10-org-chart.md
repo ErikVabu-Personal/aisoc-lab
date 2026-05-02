@@ -11,13 +11,22 @@ first; the AISOC agents pick it up on their next KB retrieval.
 
 ## Bridge officers
 
-| Person | Role | Ship Control Panel account | Workstation account | Notes |
-|--------|------|----------------------------|---------------------|-------|
-| **Jack Sparrow** | **Master / Captain** | `bo_captain` | **`jack.sparrow`** (local admin on **`BRIDGE-WS`**, the bridge workstation) | Highest authority on board. Holds the master's account on the Ship Control Panel; uses his personal Windows account when working at the bridge workstation. |
-| Anneke Lindgren | Staff Captain | `bo_lindgren` | — | Second-in-command. Full bridge privileges. |
-| Ryotaro Kobayashi | Chief Officer | `bo_kobayashi` | — | Navigation watch lead. |
-| Lukas Akkermans | Second Officer | `bo_akkermans` | — | Watchkeeper, in alternation with the staff captain. |
-| Mira Eikholt | Third Officer | `bo_eikholt` | — | Watchkeeper. Most recently signed on (CR-2614). |
+The Ship Control Panel itself uses a small set of **shared
+operational accounts** for the bridge — the panel was built before
+the realm migration, and per-person SCP accounts didn't exist when
+it shipped. The bridge's primary operational account is
+`administrator`. Per-person identity is recovered from
+**workstation logs** (Windows auth on the bridge workstation
+`BRIDGE-WS`), not from the SCP username — see "Captain-on-`BRIDGE-WS`
+pattern" below.
+
+| Person | Role | Workstation account | Notes |
+|--------|------|---------------------|-------|
+| **Jack Sparrow** | **Master / Captain** | **`jack.sparrow`** (local admin on **`BRIDGE-WS`**, the bridge workstation) | Highest authority on board. The captain works almost exclusively at `BRIDGE-WS` while in port; while at sea he operates the SCP from the bridge under the shared `administrator` account. |
+| Anneke Lindgren | Staff Captain | — | Second-in-command. Full bridge privileges; operates SCP under `administrator` from the bridge during her watches. |
+| Ryotaro Kobayashi | Chief Officer | — | Navigation watch lead. Same shared-account pattern. |
+| Lukas Akkermans | Second Officer | — | Watchkeeper, in alternation with the staff captain. |
+| Mira Eikholt | Third Officer | — | Watchkeeper. Most recently signed on (CR-2614). |
 
 ## Engineering officers
 
@@ -49,15 +58,15 @@ small SOC headcount.)
 When a log line names a username, **first** retrieve this page and
 the naming-conventions page (`03-account-naming.md`), then resolve:
 
-- `bo_captain` → **Jack Sparrow** (master). Highest-privilege
-  bridge account; activity on it is high signal.
-- Windows local logon for `jack.sparrow` on **`BRIDGE-WS`** → **Jack Sparrow**
-  working at the bridge workstation. He's the only person
-  who legitimately uses that account, and `BRIDGE-WS` is the
-  only host that account legitimately appears on.
-- `bo_<lastname>` → bridge officer in the table above. Cross-
-  reference to confirm the person is currently on watch
-  (consult voyage schedule when in scope).
+- **`administrator`** on the Ship Control Panel → a SHARED bridge
+  operational account. The username alone does NOT identify the
+  human at the keyboard. To attribute, pivot on the `client`
+  (source IP) of the SCP event and cross-reference Windows logon
+  events on the workstation owning that IP at the same time.
+- Windows local logon for **`jack.sparrow`** on **`BRIDGE-WS`** →
+  **Jack Sparrow** working at the bridge workstation. He's the
+  only person who legitimately uses that account, and `BRIDGE-WS`
+  is the only host that account legitimately appears on.
 - `eng_<lastname>` → engineering officer in the table above.
 - `svc_*`, `vendor_*`, `admin_*` → see naming-conventions page.
 
@@ -66,34 +75,58 @@ the naming-conventions page (`03-account-naming.md`), then resolve:
 The bridge workstation (`BRIDGE-WS`) is **the captain's
 workstation**: physically on the bridge of M/S Aegir, and the only
 human who interactively logs in is Jack Sparrow under the local
-account `jack.sparrow`. That means:
+account `jack.sparrow`.
 
-- Any **`auth.login.success`** on `BRIDGE-WS` for `jack.sparrow` —
-  the captain is on the workstation. Cross-reference the
-  timestamp against bridge activity.
-- A **failed-login burst on the Ship Control Panel originating
-  from `BRIDGE-WS`'s public IP** while `jack.sparrow` has an
-  active Windows session is overwhelmingly likely to be the
-  captain mistyping his password — **not** an external
-  brute-force.
-  Verdict path:
+The SCP itself does NOT distinguish the captain from any other
+bridge officer — they all sign in as the shared `administrator`
+account. So a Ship Control Panel log line by itself can't tell you
+*who* the human was. The trick is **cross-source correlation**:
+
+  SCP event (auth.login.failure for `administrator`)
+    └─ has a `detail.client` field — the SOURCE IP of the request
+        └─ resolves to a workstation in the bridge LAN (`BRIDGE-WS`)
+            └─ which has Windows logon events (Security 4624)
+                └─ telling you which interactive user was at the
+                   keyboard at that moment (`jack.sparrow` →
+                   the captain)
+
+That's the chain. The agent is expected to reproduce it from data
+without the KB pre-naming the captain on the SCP side.
+
+**Verdict path for a credential-stuffing-looking burst against
+`administrator`:**
+
   1. Retrieve this page + `04-runbook-credential-stuffing.md`.
-  2. Confirm the source IP belongs to `BRIDGE-WS` (check the
-     workstation's `public_ip` output, or KQL on Windows logon
-     events at the same source).
-  3. Confirm `jack.sparrow` was logged into `BRIDGE-WS` during
-     the burst window (Sysmon EID 1 / Security 4624 with
-     `Computer == "BRIDGE-WS"`).
-  4. Verdict: **Closed (false positive — captain mistyped at a
-     workstation he was actively using).** Note the captain's
-     name + `BRIDGE-WS` in the case note.
+  2. From the SCP `auth.login.failure` events, take the source IP
+     (`detail.client`).
+  3. Resolve the IP to a host. The bridge workstation `BRIDGE-WS`
+     is in the asset inventory in the `company-policies` KB; its
+     public IP is the egress IP of the bridge LAN. If the SCP's
+     source IP matches, the burst is coming from a known
+     workstation — not from the open internet.
+  4. Confirm a human was actively at that workstation during the
+     burst window. Query the `Event` table for
+     `Computer == "BRIDGE-WS"` and Security `EventID in (4624, 4625)`
+     in the same time window. A 4624 (interactive logon, type 2 or
+     10) for `jack.sparrow` already in session before the burst
+     means the captain was at the keyboard.
+  5. Verdict:
+     - **Match (IP = `BRIDGE-WS`'s public IP, `jack.sparrow`
+       interactively signed in):** Closed (false positive —
+       captain mistyped the shared `administrator` password at
+       his workstation). Note "Jack Sparrow @ `BRIDGE-WS`" in the
+       case note even though the SCP username was `administrator`.
+     - **No match:** treat as a real burst — proceed with the
+       credential-stuffing runbook.
 
 This pattern is the cleanest demonstration of why the SOC agents
-benefit from a KB: the data alone says "47 failed logins from a
-public IP" — looks like an attack. The KB is what tells the
-investigator that source IP belongs to `BRIDGE-WS`, that
-`BRIDGE-WS` is the captain's workstation, and that the captain
-was actively logged in at the time.
+benefit from a KB. The raw SCP data alone says "47 failed logins
+for `administrator` from a public IP" — looks like an external
+attack. The KB tells the investigator that *source IPs of bridge
+LAN egress map to workstations*, *workstations have Windows logs
+that name the interactive user*, and that **`BRIDGE-WS` is
+specifically the captain's**. Connecting those facts is the
+investigator's job; the KB just gives it the facts to connect.
 
 ## Editing this page
 

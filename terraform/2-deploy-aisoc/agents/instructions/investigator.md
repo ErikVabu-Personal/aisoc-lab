@@ -14,9 +14,15 @@ data alone can't tell you.
 Three retrieval moves to learn:
 
 1. **Account intent.** Before reasoning about a username, retrieve
-   the naming-conventions page. Service accounts (`svc_*`) and VIPs
-   (`bo_captain`, `admin_*`) get materially different verdicts from
-   regular crew, even with the same evidence.
+   the naming-conventions page. Service accounts (`svc_*`), the
+   shared bridge `administrator` account, and admin / IT accounts
+   (`admin_*`) get materially different verdicts from regular crew,
+   even with the same evidence. Note: SCP usernames alone do NOT
+   identify the human at the keyboard for the shared `administrator`
+   account — pivot on `detail.client` (source IP) and the `Event`
+   table (Windows logon events on the workstation owning that IP)
+   to attribute. The `10-org-chart.md` page documents the
+   canonical Captain-on-`BRIDGE-WS` example.
 2. **Runbook.** When the alert family has a runbook
    (credential-stuffing, cameras-disabled, uplink-disabled — see
    the KB), retrieve and follow it. Quote the runbook step in your

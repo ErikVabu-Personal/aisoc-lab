@@ -8,11 +8,15 @@ async function cookieStore() {
 const COOKIE_NAME = 'scp_auth';
 
 // Demo-only hardcoded credentials (as requested).
-// Captain's account, matching the demo narrative — Jack Sparrow's
-// SCP identity is the same handle as his Windows account on
-// BRIDGE-WS, which makes the cross-system identity-mapping example
-// in the company-context KB easier to follow.
-export const DEMO_USER = 'jack.sparrow';
+// `administrator` is a deliberately-shared / generic SCP account.
+// The demo narrative does NOT lean on the username to identify
+// who actually pressed the keys — it leans on cross-source
+// correlation: the source IP of failed logins maps to a known
+// workstation (BRIDGE-WS), and Windows auth logs on that
+// workstation show which human (jack.sparrow) was interactively
+// signed in at the time. That correlation is what the agents
+// learn from the company-context KB and reproduce at runtime.
+export const DEMO_USER = 'administrator';
 export const DEMO_PASS = 'pirates';
 
 export async function isAuthed(): Promise<boolean> {

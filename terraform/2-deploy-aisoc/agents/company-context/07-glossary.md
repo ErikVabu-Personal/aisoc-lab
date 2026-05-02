@@ -10,10 +10,13 @@
   in three watches per 24h: `08:00–12:00 / 12:00–16:00`,
   `16:00–20:00 / 20:00–00:00`, `00:00–04:00 / 04:00–08:00`. Watch
   handovers are a common time for `auth.login.success` clusters.
-- **Master** — the captain. Highest authority on board. Account name
-  is `bo_captain`.
+- **Master** — the captain. Highest authority on board. Operates
+  the SCP under the shared `administrator` account from the bridge
+  workstation `BRIDGE-WS`; cross-source attribution to the captain
+  uses Windows logon events for `jack.sparrow` on `BRIDGE-WS`.
 - **Staff captain** — second-in-command, usually handles
-  administrative and security functions. Account `bo_staff_captain`.
+  administrative and security functions. Also operates the SCP
+  under the shared `administrator` account.
 - **Helm** — the steering position. The throttle slider in the
   Navigation tab is the helm telegraph.
 - **Stabilizers / fins** — retractable underwater wings that reduce

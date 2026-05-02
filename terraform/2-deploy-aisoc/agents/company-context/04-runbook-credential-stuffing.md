@@ -10,22 +10,29 @@ same source IP within a 15-minute window.
    widened window (60 min); pivot by `username` and `clientIp`.
 2. **Source-IP triage — is this an internal source?** Before
    reaching for Threat Intel, retrieve the org-chart
-   (`10-org-chart.md`) and check whether `clientIp` matches an
+   (`10-org-chart.md`) and the asset inventory (in the
+   `company-policies` KB) and check whether `clientIp` matches an
    asset we know:
-   - **Lab VM's public IP** — query the `Event` table for Windows
-     logon events around the burst window:
+   - **`BRIDGE-WS`'s public IP (the bridge workstation)** — query
+     the `Event` table for Windows logon events around the burst
+     window:
      ```kusto
      Event
+     | where Computer == "BRIDGE-WS"
      | where TimeGenerated between (
          (datetime(<burst-start>) - 5m) ..
          (datetime(<burst-end>) + 5m))
      | where Source == "Security" and EventID == 4624 and
              AccountName == "jack.sparrow"
      ```
-     If `jack.sparrow` was logged in during the burst, the burst
-     is overwhelmingly likely to be the captain mistyping his
-     password at the operations workstation — see "Captain-on-VM
-     pattern" in the org chart.
+     If `jack.sparrow` was interactively logged in on `BRIDGE-WS`
+     during the burst, the burst is overwhelmingly likely to be
+     the captain mistyping the shared `administrator` password
+     at his workstation — see "Captain-on-`BRIDGE-WS` pattern"
+     in the org chart. The SCP username on the failed-login
+     events will read `administrator`; that's expected, it's the
+     shared bridge account, and it's the source-IP-plus-Windows
+     correlation that identifies the captain.
    - Any other internal asset — flag for L2 review; we don't
      normally see internal hosts authenticating to the Ship
      Control Panel.
@@ -33,8 +40,9 @@ same source IP within a 15-minute window.
    `clientIp` pair. A successful login during or right after the
    burst flips this from a brute-force attempt to a confirmed
    compromise — UNLESS the source-IP triage in step 2 puts the
-   burst on a captain-on-VM session, in which case a successful
-   login is just the captain finally typing it correctly.
+   burst on a captain-on-`BRIDGE-WS` session, in which case a
+   successful login is just the captain finally typing it
+   correctly.
 4. Geolocate `clientIp`. Cross-check against the user's typical
    location. NVISO Cruiseways crew and bridge officers should not
    be logging in from countries outside the voyage's port-call
@@ -49,7 +57,7 @@ same source IP within a 15-minute window.
 7. Consult Threat Intel (`query_threat_intel`) for the source IP —
    credential-stuffing IPs typically appear on AbuseIPDB /
    GreyNoise block lists. **Skip this step** if step 2 already
-   resolved the burst as the captain-on-VM pattern.
+   resolved the burst as the captain-on-`BRIDGE-WS` pattern.
 
 ## Containment steps (recommendation only — humans execute)
 
@@ -65,11 +73,11 @@ same source IP within a 15-minute window.
 
 | Pattern                                              | Verdict             |
 |------------------------------------------------------|---------------------|
-| **Burst from `BRIDGE-WS`'s public IP + `jack.sparrow` had an active Windows session on `BRIDGE-WS`** | **Closed (false positive — captain mistyping at his bridge workstation; see `10-org-chart.md`)** |
+| **Burst against `administrator` from `BRIDGE-WS`'s public IP + `jack.sparrow` had an active Windows session on `BRIDGE-WS`** | **Closed (false positive — captain mistyping at his bridge workstation; see `10-org-chart.md`)** |
 | Burst + zero successes + IP not on watchlist         | Closed (false positive — likely typo loop or scanner) |
 | Burst + zero successes + IP on TI watchlist          | Closed (true positive, contained — no compromise) |
-| Burst + ≥1 success on `bo_*` / `crew_*`              | Active (escalate to L2 — possible compromise) |
-| Burst + ≥1 success on `svc_*` or `admin_*` or VIP    | Active (escalate to L3 — confirmed compromise) |
+| Burst + ≥1 success on `crew_*`                       | Active (escalate to L2 — possible compromise) |
+| Burst + ≥1 success on `svc_*` or `admin_*`           | Active (escalate to L3 — confirmed compromise) |
 | Success + post-auth state change to security/conn    | Active (escalate to incident commander — active intrusion) |
 
 ## Past incidents

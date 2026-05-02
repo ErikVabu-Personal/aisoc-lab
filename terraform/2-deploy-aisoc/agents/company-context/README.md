@@ -13,14 +13,14 @@ conventions, runbooks, glossary.
 |--------------------------------------|--------------|
 | `01-company-overview.md`             | NVISO Cruiseways, fleet, SOC team structure |
 | `02-monitored-systems.md`            | Ship Control Panel subsystems + what "normal" looks like |
-| `03-account-naming.md`               | Account prefixes (`bo_`, `crew_`, `svc_`, …), VIP list |
+| `03-account-naming.md`               | Shared `administrator` SCP account; per-person prefixes (`crew_`, `eng_`, `svc_`, …); VIP list; cross-system identity-mapping cheat sheet |
 | `04-runbook-credential-stuffing.md`  | IR runbook for repeated-failure alerts |
 | `05-runbook-cameras-disabled.md`     | IR runbook for the security-cameras-off alert |
 | `06-runbook-uplink-disabled.md`      | IR runbook for connectivity-disabled |
 | `07-glossary.md`                     | Maritime + Ship Control Panel + AISOC terminology |
 | `08-escalation.md`                   | Escalation matrix, oncall, approved tooling |
-| `09-endpoint-telemetry.md`           | Lab VM + Sysmon — schema, base filter, common Sysmon EIDs, KQL pivot patterns |
-| `10-org-chart.md`                    | Authoritative roster (bridge officers, engineering, SOC team) + the captain-on-VM correlation pattern that resolves false positives on the credential-stuffing alert |
+| `09-endpoint-telemetry.md`           | `BRIDGE-WS` + Sysmon — schema, base filter, common Sysmon EIDs, KQL pivot patterns |
+| `10-org-chart.md`                    | Authoritative roster (bridge officers, engineering, SOC team) + the captain-on-`BRIDGE-WS` correlation pattern that resolves false positives on the credential-stuffing alert via SCP source-IP → workstation → Windows-logon-user |
 
 ## Uploading to the blob container
 
