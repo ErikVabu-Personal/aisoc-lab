@@ -36,11 +36,6 @@ export default async function LoginPage({
             </div>
           </div>
 
-          <div className="hr" />
-
-          <div className="sub mono">
-            Hint: username <b>administrator</b> / password <b>controlpanel123</b>
-          </div>
         </div>
 
         <div className="card">

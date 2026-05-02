@@ -7,9 +7,13 @@ async function cookieStore() {
 
 const COOKIE_NAME = 'scp_auth';
 
-// Demo-only hardcoded credentials (as requested)
-export const DEMO_USER = 'administrator';
-export const DEMO_PASS = 'controlpanel123';
+// Demo-only hardcoded credentials (as requested).
+// Captain's account, matching the demo narrative — Jack Sparrow's
+// SCP identity is the same handle as his Windows account on
+// BRIDGE-WS, which makes the cross-system identity-mapping example
+// in the company-context KB easier to follow.
+export const DEMO_USER = 'jack.sparrow';
+export const DEMO_PASS = 'pirates';
 
 export async function isAuthed(): Promise<boolean> {
   const store = await cookieStore();

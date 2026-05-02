@@ -14,12 +14,15 @@ pick it up. Two demo-friendly attack triggers:
 
 ## Demo credentials
 
-- username: `administrator`
-- password: `controlpanel123`
+- username: `jack.sparrow`
+- password: `pirates`
 
 These are **demo-only** — no real auth, intentionally minimal so the
 "how the panel got compromised" part of a demo doesn't get in the
-way of "what AISOC does next".
+way of "what AISOC does next". The captain's handle is the same on
+the SCP and on the bridge workstation (`BRIDGE-WS`), which makes
+the cross-system identity-mapping story in the company-context KB
+straightforward to narrate.
 
 ## Subsystems (one tab each)
 
@@ -51,7 +54,7 @@ Examples:
 
 ```json
 {"time":"…","service":"ship-control-panel","event":"auth.login.success",
- "detail":{"username":"administrator","client":"203.0.113.42"}}
+ "detail":{"username":"jack.sparrow","client":"203.0.113.42"}}
 
 {"time":"…","service":"ship-control-panel","event":"security",
  "detail":{"changed":["camerasEnabled"],"severity":"warn",
