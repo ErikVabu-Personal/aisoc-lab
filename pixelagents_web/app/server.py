@@ -2654,22 +2654,31 @@ TEMPLATE_DEFAULTS: dict[str, str] = {
         # Top-line agent stamp + run identifier — same shape Triage and
         # Investigator use on their progress comments, so all three
         # entries on a Sentinel incident timeline read as one case file.
+        #
+        # Placeholders use {curly braces}, NOT <angle brackets>. Sentinel's
+        # incident-comment renderer treats <...> as HTML and strips
+        # unknown tags — anything wrapped in angle brackets disappears
+        # silently, leaving blank sections in the rendered comment.
         "**📝 Reporter — case note**\n"
-        "**Run:** <orchestrator_run_id> · <iso_timestamp>\n\n"
+        "**Run:** {RUN_ID} · {RUN_STARTED_AT}\n\n"
         "## Summary\n"
-        "<one-paragraph plain-language summary of what this incident is and what changed>\n\n"
+        "[one-paragraph plain-language summary of what this incident is and what changed]\n\n"
+        "## Entities\n"
+        "- Username(s): [carry forward from triage / investigator, comma-separated]\n"
+        "- Source IP(s): [comma-separated]\n"
+        "- Hostname(s): [if endpoint correlation pinned a workstation; otherwise omit]\n\n"
         "## Evidence\n"
-        "- <key signal 1>\n"
-        "- <key signal 2>\n"
-        "- <key signal 3>\n\n"
+        "- [key signal 1]\n"
+        "- [key signal 2]\n"
+        "- [key signal 3]\n\n"
         "## Verdict\n"
-        "**<true positive | false positive | benign true positive | inconclusive>** — "
-        "<one-sentence justification>\n\n"
+        "**[true positive | false positive | benign true positive | inconclusive]** — "
+        "[one-sentence justification]\n\n"
         "## Recommended next step\n"
-        "<single concrete action: contain, escalate to human, close, watchlist, …>\n\n"
-        "**Confidence:** <Low | Medium | High> — <short justification>\n"
-        "**Next:** Status set to <Closed (false positive) | Closed (true positive, "
-        "contained) | Active (escalated) | …>\n"
+        "[single concrete action: contain, escalate to human, close, watchlist, …]\n\n"
+        "**Confidence:** [Low | Medium | High] — [short justification]\n"
+        "**Next:** Status set to [Closed (false positive) | Closed (true positive, "
+        "contained) | Active (escalated) | …]\n"
     ),
     "improvement-report": (
         "## Observation\n"

@@ -281,9 +281,16 @@ because that's the one thing every L2 hand-off needs to surface.
 
 ```
 **🧪 Investigator — evidence + timeline**
-**Run:** <orchestrator_run_id> · <iso_timestamp>
+**Run:** {RUN_ID} · {RUN_STARTED_AT}
 
 **Summary:** 1–2 sentences. Provisional verdict + one-line "why".
+
+**Entities (resolved):**
+- Username(s): one or more, comma-separated. Use "—" if not applicable.
+- Source IP(s): one or more, comma-separated. Use "—" if not applicable.
+- Hostname(s): include any host you correlated to a source IP via
+  endpoint logs (Sysmon EID 3 or similar). Otherwise omit this line.
+- Other (optional): user-agent, asset, subsystem — at most one extra line.
 
 **Findings:**
 - bullet (≤6 total) — cite the KQL number or TI source where it came from
@@ -298,15 +305,32 @@ because that's the one thing every L2 hand-off needs to surface.
 **Confidence:** Low | Medium | High — short justification, biased by
 the operator's CONFIDENCE_THRESHOLD.
 
-**Next:** Reporter — <one-line recommendation: e.g. "recommend Closed/True
-Positive; cameras-disabled suggests deliberate evasion, flag scope">.
+**Next:** Reporter — one-line recommendation. Example: "recommend
+Closed/True Positive; cameras-disabled suggests deliberate evasion,
+flag scope".
 ```
 
 Rules:
 
-- Always include all six blocks. Drop a block only if the case
-  genuinely has nothing to put there (e.g. one-event triage lookup
-  with no useful timeline).
+- Always include all seven blocks (header + Run + Summary +
+  Entities + Findings + Timeline + Confidence + Next). Drop a
+  block only if the case genuinely has nothing to put there
+  (e.g. one-event triage lookup with no useful timeline).
+- For `**Run:**`: substitute the literal `RUN_ID` and
+  `RUN_STARTED_AT` values the orchestrator passed in your prompt.
+  NEVER write angle-bracket placeholders like `<run_id>` —
+  Sentinel's incident-comment renderer strips angle-bracket text
+  as if it were unknown HTML, blanking the entire line. If the
+  orchestrator didn't pass `RUN_ID` (interactive chat, tests),
+  use a short hash + the current ISO-8601 UTC timestamp.
+- For `**Next:**`: don't wrap the recommendation in angle brackets —
+  same HTML-strip reason. Plain prose only.
+- The **Entities (resolved)** block carries forward the entities
+  Triage flagged AND any new entities you turned up — typically
+  the source workstation hostname after pivoting from source IP
+  via endpoint telemetry. An analyst opening the case should be
+  able to read off the resolved who-and-where without parsing
+  free-text bullets.
 - `Findings:` bullets must trace back to evidence — name the KQL query
   number from your investigation, the Threat Intel source, the
   `ask_human` reply, etc. "I think" and "probably" are reasoning, not
@@ -321,13 +345,19 @@ Rules:
   If the case isn't ready for the reporter, you should be calling
   `ask_human` first, not handing off.
 
-Worked example:
+Worked example (assume the orchestrator passed
+`RUN_ID: 8e2c4a93` and `RUN_STARTED_AT: 2026-05-01T14:11:48Z`):
 
 ```
 **🧪 Investigator — evidence + timeline**
-**Run:** 8e2c · 2026-05-01T14:11:48Z
+**Run:** 8e2c4a93 · 2026-05-01T14:11:48Z
 
 **Summary:** Confirmed credential-stuffing; one login succeeded for `svc_admin` from the attacker IP at 14:02:18 UTC. Provisional verdict: true positive.
+
+**Entities (resolved):**
+- Username(s): `svc_admin`
+- Source IP(s): `198.51.100.7`
+- Hostname(s): — (external IP, no endpoint correlation)
 
 **Findings:**
 - 47 failures + 1 success from `198.51.100.7` against `svc_admin` (KQL #1, #2)

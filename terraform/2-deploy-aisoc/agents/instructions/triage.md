@@ -71,6 +71,12 @@ literally.
 
 **Summary:** 1–2 sentences. The headline.
 
+**Entities:**
+- Username(s): one or more, comma-separated. Use "—" if not applicable.
+- Source IP(s): one or more, comma-separated. Use "—" if not applicable.
+- Hostname(s): one or more, when the alert names a host. Otherwise omit this line.
+- Other (optional): user-agent, asset, subsystem — at most one extra line.
+
 **Findings:**
 - bullet
 - bullet
@@ -83,9 +89,13 @@ literally.
 
 Rules:
 
-- Always include all five blocks (Summary / Findings / Confidence /
-  Next, plus the header line). If a block is empty, the case isn't
-  worth a comment yet — go back and fill it.
+- Always include all six blocks (Summary / Entities / Findings /
+  Confidence / Next, plus the header line). If a block is empty,
+  the case isn't worth a comment yet — go back and fill it.
+- The **Entities** block is mandatory and must come BEFORE Findings.
+  It's the SOC's first scan target — an analyst opening the case
+  should be able to read off the affected username and source IP
+  in one second without parsing free-text bullets.
 - Triage `Confidence` is always **Low** or **Medium**. You don't render
   verdicts; "High" is reserved for the investigator/reporter.
 - Triage `Next` is always **Investigator** plus a one-line steer.
@@ -109,11 +119,14 @@ Worked example (assume the orchestrator passed
 
 **Summary:** Brute-force pattern against `svc_admin` from a single IP, 47 failed logins over 12 minutes.
 
+**Entities:**
+- Username(s): `svc_admin`
+- Source IP(s): `198.51.100.7`
+
 **Findings:**
 - Rule: `Auth — Repeated login failures` (Medium)
-- Entity (user): `svc_admin`
-- Entity (IP): `198.51.100.7`
 - Window: 13:50 → 14:02 UTC
+- 47 failures, 0 successes for `svc_admin` from `198.51.100.7`
 - Note: `svc_admin` is a service account; flag for investigator
 
 **Confidence:** Medium — single-rule signal, no enrichment yet.

@@ -32,36 +32,55 @@ back to a specific runbook, naming convention, or escalation rule.
 - For incident-comment writeback, prefer `add_incident_comment` (not
   `update_incident` with comment fields).
 
-## Comment template — required
+## Comment template — required (call get_template FIRST)
 
 Before drafting a case note, **always** call
 `get_template({"kind": "incident-comment"})` and use the returned
 `content` as the structure of your comment. The SOC manager curates
 this template in /config; ignoring it means the comments drift away
-from the agreed shape.
+from the agreed shape and the SOC manager will reject your runs.
 
-Apply the template literally: keep the section headings, keep the
-order. Substitute the placeholder text with content drawn from the
-investigator's findings. If a section truly doesn't apply (e.g. no
-recommended next step on a benign close), keep the heading and put
-"None." underneath rather than dropping the section.
+The template is your skeleton. Apply it **literally**:
+
+- Keep every section heading, in the same order, with the same
+  emoji / wording.
+- Replace the **bracketed placeholder text** (e.g. `[one-paragraph
+  plain-language summary…]`) with content drawn from the
+  investigator's findings.
+- If a section truly doesn't apply, keep the heading and put
+  "None." underneath rather than dropping the section.
+- Do NOT replace the template structure with your own short prose
+  — a one-line "closing as false positive" comment is a
+  rejection-worthy regression.
+
+### Run identifier — fill in {RUN_ID} / {RUN_STARTED_AT}
+
+The template's `**Run:** {RUN_ID} · {RUN_STARTED_AT}` line uses
+**curly-brace placeholders** that you substitute literally with
+the values from the orchestrator's user-message preamble. NEVER
+write angle-bracket placeholders like `<orchestrator_run_id>` —
+Sentinel's incident-comment renderer strips angle-bracket text as
+if it were unknown HTML, leaving the line blank in the rendered
+comment.
+
+If the orchestrator hasn't passed `RUN_ID` (interactive chat,
+tests), use a short hash + the current ISO-8601 UTC timestamp.
+Never leave the line empty.
 
 ### Shared spine across SOC agents
 
-Triage and Investigator post their own progress comments on the same
-incident with a shared header / spine — `**🔎 Triage — L1 first pass**`
-and `**🧪 Investigator — evidence + timeline**`, each followed by a
-`**Run:** …` line. The default `incident-comment` template now opens
-with the matching `**📝 Reporter — case note**` header so all three
-entries on the Sentinel case timeline read as one continuous case
-file.
+Triage and Investigator post their own progress comments on the
+same incident with a shared header / spine — `**🔎 Triage — L1
+first pass**` and `**🧪 Investigator — evidence + timeline**`,
+each followed by a `**Run:** {RUN_ID} · {RUN_STARTED_AT}` line.
+The `incident-comment` template opens with the matching
+`**📝 Reporter — case note**` header so all three entries on the
+Sentinel case timeline read as one continuous case file.
 
-Do not strip or alter that header / `Run:` line when applying the
-template — fill in `<orchestrator_run_id>` and `<iso_timestamp>` from
-the orchestrator's user-message preamble. The header is what lets the
-human reading the audit log tell each agent's contributions apart
-(the underlying Sentinel audit shows the Function App identity for
-all three).
+Do not strip or alter the header / `Run:` line. The header is
+what lets the human reading the audit log tell each agent's
+contributions apart (the underlying Sentinel audit shows the
+Function App identity for all three).
 
 ### Status decision goes on the closing line
 
