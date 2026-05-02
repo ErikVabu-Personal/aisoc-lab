@@ -361,8 +361,22 @@ export function dispatchMockMessages(): void {
 
   // Hard-coded tile targets for the default layout:
   // Lounge is near the sofa at cols ~13-16, rows ~13-16.
-  // Candidate lounge tiles near the sofa cluster. We'll try these in order until a seat exists.
+  // Candidate lounge tiles near the sofa cluster. We try these in order
+  // until a seat resolves (`agentSeatResolved` with `ok: true`). Tiles
+  // that don't have a seat in the rendered layout are skipped via the
+  // bump-on-fail logic in the seatResolved handler.
+  //
+  // Why so many entries: with N agents in the roster, we need at LEAST
+  // N tiles that resolve to actual seats. Empirically the inner 2x2
+  // cluster ((14-15, 14-15)) carries 4 seats; surrounding tiles vary by
+  // layout. Keeping the original 8 entries first preserves the seat
+  // claims of agents that already settled there; the additional rows 13
+  // and 16 + cols 12 and 17 give a 5th and 6th agent (and beyond)
+  // somewhere to land. The roster currently runs to 6 (triage,
+  // investigator, reporter, detection-engineer, soc-manager,
+  // threat-intel) so the extra capacity matters.
   const loungeCandidates: Array<{ col: number; row: number }> = [
+    // Original 8 — keep first so existing seat claims survive on hot reload
     { col: 14, row: 14 },
     { col: 15, row: 14 },
     { col: 16, row: 14 },
@@ -371,6 +385,21 @@ export function dispatchMockMessages(): void {
     { col: 16, row: 15 },
     { col: 13, row: 14 },
     { col: 13, row: 15 },
+    // Expansion — row above the cluster
+    { col: 14, row: 13 },
+    { col: 15, row: 13 },
+    { col: 16, row: 13 },
+    { col: 13, row: 13 },
+    // Expansion — row below the cluster
+    { col: 14, row: 16 },
+    { col: 15, row: 16 },
+    { col: 16, row: 16 },
+    { col: 13, row: 16 },
+    // Expansion — columns flanking the cluster
+    { col: 12, row: 14 },
+    { col: 12, row: 15 },
+    { col: 17, row: 14 },
+    { col: 17, row: 15 },
   ];
 
   // Remember which lounge tile worked per agent so they stay stable

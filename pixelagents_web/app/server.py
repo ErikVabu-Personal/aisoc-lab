@@ -2864,8 +2864,17 @@ def healthz() -> dict[str, str]:
 
 def _default_agent_roster() -> list[str]:
     # Comma-separated list of agents that should always exist in UI even before events.
-    # Defaults to the classic trio + detection engineer + SOC manager.
-    raw = os.getenv("PIXELAGENTS_AGENT_ROSTER", "triage,investigator,reporter,detection-engineer,soc-manager")
+    # Defaults to the full agent line-up. The env var is the canonical source
+    # (Phase 3 wires the Phase-2 agent roster through it); this fallback is
+    # only used when the var is unset/empty, but it MUST stay in sync with
+    # `terraform/2-deploy-aisoc/agents/agents.json` — otherwise an agent that
+    # exists in Foundry never appears in Live View, the lounge anchor never
+    # runs for it, and operators ask "why doesn't the threat-intel character
+    # ever show up?" (which we have asked before).
+    raw = os.getenv(
+        "PIXELAGENTS_AGENT_ROSTER",
+        "triage,investigator,reporter,detection-engineer,soc-manager,threat-intel",
+    )
     names = [x.strip() for x in raw.split(",") if x.strip()]
     # De-dupe while preserving order
     out: list[str] = []
