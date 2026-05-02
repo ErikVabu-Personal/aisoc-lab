@@ -91,17 +91,28 @@ if [[ -n "$SEARCH_NAME" && -n "$RG" ]]; then
       -H "api-key: ${ADMIN_KEY}" -H "Content-Length: 0" \
       "https://${SEARCH_NAME}.search.windows.net/indexers/company-context-indexer/reset?api-version=2024-07-01" \
       && echo "  reset (clear watermark) ok"
+    # Trigger run via the data-plane REST API instead of
+    # `az search indexer run`. The latter requires the `search`
+    # CLI extension which isn't part of the default install — on
+    # a clean operator machine the call dies with "'indexer' is
+    # misspelled or not recognized." curl works against any
+    # admin-key-authenticated Search service with no extra deps.
+    code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+      -H "api-key: ${ADMIN_KEY}" -H "Content-Length: 0" \
+      "https://${SEARCH_NAME}.search.windows.net/indexers/company-context-indexer/run?api-version=2024-07-01")"
+    case "$code" in
+      20*|202|204) echo "  ok — indexer running (HTTP $code). Should land in the index within 30-60s." ;;
+      *)           echo "  WARN: indexer trigger returned HTTP $code — the blobs are uploaded; the indexer will pick them up on its scheduled run." ;;
+    esac
+  else
+    echo "  WARN: could not fetch Search admin key. Indexer trigger skipped — the blobs are uploaded; the indexer will pick them up on its scheduled run."
   fi
-  az search indexer run \
-    --service-name "$SEARCH_NAME" \
-    --name company-context-indexer \
-    --resource-group "$RG" \
-    --only-show-errors \
-    && echo "  ok — indexer running. Should land in the index within 30-60s." \
-    || echo "  WARN: indexer trigger failed (the blobs are uploaded; the indexer will pick them up on its scheduled run)."
 else
   echo "WARN: could not derive Search service name; skipping indexer trigger."
-  echo "      To run manually: az search indexer run --service-name <svc> \\"
+  echo "      To run manually: curl -X POST -H \"api-key: <admin>\" \\"
+  echo "        \"https://<svc>.search.windows.net/indexers/company-context-indexer/run?api-version=2024-07-01\""
+  echo "      OR if you have the az search extension installed:"
+  echo "      az search indexer run --service-name <svc> \\"
   echo "        --name company-context-indexer --resource-group <rg>"
 fi
 

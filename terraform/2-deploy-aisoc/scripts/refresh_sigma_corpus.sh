@@ -125,15 +125,17 @@ if [[ -n "$ADMIN_KEY" ]]; then
     -H "api-key: ${ADMIN_KEY}" -H "Content-Length: 0" \
     "https://${SEARCH_NAME}.search.windows.net/indexers/detection-rules-indexer/reset?api-version=2024-07-01" \
     && echo "  reset ok"
-fi
-if az search indexer run \
-    --service-name "$SEARCH_NAME" \
-    --name detection-rules-indexer \
-    --resource-group "$RG" \
-    --only-show-errors; then
-  echo "  ok — indexer running."
+  # Trigger run via the data-plane REST API (no `az search`
+  # extension dependency).
+  code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+    -H "api-key: ${ADMIN_KEY}" -H "Content-Length: 0" \
+    "https://${SEARCH_NAME}.search.windows.net/indexers/detection-rules-indexer/run?api-version=2024-07-01")"
+  case "$code" in
+    20*|202|204) echo "  ok — indexer running (HTTP $code)." ;;
+    *)           echo "  WARN: indexer trigger returned HTTP $code; the scheduled run will pick up the new blobs." ;;
+  esac
 else
-  echo "  WARN: indexer trigger failed; the scheduled run will pick up the new blobs."
+  echo "  WARN: could not fetch Search admin key. Indexer trigger skipped; the scheduled run will pick up the new blobs."
 fi
 
 echo
