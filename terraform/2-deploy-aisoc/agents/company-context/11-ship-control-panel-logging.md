@@ -7,6 +7,34 @@ Log Analytics. This page is the canonical reference — when in doubt
 about a field name or what events exist, **retrieve this page first**
 before guessing.
 
+## Scope warning — SCP auth events live HERE, not in SecurityEvent
+
+Sentinel ingests TWO independent auth-failure data streams in this
+deployment, and they are easy to confuse:
+
+| Stream | Table | What it is |
+|--------|-------|------------|
+| **Ship Control Panel** application auth failures | `ContainerAppConsoleLogs_CL` | The events the `Control Panel: multiple failed logins (user + IP)` rule fires on. |
+| **Windows OS** auth failures on `BRIDGE-WS` | `SecurityEvent` (EventID 4625) | Internet-exposed `BRIDGE-WS` gets unrelated brute-force attempts at the OS / RDP layer. NOT what SCP rules are about. |
+
+**For incidents from the SCP analytic rule, you query
+`ContainerAppConsoleLogs_CL` only. Period.** Do not summarise
+SecurityEvent 4625 rows; do not correlate Windows-side usernames
+(`-\SYSTEM` / `-\ADMIN` / `-\ADMINISTRADOR` / `-\ADMINISTRATOR`)
+into an SCP triage. Those are real attacks but they're against a
+different surface (Windows RDP/SMB, not the SCP web app), they
+came in via a different rule (or none — if no Windows-side rule
+is configured), and they're not the evidence the SCP incident was
+created from.
+
+The unambiguous signal that an event came from the SCP and not
+from Windows: the username is the SCP shared account
+`administrator` (no domain prefix, no backslash) and the source
+IP is in `j.detail.client`. Anything else — domain-prefixed
+usernames, backslashes, hosts in `Computer` field — is a
+SecurityEvent / Event row that belongs to a different
+investigation.
+
 ## Server-side vs client-side events — only server-side reaches Sentinel
 
 The SCP is a Next.js app with both server-side handlers (server

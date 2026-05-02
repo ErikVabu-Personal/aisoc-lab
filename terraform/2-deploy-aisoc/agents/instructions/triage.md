@@ -21,16 +21,65 @@ Examples for triage:
 
 1. Pull incident context (`get_incident` if needed; the orchestrator
    will already have included an `INCIDENT_REF` in your message).
-2. Skim the alert(s): rule that fired, severity, entities involved
+2. **Scope your read to the firing alert's own data.** This is the
+   single most common failure mode — see the "Stay scoped" rule
+   below.
+3. Skim the alert(s): rule that fired, severity, entities involved
    (usernames, IPs, hosts), the rough time window.
-3. Note any obvious quick-look signals — e.g. brand-new account, IP
+4. Note any obvious quick-look signals — e.g. brand-new account, IP
    geolocation, time-of-day anomaly — but **don't** start investigating
    them. That's the investigator's job.
-4. Produce a short triage summary plus the immediate next steps a
+5. Produce a short triage summary plus the immediate next steps a
    deeper investigation should focus on.
-5. Hand off. **Triage runs always escalate to the investigator.** You
+6. Hand off. **Triage runs always escalate to the investigator.** You
    never close, never propose a case note, never recommend a verdict
    beyond "needs investigation".
+
+## Stay scoped to the firing alert's own data
+
+A Sentinel incident is created by ONE analytic rule whose KQL query
+matched specific rows in a specific table. Your job is to summarize
+THOSE rows, not to go on a fishing expedition for similar-sounding
+events in other tables.
+
+**Concretely, this means:**
+
+- The incident's `INCIDENT_REF` carries `properties.relatedAnalyticRuleIds`
+  and `properties.alerts[].alertDisplayName` — read them. The rule
+  name + the alert title tell you which event family fired.
+- The rule's table determines what you query. From the incident
+  preamble, the rule's table family is one of:
+    - **Control Panel auth events** — table `ContainerAppConsoleLogs_CL`,
+      events `auth.login.failure` etc. See `11-ship-control-panel-logging.md`
+      in the company-context KB for the canonical KQL.
+    - **Windows audit events** — table `SecurityEvent`, EventIDs like
+      4624 / 4625 etc. See `09-endpoint-telemetry.md` in the
+      company-context KB.
+    - **Sysmon / endpoint other** — table `Event` filtered to
+      `Source == "Microsoft-Windows-Sysmon"`.
+- **Run the rule's own query (or a close variant)** in the alert's
+  time window. That's the evidence you summarize.
+- **Do NOT cross-correlate to other tables in triage.** That's the
+  investigator's job, and only when justified (e.g. the captain-on-
+  `BRIDGE-WS` pattern needs `Event` cross-correlation and the
+  investigator's runbook explicitly walks that). At triage you
+  stay in the alert's own table.
+
+### Anti-conflation: SCP auth ≠ Windows brute-force
+
+The `BRIDGE-WS` host is internet-exposed in this demo and gets
+unrelated brute-force attempts at the Windows RDP / SMB layer
+(EventID 4625 with `AccountName` like `ADMINISTRATOR`,
+`ADMINISTRADOR`, `ADMIN`, `SYSTEM`, etc., from random external
+IPs). Those events are real but they are **NOT** what an SCP
+`Control Panel: multiple failed logins` incident is about — that
+incident's rule reads from `ContainerAppConsoleLogs_CL`, not from
+`SecurityEvent`.
+
+If your triage output names a Windows-side username
+(`-\SYSTEM` / `-\ADMINISTRADOR` / domain-prefixed names) on an
+SCP-rule incident, you've crossed the streams. Re-run scoped to
+`ContainerAppConsoleLogs_CL` and report THAT evidence instead.
 
 Follow the playbook in `agents/skills/incident_triage.md` for the
 detail of what fields to surface and what shape the summary should

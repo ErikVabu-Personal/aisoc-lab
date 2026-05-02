@@ -22,6 +22,29 @@ Use this page when you need to pivot from a Ship-Control-Panel
 event into "what was happening on the host at the same time", or
 when an alert is purely host-side.
 
+## Scope warning — Windows brute-force on `BRIDGE-WS` ≠ SCP auth alert
+
+`BRIDGE-WS` is internet-exposed in this demo. As a result,
+`SecurityEvent` carries a steady background of EventID 4625
+(failed logon) rows from random external IPs targeting common
+Windows usernames — `Administrator`, `Admin`, `administrador`,
+`SYSTEM`, etc. These are real attacks, but they're against the
+Windows RDP / SMB layer, not against the Ship Control Panel web
+app.
+
+**The Ship Control Panel `Control Panel: multiple failed logins
+(user + IP)` analytic rule reads from `ContainerAppConsoleLogs_CL`,
+not from `SecurityEvent`.** When triaging or investigating an
+incident from that SCP rule, do not summarise SecurityEvent 4625
+rows alongside SCP `auth.login.failure` rows — they're separate
+phenomena that happen to look similar in the abstract.
+
+The disambiguator: SCP usernames in this deploy are bare names
+(`administrator`, `crew_lindgren`, …) with the source IP in
+`j.detail.client`. Windows-side 4625 usernames have a domain
+prefix or backslash (`-\Administrator`, `WORKGROUP\Admin`) and
+the source IP is in `IpAddress` on the SecurityEvent row.
+
 ## What's collected, where it lands
 
 | Channel | Table | Why |
