@@ -2,11 +2,19 @@
 
 An end-to-end demo of an **AI-powered Security Operations Center**, built
 on top of Microsoft Sentinel and Azure AI Foundry. The fictional NVISO
-Cruiseways fleet runs a "Ship Control Panel" web app (a small auth
-surface that emits structured login + admin events to Sentinel); a
-roster of Foundry agents triages, investigates, reports on, and
-proposes improvements to the analytic rules that catch attacks
-against it.
+Cruiseways fleet runs a vulnerable web store (**Maison Miró**) that emits
+structured security events to Sentinel; a roster of Foundry agents triages,
+investigates, reports on, and proposes improvements to the analytic rules
+that catch attacks against it.
+
+> **Range extensions (Phases 4 & 5, opt-in):** the SOC also ingests the
+> **GOAD** Active Directory lab (`--onboard-goad`, see
+> `terraform/4-onboard-goad/`) and can deploy the **RedAmon** AI attacker into
+> GOAD's VNet (`--with-redamon`, see `terraform/5-deploy-redamon/`). The web
+> victim is now **Maison Miró** (it replaced the original "Ship Control Panel";
+> some deeper docs/examples below still say Ship Control Panel — the shared ACA
+> environment keeps that name internally). See `maison-miro/` and
+> `terraform/2-deploy-aisoc/agents/company-context/13-maison-logging.md`.
 
 The whole stack — Sentinel workspace, lab VM, the gateway Functions,
 the agent runner, and the operator-facing PixelAgents web — comes up

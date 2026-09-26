@@ -154,3 +154,13 @@
 # AISOC_ONBOARD_GOAD=1
 # GOAD's Azure resource group (its lab_identifier; default: GOAD):
 # TF_VAR_goad_resource_group="GOAD"
+
+# ── Phase 5 — RedAmon (AI red-team attacker) in the GOAD VNet ────────
+# Off by default. Set to 1 (or pass --with-redamon) to also deploy a RedAmon
+# VM into GOAD's VNet (needs GOAD on Azure). Reach its UI via an SSH tunnel;
+# the on-box install runs in tmux. See terraform/5-deploy-redamon/README.md.
+# AISOC_DEPLOY_REDAMON=1
+# Lock SSH/UI to your IP (strongly recommended):
+# TF_VAR_admin_cidrs='["203.0.113.10/32"]'
+# Optional: reach a self-hosted LLM over Tailscale (as on the AWS box):
+# TF_VAR_home_llm_tailscale_ip="100.x.y.z"

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% from "_macros.html" import product_card %}
+{% block title %}{{ p['name'] }}{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+  <a href="{{ url_for('index') }}">Home</a> / <a href="{{ url_for('shop') }}">Shop</a> /
+  <a href="{{ url_for('shop') }}?category={{ p['category']|urlencode }}">{{ p['category'] }}</a> /
+  <span>{{ p['name'] }}</span>
+</nav>
+
+<section class="product-detail">
+  <div class="product-detail-art">
+    <img src="{{ url_for('art', seed=p['art_seed']) }}" alt="{{ p['name'] }}" width="600" height="600">
+  </div>
+  <div class="product-detail-info">
+    <p class="eyebrow">{{ p['category'] }}</p>
+    <h1>{{ p['name'] }}</h1>
+    <p class="product-detail-price">{{ p['price_cents']|eur }}</p>
+    <p class="product-detail-desc">{{ p['description'] }}</p>
+
+    <div class="product-buy"
+         data-product-id="{{ p['id'] }}"
+         data-name="{{ p['name'] }}"
+         data-price="{{ p['price_cents'] }}"
+         data-art="{{ p['art_seed'] }}">
+      <div class="qty-control">
+        <button type="button" class="qty-btn" data-qty-minus>−</button>
+        <input type="number" value="1" min="1" class="qty-input" data-qty aria-label="Quantity">
+        <button type="button" class="qty-btn" data-qty-plus>+</button>
+      </div>
+      <button type="button" class="btn btn-dark btn-add" data-add-to-cart>Add to cart</button>
+    </div>
+
+    <ul class="product-notes">
+      <li>Made to order in our Ghent studio</li>
+      <li>Complimentary Belgian delivery over € 150</li>
+      <li>{{ p['stock'] }} in stock · ships within 1–2 weeks</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section reviews" id="reviews">
+  <div class="section-head">
+    <h2>Reviews</h2>
+    <span class="section-link">{{ reviews|length }} review{{ '' if reviews|length == 1 else 's' }}</span>
+  </div>
+
+  <div class="review-list">
+    {% for r in reviews %}
+      <article class="review">
+        <div class="review-head">
+          <span class="review-author">{{ r['author'] }}</span>
+          <span class="review-stars">{{ r['rating']|stars }}</span>
+          <span class="review-date">{{ r['created_at'] }}</span>
+        </div>
+        <!-- Reviews are rendered as trusted HTML so customers can add a little formatting. -->
+        <div class="review-body">{{ r['body']|safe }}</div>
+      </article>
+    {% else %}
+      <p class="muted">No reviews yet — be the first to share your thoughts.</p>
+    {% endfor %}
+  </div>
+
+  <form class="review-form" method="post" action="{{ url_for('add_review', slug=p['slug']) }}">
+    <h3>Write a review</h3>
+    <div class="form-row">
+      <label>Name
+        <input type="text" name="author" placeholder="Your name" required>
+      </label>
+      <label>Rating
+        <select name="rating">
+          <option value="5">★★★★★</option>
+          <option value="4">★★★★</option>
+          <option value="3">★★★</option>
+          <option value="2">★★</option>
+          <option value="1">★</option>
+        </select>
+      </label>
+    </div>
+    <label>Your review
+      <textarea name="body" rows="4" placeholder="What did you think?" required></textarea>
+    </label>
+    <button type="submit" class="btn btn-dark">Submit review</button>
+  </form>
+</section>
+
+{% if related %}
+<section class="section">
+  <div class="section-head"><h2>You may also like</h2></div>
+  <div class="product-grid">
+    {% for rp in related %}{{ product_card(rp) }}{% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

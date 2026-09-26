@@ -1,0 +1,12 @@
+{% macro product_card(p) %}
+<a class="product-card" href="{{ url_for('product', slug=p['slug']) }}">
+  <div class="product-art">
+    <img src="{{ url_for('art', seed=p['art_seed']) }}" alt="{{ p['name'] }}" loading="lazy" width="400" height="400">
+  </div>
+  <div class="product-meta">
+    <span class="product-cat">{{ p['category'] }}</span>
+    <h3 class="product-name">{{ p['name'] }}</h3>
+    <span class="product-price">{{ p['price_cents']|eur }}</span>
+  </div>
+</a>
+{% endmacro %}

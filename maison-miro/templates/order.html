@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Order #{{ '%04d' % order['id'] }}{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow"><a href="{{ url_for('account') }}">Account</a> / Order</p>
+  <h1>Order #{{ '%04d' % order['id'] }}</h1>
+  <p class="page-sub">Placed {{ order['created_at'] }} · <span class="status status-{{ order['status']|lower }}">{{ order['status'] }}</span></p>
+</section>
+
+<section class="order-detail">
+  <div class="order-items-card">
+    <h3>Items</h3>
+    <table class="order-table">
+      <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Subtotal</th></tr></thead>
+      <tbody>
+        {% for it in items %}
+        <tr>
+          <td>{{ it['name'] }}</td>
+          <td>{{ it['qty'] }}</td>
+          <td>{{ it['price_cents']|eur }}</td>
+          <td>{{ (it['price_cents'] * it['qty'])|eur }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr><td colspan="3">Total</td><td>{{ order['total_cents']|eur }}</td></tr>
+      </tfoot>
+    </table>
+    <a class="btn btn-ghost" href="{{ url_for('invoice', order_id=order['id']) }}">View invoice →</a>
+  </div>
+
+  <aside class="order-ship-card">
+    <h3>Shipping to</h3>
+    <p class="ship-name">{{ order['ship_name'] }}</p>
+    <p>{{ order['ship_address'] }}</p>
+    <p>{{ order['ship_email'] }}</p>
+  </aside>
+</section>
+{% endblock %}

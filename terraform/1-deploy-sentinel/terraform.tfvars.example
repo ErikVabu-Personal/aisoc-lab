@@ -60,9 +60,12 @@ mde_onboarding_script_path    = "./onboarding.cmd"
 
 enable_sentinel_mde_connector = false
 
-# --- Demo target app: Ship Control Panel (Next.js on ACA)
+# --- Demo target app: Maison Miró (intentionally-vulnerable store, Flask on ACA)
 # Default uses :latest, but for deterministic demos use a commit SHA tag from GHCR.
-# ship_control_panel_image = "ghcr.io/erikvabu-personal/aisoc-ship-control-panel:<GITHUB_SHA>"
+# maison_image = "ghcr.io/erikvabu-personal/aisoc-maison-miro:<GITHUB_SHA>"
+# soc_key      = "soc-demo-key"     # X-SOC-Key for Maison's /soc/* API (sensitive)
+# soc_armed    = "1"                 # "0" to demo the no-SOC catastrophe
+# sign_secret  = "..."               # HMAC key for forged-session detection (sensitive)
 
 # Optional: auto shutdown time (HHMM) or null
 auto_shutdown_time     = "1900"

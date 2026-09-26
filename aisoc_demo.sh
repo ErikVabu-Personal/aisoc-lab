@@ -143,7 +143,11 @@ Other:
                               its VMs, AD analytic rules, and the AD KB runbooks.
                               Off by default. (Or AISOC_ONBOARD_GOAD=1 in aisoc.config.)
   --goad-resource-group=...   GOAD's Azure resource group (its lab_identifier;
-                              default: GOAD). Only used with --onboard-goad.
+                              default: GOAD). Used with --onboard-goad / --with-redamon.
+  --with-redamon              Also run Phase 5: deploy RedAmon (AI red-team) into
+                              GOAD's VNet (needs GOAD on Azure). The on-box install
+                              runs in tmux; reach the UI via an SSH tunnel.
+                              (Or AISOC_DEPLOY_REDAMON=1 in aisoc.config.)
   -h, --help                  show this help
 
 Config file:
@@ -180,6 +184,7 @@ declare -A USER_VARS=()
 SUBSCRIPTION_OVERRIDE=""
 SKIP_OIDC=0
 ONBOARD_GOAD=0
+DEPLOY_REDAMON=0
 ACTION=""
 
 # Snapshot which TF_VAR_* the operator had set in their shell BEFORE
@@ -230,6 +235,7 @@ unset _name
 #   AZURE_SUBSCRIPTION_OVERRIDE=<id>  -> switch subscription
 [[ "${AISOC_SKIP_OIDC:-0}" == "1" ]] && SKIP_OIDC=1
 [[ "${AISOC_ONBOARD_GOAD:-0}" == "1" ]] && ONBOARD_GOAD=1
+[[ "${AISOC_DEPLOY_REDAMON:-0}" == "1" ]] && DEPLOY_REDAMON=1
 [[ -n "${AISOC_GITHUB_REPO:-}" ]] && REPO="$AISOC_GITHUB_REPO"
 [[ -n "${AZURE_SUBSCRIPTION_OVERRIDE:-}" ]] && SUBSCRIPTION_OVERRIDE="$AZURE_SUBSCRIPTION_OVERRIDE"
 
@@ -264,6 +270,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help)              usage; exit 0 ;;
     --skip-oidc-bootstrap)  SKIP_OIDC=1; shift ;;
     --onboard-goad)         ONBOARD_GOAD=1; shift ;;
+    --with-redamon)         DEPLOY_REDAMON=1; shift ;;
     --subscription=*)       SUBSCRIPTION_OVERRIDE="${1#*=}"; shift ;;
     --subscription)         [[ $# -ge 2 ]] || die "missing value for --subscription"
                             SUBSCRIPTION_OVERRIDE="$2"; shift 2 ;;
@@ -454,11 +461,12 @@ if [[ "$ACTION" == "destroy" ]]; then
     fi
   }
 
-  # Phase 4 (GOAD onboarding) is optional and attaches to Phase 1's DCR
-  # + GOAD's own VMs, so tear it down FIRST (before Phase 1 removes the
-  # workspace/DCR). destroy_phase self-skips if it was never applied.
-  # NOTE: run this BEFORE destroying GOAD (`goad.sh -p azure` destroy) —
-  # Phase 4's data sources reference the GOAD VMs, so they must still exist.
+  # Phases 4 (GOAD onboarding) and 5 (RedAmon) are optional and hang off the
+  # GOAD deployment (Phase 4 attaches to Phase 1's DCR + GOAD's VMs; Phase 5's VM
+  # sits in GOAD's VNet). Tear them down FIRST — before Phase 1 removes the
+  # workspace/DCR, and BEFORE destroying GOAD itself (`goad.sh -p azure` destroy),
+  # since both reference GOAD resources. destroy_phase self-skips if never applied.
+  destroy_phase terraform/5-deploy-redamon
   destroy_phase terraform/4-onboard-goad
   destroy_phase terraform/3-deploy-pixelagents-web
   pre_destroy_phase2_cleanup
@@ -736,9 +744,19 @@ if [[ "$ONBOARD_GOAD" == "1" ]]; then
   fi
 fi
 
+# ── 5c) Phase 5 (optional) — RedAmon attacker in the GOAD VNet ───────
+# Gated behind --with-redamon / AISOC_DEPLOY_REDAMON=1. Requires GOAD on Azure
+# (same VNet). The on-box RedAmon install runs in tmux on first boot; see
+# terraform/5-deploy-redamon/README.md.
+if [[ "$DEPLOY_REDAMON" == "1" ]]; then
+  say "Phase 5: RedAmon (AI red-team) in the GOAD VNet"
+  apply_phase terraform/5-deploy-redamon
+  ok "Phase 5 applied (RedAmon VM up; on-box install runs in tmux — tunnel to the UI, see below)"
+fi
+
 # ── 6) Completion summary ────────────────────────────────────────────
 PIXEL_URL="$(cd terraform/3-deploy-pixelagents-web && terraform output -raw pixelagents_url)"
-SHIPCP_URL="$(cd terraform/1-deploy-sentinel && terraform output -raw ship_control_panel_url)"
+STORE_URL="$(cd terraform/1-deploy-sentinel && terraform output -raw maison_url)"
 VM_IP="$(cd terraform/1-deploy-sentinel && terraform output -raw vm_public_ip 2>/dev/null || true)"
 VM_USER="$(cd terraform/1-deploy-sentinel && terraform output -raw vm_username 2>/dev/null || true)"
 # vm_password is sensitive — `terraform output -raw` returns the literal value.
@@ -753,8 +771,8 @@ printf '%s%s        AISOC demo deployment complete — everything is live%s\n' \
 printf '%s%s%s%s\n'   "$BOLD" "$GREEN" "$SEP" "$NC"
 
 # ── The two URLs that matter most. Bold cyan so they pop. ──────────────
-printf '\n  %sShip Control Panel%s\n' "$BOLD" "$NC"
-printf '    %s%s%s%s\n'              "$BOLD" "$CYAN" "$SHIPCP_URL" "$NC"
+printf '\n  %sMaison Miró (store — web victim)%s\n' "$BOLD" "$NC"
+printf '    %s%s%s%s\n'              "$BOLD" "$CYAN" "$STORE_URL" "$NC"
 printf '\n  %sPixelAgents UI%s\n'      "$BOLD" "$NC"
 printf '    %s%s%s%s\n'              "$BOLD" "$CYAN" "$PIXEL_URL"  "$NC"
 
@@ -782,11 +800,22 @@ if [[ "$ONBOARD_GOAD" == "1" ]]; then
   printf '                Sentinel incident → Triage → Investigator → Reporter.\n'
 fi
 
+# ── RedAmon (when --with-redamon was used). ────────────────────────────
+if [[ "$DEPLOY_REDAMON" == "1" ]]; then
+  RED_TUNNEL="$(cd terraform/5-deploy-redamon && terraform output -raw redamon_ui_tunnel 2>/dev/null || true)"
+  printf '\n%s%s%s\n'   "$YELLOW" "$HR" "$NC"
+  printf '  %sRedAmon (AI red-team, in the GOAD VNet)%s\n'  "$BOLD" "$NC"
+  printf '%s%s%s\n'     "$YELLOW" "$HR" "$NC"
+  [[ -n "$RED_TUNNEL" ]] && printf '  UI tunnel:    %s\n' "$RED_TUNNEL"
+  printf '                then browse http://localhost:3000 (create admin, add an LLM key)\n'
+  printf '  Install:      SSH in, then: sudo tmux attach -t redamon\n'
+fi
+
 # ── How to drive the demo. ─────────────────────────────────────────────
 printf '\n%sNext steps%s\n' "$BOLD" "$NC"
-printf '  1. Open the Ship Control Panel and try a few failed logins, OR\n'
-printf '     RDP into the lab VM and try a few bad credentials.\n'
-printf '  2. The Sentinel rule fires every 15 min. Once an incident is\n'
+printf '  1. Open Maison Miró and run an attack (SQLi login bypass, then hit\n'
+printf '     /api/customers to trip the honeytoken), OR RDP the lab VM.\n'
+printf '  2. The Sentinel rules fire every 15 min. Once an incident is\n'
 printf '     raised, open the PixelAgents UI and click "Run workflow"\n'
 printf '     on the incident row to orchestrate triage → investigation\n'
 printf '     → reporting.\n'

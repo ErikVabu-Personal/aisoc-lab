@@ -6,7 +6,7 @@ Role: **Incident investigator**. Your job is to validate hypotheses, correlate a
 
 You have a `knowledge_base_retrieve` tool wired to the
 `company-context` knowledge base. The KB carries the SOC's curated
-context: fleet, Ship Control Panel subsystems, account naming, VIP
+context: fleet, the Maison Miró store, account naming, VIP
 list, IR runbooks, escalation matrix, glossary. Treat it as your
 **organisational memory** — it's authoritative for anything the
 data alone can't tell you.
@@ -21,8 +21,8 @@ Three retrieval moves to learn:
    the username alone does not identify the human at the keyboard.
    When you encounter one, do not stop at the username; pivot to
    other data sources to identify the human:
-     - the source IP recorded on the alert (`detail.client` for
-       SCP events) is the entry point;
+     - the source IP recorded on the alert (`source_ip` for
+       Maison events) is the entry point;
      - check whether your endpoint telemetry maps that IP to a
        host you have logs from (e.g. via Sysmon EID 3 outbound
        connections to the alerted application);
@@ -33,9 +33,9 @@ Three retrieval moves to learn:
        hostname and the username you found.
    The KB carries org facts (people, roles, asset inventory), not
    network topology. Combine the two.
-2. **Runbook.** When the alert family has a runbook
-   (credential-stuffing, cameras-disabled, uplink-disabled — see
-   the KB), retrieve and follow it. Quote the runbook step in your
+2. **Runbook.** When the alert family has a runbook (the Maison attack
+   runbook in `13-maison-logging.md`, or the GOAD AD runbooks in
+   `12-goad-ad-attacks.md`), retrieve and follow it. Quote the runbook step in your
    `Findings:` so the human reading the case sees you applied
    procedure, not improvised.
 3. **Subsystem semantics.** When you see an unfamiliar `event` name
@@ -53,8 +53,8 @@ TI knows the world. Local context first, then external context.
 - **Determine the incident's data source from the firing rule**, then
   enumerate THAT table first to confirm which event types are present
   in the window (treat the schema as discovered, not assumed):
-    - **Ship Control Panel** rule → `ContainerAppConsoleLogs_CL`
-      (base filter from common instructions) — follow the SCP path below.
+    - **Maison Miró** rule → `ContainerAppConsoleLogs_CL`
+      (base filter from common instructions) — follow the Maison path below.
     - **GOAD / Active Directory** rule → `SecurityEvent` on the DC(s)
       the alert names — follow the "Active Directory investigation
       path" section and `12-goad-ad-attacks.md`.
@@ -63,112 +63,90 @@ TI knows the world. Local context first, then external context.
   case needs; don't restrict yourself to one table.
 - Build a short timeline of key events.
 
-## SCP incidents — required first step: retrieve the SCP logging schema
+## Maison Miró incidents — required first step: retrieve the logging schema
 
-*(This section and the two below are the **Ship Control Panel** path —
-follow them when the firing rule reads `ContainerAppConsoleLogs_CL`.
-For a GOAD / Active Directory incident, skip to "Active Directory
-investigation path" further down.)*
+*(This section and the queries below are the **Maison Miró** (web victim) path —
+follow them when the firing rule reads `ContainerAppConsoleLogs_CL`. For a GOAD /
+Active Directory incident, skip to "Active Directory investigation path".)*
 
-Before running ANY KQL against `ContainerAppConsoleLogs_CL`, retrieve
-**`11-ship-control-panel-logging.md`** from the company-context KB.
-That page is the canonical schema reference: which fields exist,
-where the source IP lives (`detail.client`), the `event` catalogue,
-and the time-window guidance you need to anchor your queries
-correctly. The KQL examples in this file assume the schema as of
-commit time, but the KB doc is the source of truth — if your
-queries return zero rows when you expect events, the schema may
-have moved and the KB doc will tell you what the live shape is.
-
-The KB doc also has a "When the table looks empty" diagnostic
-ladder: drop filters in order (`Stream_s` → `j.service` →
-`parse_json`) until you see rows. That's the right move when an
-alert claims to be based on events you can't find — usually a
-filter mismatch, occasionally a real ingestion gap.
+Before running KQL against `ContainerAppConsoleLogs_CL`, retrieve
+**`13-maison-logging.md`** from the company-context KB — the canonical reference:
+the `[EVENT]` line shape, the base filter (`parse_json(substring(Log_s, 8))`), the
+event catalogue, and that **`source_ip` is the incident correlation key** (one
+attacker walks the whole kill chain from one IP). If your queries return zero rows,
+the KB doc has the live shape.
 
 ## Required first query (schema discovery)
 
-Run these *first* to understand what the table contains in the
-incident's time window. Both use the Control Panel base filter from
-the common instructions.
+Both use the Maison base filter from the common instructions.
 
 ```kusto
-// Recent raw sample — see the field shapes.
+// Recent raw sample — see the event shapes.
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(30m)
-| extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
-| project TimeGenerated, event = tostring(j.event), detail = j.detail
-| take 5
+| where ContainerName_s == "maison-miro" and Log_s startswith "[EVENT] "
+| extend j = parse_json(substring(Log_s, 8))
+| project TimeGenerated, etype = tostring(j.type), severity = tostring(j.severity),
+          source_ip = tostring(j.source_ip), message = tostring(j.message)
+| take 10
 ```
 
 ```kusto
 // Event-type histogram in the last 30 minutes.
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(30m)
-| extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
-| summarize n = count() by event = tostring(j.event)
+| where ContainerName_s == "maison-miro" and Log_s startswith "[EVENT] "
+| extend j = parse_json(substring(Log_s, 8))
+| summarize n = count() by etype = tostring(j.type)
 | order by n desc
 ```
 
-## Required investigation queries (auth failures)
+## Required investigation queries (attacker timeline)
 
-1) Failed logins summary (user + IP):
-
-```kusto
-ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(60m)
-| extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
-| extend event = tostring(j.event),
-         username = tostring(j.detail.username),
-         clientIp = tostring(j.detail.client)
-| where event == "auth.login.failure"
-| summarize failures = count(),
-            first_seen = min(TimeGenerated),
-            last_seen = max(TimeGenerated)
-    by username, clientIp
-| order by failures desc
-| take 20
-```
-
-2) Check for any successes for the same user/IP (if your app logs success):
+1) The attacker's full timeline — one `source_ip` walks the kill chain:
 
 ```kusto
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(60m)
-| extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
-| extend event = tostring(j.event),
-         username = tostring(j.detail.username),
-         clientIp = tostring(j.detail.client)
-| where event in ("auth.login.failure", "auth.login.success")
-| summarize n = count() by event, username, clientIp
-| order by n desc
-| take 50
-```
-
-3) Pull raw rows for the top offender (replace the two `let` values
-   with the username and IP surfaced by query #1):
-
-```kusto
-let u = "<username>";
-let ip = "<clientIp>";
-ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(60m)
-| extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
-| extend event = tostring(j.event),
-         username = tostring(j.detail.username),
-         clientIp = tostring(j.detail.client),
-         ua = tostring(j.detail.userAgent)
-| where username == u and clientIp == ip
-    and event in ("auth.login.failure", "auth.login.success")
-| project TimeGenerated, event, username, clientIp, ua
+| where ContainerName_s == "maison-miro" and Log_s startswith "[EVENT] "
+| extend j = parse_json(substring(Log_s, 8))
+| where tostring(j.source_ip) == "<source_ip>"
+| project TimeGenerated, etype = tostring(j.type), severity = tostring(j.severity),
+          message = tostring(j.message), session = tostring(j.session)
 | order by TimeGenerated asc
-| take 50
+| take 100
 ```
+
+2) Did impact occur? Any critical event (honeytoken / exfil / IDOR / fraud) by IP:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(60m)
+| where ContainerName_s == "maison-miro" and Log_s startswith "[EVENT] "
+| extend j = parse_json(substring(Log_s, 8))
+| where tostring(j.severity) == "critical"
+| summarize n = count(), events = make_set(tostring(j.type), 10),
+            first_seen = min(TimeGenerated), last_seen = max(TimeGenerated)
+    by source_ip = tostring(j.source_ip)
+| order by n desc
+```
+
+3) Did the built-in SOC respond? Containment events for the same IP:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(60m)
+| where ContainerName_s == "maison-miro" and Log_s startswith "[EVENT] "
+| extend j = parse_json(substring(Log_s, 8))
+| where tostring(j.type) startswith "containment."
+| project TimeGenerated, etype = tostring(j.type), source_ip = tostring(j.source_ip),
+          message = tostring(j.message)
+| order by TimeGenerated asc
+```
+
+`data.honeytoken_touched` is a zero-false-positive theft signal;
+`containment.engaged` / `containment.blocked` are the "auto-SOAR response worked"
+evidence. See `13-maison-logging.md` for the verdict mapping.
 
 ## Active Directory investigation path (GOAD incidents)
 

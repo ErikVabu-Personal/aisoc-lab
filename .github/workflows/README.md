@@ -79,7 +79,7 @@ Variables that get synced:
 | Variable | Synced from | Used by |
 | --- | --- | --- |
 | `AISOC_RESOURCE_GROUP` | Phase 1 | every workflow |
-| `AISOC_SHIP_CONTROL_PANEL_NAME` | Phase 1 | ship-cp workflow |
+| `AISOC_MAISON_NAME` | Phase 1 | maison-miro workflow |
 | `AISOC_RUNNER_NAME` | Phase 2 | runner workflow + gateway post-deploy hook |
 | `AISOC_ORCHESTRATOR_FUNCTION_NAME` | Phase 2 | orchestrator workflow |
 | `AISOC_SOC_GATEWAY_FUNCTION_NAME` | Phase 2 | gateway workflow |

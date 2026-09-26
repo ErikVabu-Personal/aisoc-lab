@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% from "_macros.html" import product_card %}
+{% block title %}Considered objects for a well-made home{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div class="hero-art" aria-hidden="true">
+    <img src="{{ url_for('art', seed=104) }}" alt="">
+    <img src="{{ url_for('art', seed=108) }}" alt="">
+    <img src="{{ url_for('art', seed=111) }}" alt="">
+  </div>
+  <div class="hero-copy">
+    <p class="eyebrow">New season · Autumn edit</p>
+    <h1>Objects made<br>by hand, to be<br><em>kept.</em></h1>
+    <p class="hero-lede">Ceramics, textiles, lighting and art in small batches — designed in Belgium, finished by a single maker, and made to live with for a very long time.</p>
+    <div class="hero-cta">
+      <a class="btn btn-dark" href="{{ url_for('shop') }}">Explore the collection</a>
+      <a class="btn btn-ghost" href="{{ url_for('shop') }}?category=Ceramics">New in ceramics</a>
+    </div>
+  </div>
+</section>
+
+<section class="category-strip">
+  {% for c in all_categories %}
+    <a href="{{ url_for('shop') }}?category={{ c|urlencode }}">{{ c }}</a>
+  {% endfor %}
+</section>
+
+<section class="section">
+  <div class="section-head">
+    <h2>The considered edit</h2>
+    <a class="section-link" href="{{ url_for('shop') }}">View all →</a>
+  </div>
+  <div class="product-grid">
+    {% for p in featured %}{{ product_card(p) }}{% endfor %}
+  </div>
+</section>
+
+<section class="editorial">
+  <div class="editorial-art">
+    <img src="{{ url_for('art', seed=101) }}" alt="">
+  </div>
+  <div class="editorial-copy">
+    <p class="eyebrow">The maison</p>
+    <h2>A small studio, a slow practice</h2>
+    <p>Every piece in the collection begins on a workbench in Ghent. We work in small batches with natural materials — Belgian flax, oak, wool, and stoneware — and we would rather make one thing well than a hundred things quickly.</p>
+    <p>The result is a home full of objects with a little more soul, and a little more life left in them.</p>
+    <a class="btn btn-ghost" href="{{ url_for('shop') }}">Read our story</a>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-head">
+    <h2>New this week</h2>
+    <a class="section-link" href="{{ url_for('shop') }}">View all →</a>
+  </div>
+  <div class="product-grid">
+    {% for p in new_in %}{{ product_card(p) }}{% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -6,19 +6,19 @@ output "log_analytics_workspace_id" {
   value = azurerm_log_analytics_workspace.law.id
 }
 
-output "ship_control_panel_url" {
-  value       = "https://${azurerm_container_app.shipcp.ingress[0].fqdn}"
-  description = "URL for the Ship Control Panel (Next.js) Container App."
+output "maison_url" {
+  value       = "https://${azurerm_container_app.maison.ingress[0].fqdn}"
+  description = "URL for the Maison Miró (web victim) Container App."
 }
 
-output "ship_control_panel_name" {
-  value       = azurerm_container_app.shipcp.name
-  description = "Name of the Ship Control Panel Container App."
+output "maison_name" {
+  value       = azurerm_container_app.maison.name
+  description = "Name of the Maison Miró Container App."
 }
 
-output "ship_control_panel_id" {
-  value       = azurerm_container_app.shipcp.id
-  description = "Resource ID of the Ship Control Panel Container App."
+output "maison_id" {
+  value       = azurerm_container_app.maison.id
+  description = "Resource ID of the Maison Miró Container App."
 }
 
 output "container_app_environment_name" {

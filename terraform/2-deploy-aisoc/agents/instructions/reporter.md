@@ -15,9 +15,9 @@ retrieve any context the investigator didn't already pull:
   consult the naming conventions page so your case note refers to
   the user correctly (e.g. "decommissioned legacy service account
   `svc_admin`", not "user svc_admin").
-- **Subsystem names** — when the case touches a Ship Control Panel
-  subsystem, use the canonical names from the monitored-systems
-  page, not your best guess.
+- **System / event names** — when the case touches Maison Miró or the
+  GOAD estate, use the canonical event/host names from the
+  monitored-systems page, not your best guess.
 - **Escalation routing** — before setting status / owner, check the
   escalation-matrix page for who should pick this up at L2 vs. L3.
 

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% from "_macros.html" import product_card %}
+{% block title %}{% if category %}{{ category }}{% elif is_search %}Search{% else %}Shop all{% endif %}{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  {% if is_search %}
+    <p class="eyebrow">Search</p>
+    <h1>{% if q %}Results for “{{ q }}”{% else %}Search the collection{% endif %}</h1>
+    {% if q %}<p class="page-sub">{{ products|length }} piece{{ '' if products|length == 1 else 's' }} found.</p>{% endif %}
+  {% elif category %}
+    <p class="eyebrow">Collection</p>
+    <h1>{{ category }}</h1>
+  {% else %}
+    <p class="eyebrow">The collection</p>
+    <h1>Shop all</h1>
+    <p class="page-sub">Considered objects, made by hand in small batches.</p>
+  {% endif %}
+</section>
+
+<section class="shop-layout">
+  <aside class="shop-filters">
+    <h4>Categories</h4>
+    <a href="{{ url_for('shop') }}" class="{{ 'active' if not category and not is_search }}">All pieces</a>
+    {% for c in all_categories %}
+      <a href="{{ url_for('shop') }}?category={{ c|urlencode }}" class="{{ 'active' if category == c }}">{{ c }}</a>
+    {% endfor %}
+  </aside>
+
+  <div class="shop-results">
+    {% if products %}
+      <div class="product-grid">
+        {% for p in products %}{{ product_card(p) }}{% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <p>No pieces to show here just yet.</p>
+        <a class="btn btn-ghost" href="{{ url_for('shop') }}">Browse the full collection</a>
+      </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

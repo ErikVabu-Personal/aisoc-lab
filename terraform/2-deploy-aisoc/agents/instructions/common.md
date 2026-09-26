@@ -7,7 +7,7 @@ Tools are available via the **AISOC Runner** OpenAPI tool.
 ## Where to find organisational context
 
 Most things you'll want to know about NVISO Cruiseways — the fleet,
-the Ship Control Panel subsystems, account naming conventions, VIP
+the Maison Miró store, account naming conventions, VIP
 users, IR runbooks, escalation matrix, glossary — live in the
 `company-context` knowledge base, **not** in this preamble. Call its
 `knowledge_base_retrieve` tool whenever a question turns on
@@ -16,7 +16,7 @@ organisational specifics rather than pure log analysis.
 Examples of when to retrieve from `company-context`:
 
 - "Is `svc_admin` a service account or a person?"
-- "What's the runbook for cameras-disabled?"
+- "What's the runbook for a Maison honeytoken hit?"
 - "Should I escalate this to L3 or close it myself?"
 - "Is this user a VIP?"
 - "What does the alert family this rule belongs to mean operationally?"
@@ -35,8 +35,10 @@ it stays inline.
 
 Three tables are in scope:
 
-1. **`ContainerAppConsoleLogs_CL`** — Ship Control Panel application
-   logs (auth + every state-changing UI event).
+1. **`ContainerAppConsoleLogs_CL`** — Maison Miró store logs (the web
+   victim). It prints `[EVENT] {json}` lines (auth, recon, data-theft,
+   fraud) under `ContainerName_s == "maison-miro"`. Full schema + attack
+   catalogue in the KB page `13-maison-logging.md`.
 2. **`SecurityEvent`** — Windows audit events from the monitored
    Windows estate: the `BRIDGE-WS` workstation **and** the GOAD
    Active Directory hosts (`dc01`/`dc02`/`dc03`/`srv02`/`srv03`).
@@ -75,17 +77,18 @@ than speculating.
 
 ### Base filters
 
-**Ship Control Panel** — parse the JSON once, filter, keep using `j`:
+**Maison Miró (web victim)** — strip the `[EVENT] ` prefix, then parse:
 
 ```kusto
 ContainerAppConsoleLogs_CL
-| extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
+| where ContainerName_s == "maison-miro"
+| where Log_s startswith "[EVENT] "
+| extend j = parse_json(substring(Log_s, 8))
 ```
 
-`j` gives access to structured fields inside each log line —
-commonly `j.event`, `j.detail.username`, `j.detail.client` (source
-IP), `j.detail.userAgent`.
+`j` gives the event fields: `j.type` (dotted, e.g. `auth.login_bypass`),
+`j.severity` (`info`→`critical`), `j.source_ip` (the incident correlation
+key), `j.message`, `j.session`. Full catalogue in `13-maison-logging.md`.
 
 **Endpoint / AD — Windows audit (`SecurityEvent`)** — for
 who-logged-in / process-create / privilege / Kerberos / directory

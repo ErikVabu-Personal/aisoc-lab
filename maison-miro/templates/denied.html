@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Access blocked{% endblock %}
+{% block content %}
+<section class="message-page">
+  <div class="denied-badge">⛔</div>
+  <h1>Access blocked</h1>
+  <p class="muted">This request was blocked by Maison Miró Security Operations.<br>
+  The activity on this session has been flagged and contained.</p>
+  <p class="denied-ref">Incident reference: MM-SOC-{{ now_year }}</p>
+  <a class="btn btn-dark" href="{{ url_for('index') }}">Return to the store</a>
+</section>
+{% endblock %}

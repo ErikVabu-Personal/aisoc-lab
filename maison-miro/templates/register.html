@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Create an account{% endblock %}
+
+{% block content %}
+<section class="auth-layout">
+  <div class="auth-art" aria-hidden="true">
+    <img src="{{ url_for('art', seed=110) }}" alt="">
+  </div>
+  <div class="auth-panel">
+    <p class="eyebrow">Join the maison</p>
+    <h1>Create an account</h1>
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="{{ url_for('register') }}" class="auth-form">
+      <div class="form-row">
+        <label>Full name
+          <input type="text" name="full_name" autocomplete="name">
+        </label>
+        <label>Username
+          <input type="text" name="username" autocomplete="username" required>
+        </label>
+      </div>
+      <label>Email
+        <input type="email" name="email" autocomplete="email">
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="new-password" required>
+      </label>
+      <div class="form-row">
+        <label>Address
+          <input type="text" name="address" autocomplete="street-address">
+        </label>
+        <label>Phone
+          <input type="tel" name="phone" autocomplete="tel">
+        </label>
+      </div>
+      <button type="submit" class="btn btn-dark btn-block">Create account</button>
+    </form>
+    <p class="auth-alt">Already have an account? <a href="{{ url_for('login') }}">Sign in</a></p>
+  </div>
+</section>
+{% endblock %}

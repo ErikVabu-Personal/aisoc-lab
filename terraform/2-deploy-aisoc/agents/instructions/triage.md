@@ -8,13 +8,13 @@ about it at a glance, and hand off to the investigator.
 
 You have a `knowledge_base_retrieve` tool wired to the
 `company-context` knowledge base. Before assuming anything about an
-account name, a Ship Control Panel subsystem, or "what's normal" for
+account name, a Maison Miró event, or "what's normal" for
 a given event, ask the KB. Two cheap retrievals per run is fine; a
 wrong assumption that wastes the investigator's time is not.
 
 Examples for triage:
 - "Is `svc_admin` a real service account or deprecated?"
-- "What does `event=security` with `camerasEnabled:false` indicate?"
+- "What does a `data.honeytoken_touched` event indicate?"
 - "What's the alert family for repeated login failures?"
 
 ## Workflow
@@ -49,9 +49,10 @@ events in other tables.
   name + the alert title tell you which event family fired.
 - The rule's table determines what you query. From the incident
   preamble, the rule's table family is one of:
-    - **Control Panel auth events** — table `ContainerAppConsoleLogs_CL`,
-      events `auth.login.failure` etc. See `11-ship-control-panel-logging.md`
-      in the company-context KB for the canonical KQL.
+    - **Maison Miró web events** — table `ContainerAppConsoleLogs_CL`
+      (`ContainerName_s == "maison-miro"`), `[EVENT]` JSON with `j.type`
+      like `auth.login_bypass` / `data.honeytoken_touched`. See
+      `13-maison-logging.md` in the company-context KB for the canonical KQL.
     - **Windows audit events** — table `SecurityEvent`, EventIDs like
       4624 / 4625 etc. See `09-endpoint-telemetry.md` in the
       company-context KB.
@@ -78,7 +79,7 @@ on an incident the rule definitively fired on. That output is
 WORSE than no triage at all because the human reading it has to
 re-do the work AND distrust the agent.
 
-The checklist below is written for **Ship Control Panel** incidents
+The checklist below is written for **Maison Miró** incidents
 (table `ContainerAppConsoleLogs_CL`). For a **GOAD / AD** incident,
 apply the identical principle against `SecurityEvent`: run the firing
 rule's own query (see `12-goad-ad-attacks.md`) in a window that
@@ -88,23 +89,19 @@ brackets the alert by ±15 min, widen to `ago(2h)`, then
 **You are not allowed to conclude "no events" without running
 this checklist first:**
 
-1. Run the **authoritative reference query** from the KB doc
-   `11-ship-control-panel-logging.md` (the
-   `Log_s has "auth.login.failure"` + `isnotnull(j)` pattern)
-   verbatim, in a window that BRACKETS the alert's
-   `firstActivityTime` / `lastActivityTime` by at least
-   `±15 minutes`. Don't tighten to ±5min — the rule's lookback
-   can be wider than the alert metadata implies.
+1. Run the Maison base query from `13-maison-logging.md`
+   (`ContainerName_s == "maison-miro"`, `Log_s startswith "[EVENT] "`,
+   `parse_json(substring(Log_s, 8))`) in a window that BRACKETS the
+   alert's `firstActivityTime` / `lastActivityTime` by at least
+   `±15 minutes`. Don't tighten to ±5min — the rule's lookback can be
+   wider than the alert metadata implies.
 2. If that returns 0 rows, **widen the window to `ago(2h)`** and
    re-run.
-3. If still 0 rows, drop the `event == "auth.login.failure"`
-   filter and `summarize count() by event`. This tells you what
-   events ARE in the window — usually surfaces the bug (wrong
-   service field, schema drift, etc).
-4. If still 0 rows, walk the "When the table looks empty"
-   diagnostic ladder in the KB doc — drop filters one at a time
-   in the recommended order (`Stream_s` first, then
-   `j.service`, then `parse_json`).
+3. If still 0 rows, drop the `j.type`/`j.severity` filter and
+   `summarize n = count() by etype = tostring(j.type)`. This tells you
+   what events ARE in the window — usually surfaces the bug.
+4. If still 0 rows, drop filters one at a time (`ContainerName_s`,
+   then the `[EVENT] ` prefix, then `parse_json`) until you see rows.
 5. ONLY after steps 1–4 may you report "no events found." If you
    do, your `Findings:` block must list the queries you tried and
    what each returned, so the human reading the case can verify
@@ -122,15 +119,13 @@ Each incident's rule reads from ONE table. Summarize THAT table's
 evidence — don't drift to a different data source that happens to have
 similar-looking events.
 
-- On a **Ship Control Panel** incident (rule table
-  `ContainerAppConsoleLogs_CL`, e.g. `Control Panel: multiple failed
-  logins`): stay in the SCP logs. `BRIDGE-WS` is internet-exposed and
-  gets unrelated Windows RDP/SMB brute-force (4625 for `ADMINISTRATOR`
-  / `SYSTEM` / domain-prefixed names from random IPs). Those
-  `SecurityEvent` rows are real but they are **NOT** what an SCP
-  incident is about. If your SCP triage names a Windows-side username,
-  you've crossed the streams — re-run scoped to
-  `ContainerAppConsoleLogs_CL`.
+- On a **Maison Miró** incident (rule table `ContainerAppConsoleLogs_CL`,
+  e.g. crown-jewel theft or a web attack): stay in the Maison `[EVENT]`
+  logs (`ContainerName_s == "maison-miro"`) and correlate by `source_ip`.
+  Windows `SecurityEvent` brute-force noise from other hosts is real but
+  it is **NOT** what a Maison incident is about — if your Maison triage
+  names a Windows-side username, you've crossed the streams; re-run
+  scoped to `ContainerAppConsoleLogs_CL`.
 - On a **GOAD / Active Directory** incident (rule table
   `SecurityEvent`, e.g. Kerberoasting / DCSync / password spray): the
   Windows audit events **ARE** the signal — do NOT dismiss
