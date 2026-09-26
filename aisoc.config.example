@@ -144,3 +144,23 @@
 # GitHub repo to sync repo-vars into. Defaults to ErikVabu-Personal/
 # aisoc-lab; override here if you fork.
 # AISOC_GITHUB_REPO="<owner>/<repo>"
+
+# ── Phase 4 — onboard GOAD (Active Directory lab) into Sentinel ──────
+# Off by default. Set to 1 (or pass --onboard-goad) to also run Phase 4:
+# attach an existing GOAD lab's Windows VMs to the Sentinel workspace
+# (AMA + DCR + Sysmon) and deploy the AD analytic rules + AD KB runbooks.
+# Requires GOAD deployed separately with `goad.sh -p azure` IN THE SAME
+# region as Phase 1. See terraform/4-onboard-goad/README.md.
+# AISOC_ONBOARD_GOAD=1
+# GOAD's Azure resource group (its lab_identifier; default: GOAD):
+# TF_VAR_goad_resource_group="GOAD"
+
+# ── Phase 5 — RedAmon (AI red-team attacker) in the GOAD VNet ────────
+# Off by default. Set to 1 (or pass --with-redamon) to also deploy a RedAmon
+# VM into GOAD's VNet (needs GOAD on Azure). Reach its UI via an SSH tunnel;
+# the on-box install runs in tmux. See terraform/5-deploy-redamon/README.md.
+# AISOC_DEPLOY_REDAMON=1
+# Lock SSH/UI to your IP (strongly recommended):
+# TF_VAR_admin_cidrs='["203.0.113.10/32"]'
+# Optional: reach a self-hosted LLM over Tailscale (as on the AWS box):
+# TF_VAR_home_llm_tailscale_ip="100.x.y.z"

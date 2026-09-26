@@ -1,0 +1,15 @@
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4662
+| where AccessMask has "0x100"                   // Control Access (extended right)
+// DS-Replication-Get-Changes / -All / -In-Filtered-Set rights GUIDs:
+| where Properties has_any (
+    "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2",
+    "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2",
+    "89e95b76-444d-4c62-991a-0facbeda640c")
+| where SubjectUserName !endswith "$"            // real DCs replicate as machine$ - exclude them
+| summarize ReplicationOps = count(),
+            FirstSeen = min(TimeGenerated),
+            LastSeen = max(TimeGenerated)
+        by SubjectUserName, Computer
+| extend timestamp = LastSeen

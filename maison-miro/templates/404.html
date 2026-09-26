@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Not found{% endblock %}
+{% block content %}
+<section class="message-page">
+  <img src="{{ url_for('art', seed=42) }}" alt="" class="message-art">
+  <h1>This page has wandered off</h1>
+  <p class="muted">We couldn't find what you were looking for.</p>
+  <a class="btn btn-dark" href="{{ url_for('index') }}">Back to the maison</a>
+</section>
+{% endblock %}

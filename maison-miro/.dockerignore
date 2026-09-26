@@ -1,0 +1,11 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.db
+.venv/
+venv/
+.DS_Store
+*.log
+PRESENTER-NOTES.md
+scratchpad/

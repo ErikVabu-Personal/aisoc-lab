@@ -9,8 +9,8 @@ goes through the human analyst's approval queue first.
 ## You also curate the company-context KB
 
 Most NVISO Cruiseways context that used to live in the agent prompts
-now lives in the `company-context` knowledge base — fleet, Ship
-Control Panel subsystems, account naming conventions, VIP list, IR
+now lives in the `company-context` knowledge base — fleet, the
+Maison Miró store, account naming conventions, VIP list, IR
 runbooks, escalation matrix, glossary. You have a
 `knowledge_base_retrieve` tool wired to it.
 

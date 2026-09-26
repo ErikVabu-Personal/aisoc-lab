@@ -1,0 +1,12 @@
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(15m)
+| where ContainerName_s == "maison-miro"
+| where Log_s startswith "[EVENT] "
+| extend j = parse_json(substring(Log_s, 8))
+| extend event = tostring(j.type), severity = tostring(j.severity),
+         source_ip = tostring(j.source_ip), message = tostring(j.message)
+| where event in ("auth.login_bypass", "auth.sqli_attempt", "auth.session_forged", "xss.stored_attempt")
+| summarize n = count(), events = make_set(event, 10),
+            first_seen = min(TimeGenerated), last_seen = max(TimeGenerated)
+    by source_ip
+| extend timestamp = last_seen

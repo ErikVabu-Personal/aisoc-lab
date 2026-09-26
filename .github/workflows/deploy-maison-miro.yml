@@ -1,12 +1,12 @@
-name: Build + Publish Ship Control Panel (GHCR)
+name: Build + Publish Maison Miró (GHCR)
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
     paths:
-      - 'ship-control-panel/**'
-      - '.github/workflows/deploy-ship-control-panel.yml'
+      - 'maison-miro/**'
+      - '.github/workflows/deploy-maison-miro.yml'
 
 jobs:
   build_and_deploy:
@@ -29,14 +29,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Ship Control Panel
+      - name: Build and push Maison Miró
         uses: docker/build-push-action@v6
         with:
-          context: ./ship-control-panel
+          context: ./maison-miro
           push: true
           tags: |
-            ghcr.io/erikvabu-personal/aisoc-ship-control-panel:latest
-            ghcr.io/erikvabu-personal/aisoc-ship-control-panel:${{ github.sha }}
+            ghcr.io/erikvabu-personal/aisoc-maison-miro:latest
+            ghcr.io/erikvabu-personal/aisoc-maison-miro:${{ github.sha }}
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -50,15 +50,15 @@ jobs:
         run: |
           set -euo pipefail
           RG="${{ vars.AISOC_RESOURCE_GROUP }}"
-          NAME="${{ vars.AISOC_SHIP_CONTROL_PANEL_NAME }}"
+          NAME="${{ vars.AISOC_MAISON_NAME }}"
           if [[ -z "$RG" || -z "$NAME" ]]; then
-            echo "::warning::AISOC_RESOURCE_GROUP or AISOC_SHIP_CONTROL_PANEL_NAME repo variable not set; skipping force-roll"
+            echo "::warning::AISOC_RESOURCE_GROUP or AISOC_MAISON_NAME repo variable not set; skipping force-roll"
             exit 0
           fi
-          IMAGE="ghcr.io/erikvabu-personal/aisoc-ship-control-panel:${{ github.sha }}"
+          IMAGE="ghcr.io/erikvabu-personal/aisoc-maison-miro:${{ github.sha }}"
           echo "Updating $NAME (RG: $RG) to $IMAGE"
           az containerapp update \
             --resource-group "$RG" \
             --name "$NAME" \
             --image "$IMAGE" >/dev/null
-          echo "OK: ship-control-panel Container App updated."
+          echo "OK: maison-miro Container App updated."

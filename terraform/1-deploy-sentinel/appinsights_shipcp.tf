@@ -11,8 +11,8 @@ resource "azurerm_application_insights" "shipcp" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 
-  application_type    = "web"
-  workspace_id        = azurerm_log_analytics_workspace.law.id
+  application_type = "web"
+  workspace_id     = azurerm_log_analytics_workspace.law.id
 
   retention_in_days = 30
 

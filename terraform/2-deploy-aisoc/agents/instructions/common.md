@@ -7,7 +7,7 @@ Tools are available via the **AISOC Runner** OpenAPI tool.
 ## Where to find organisational context
 
 Most things you'll want to know about NVISO Cruiseways — the fleet,
-the Ship Control Panel subsystems, account naming conventions, VIP
+the Maison Miró store, account naming conventions, VIP
 users, IR runbooks, escalation matrix, glossary — live in the
 `company-context` knowledge base, **not** in this preamble. Call its
 `knowledge_base_retrieve` tool whenever a question turns on
@@ -16,7 +16,7 @@ organisational specifics rather than pure log analysis.
 Examples of when to retrieve from `company-context`:
 
 - "Is `svc_admin` a service account or a person?"
-- "What's the runbook for cameras-disabled?"
+- "What's the runbook for a Maison honeytoken hit?"
 - "Should I escalate this to L3 or close it myself?"
 - "Is this user a VIP?"
 - "What does the alert family this rule belongs to mean operationally?"
@@ -35,26 +35,39 @@ it stays inline.
 
 Three tables are in scope:
 
-1. **`ContainerAppConsoleLogs_CL`** — Ship Control Panel application
-   logs (auth + every state-changing UI event).
-2. **`SecurityEvent`** — Windows audit events from `BRIDGE-WS`
-   (the bridge workstation). Native Sentinel-parsed table; rows
-   are individual security audit events with proper columns
-   (`Account`, `AccountName`, `LogonType`, `IpAddress`,
-   `WorkstationName`, `Process`, `CommandLine`, …). Use this for
-   any user / logon / process-create question — EID 4624 (logon
-   success), 4625 (failure), 4634 (logoff), 4672 (special privilege),
-   4688 (process create), 4720 (account created), 4740 (locked
-   out).
-3. **`Event`** — Application / System / Sysmon from `BRIDGE-WS`.
-   Sysmon writes to the `Microsoft-Windows-Sysmon/Operational`
-   channel (`Source == "Microsoft-Windows-Sysmon"`) with the
-   SwiftOnSecurity verbose config. Schema is loose — body lives
-   in `EventData` as XML; `parse_xml()` it for fields beyond
-   `Source`, `EventID`, `Computer`, `RenderedDescription`.
+1. **`ContainerAppConsoleLogs_CL`** — Maison Miró store logs (the web
+   victim). It prints `[EVENT] {json}` lines (auth, recon, data-theft,
+   fraud) under `ContainerName_s == "maison-miro"`. Full schema + attack
+   catalogue in the KB page `13-maison-logging.md`.
+2. **`SecurityEvent`** — Windows audit events from the monitored
+   Windows estate: the `BRIDGE-WS` workstation **and** the GOAD
+   Active Directory hosts (`dc01`/`dc02`/`dc03`/`srv02`/`srv03`).
+   Native Sentinel-parsed table; rows are individual security audit
+   events with proper columns (`Account`, `AccountName`,
+   `LogonType`, `IpAddress`, `WorkstationName`, `Process`,
+   `CommandLine`, `ServiceName`, `TicketEncryptionType`,
+   `PreAuthType`, `Properties`, …). Use this for any user / logon /
+   process / Kerberos / directory question:
+   - Endpoint: 4624 (logon success), 4625 (failure), 4634 (logoff),
+     4672 (special privilege), 4688 (process create), 4720 (account
+     created), 4740 (locked out).
+   - **Active Directory attacks:** 4768 (TGT/AS-REQ — AS-REP roast),
+     4769 (service ticket/TGS — Kerberoasting), 4771 (pre-auth
+     failure — spray), 4776 (NTLM validation), 4662 (directory
+     access — DCSync), 5136 (directory object change). The AD-attack
+     EID → detection map + runbooks are in the KB page
+     `12-goad-ad-attacks.md`.
+3. **`Event`** — Application / System / Sysmon from the monitored
+   Windows hosts. Sysmon writes to the
+   `Microsoft-Windows-Sysmon/Operational` channel
+   (`Source == "Microsoft-Windows-Sysmon"`) with the SwiftOnSecurity
+   verbose config. Schema is loose — body lives in `EventData` as
+   XML; `parse_xml()` it for fields beyond `Source`, `EventID`,
+   `Computer`, `RenderedDescription`.
 
-Per-host context (who uses `BRIDGE-WS`, why it sees what it sees)
-lives in the `company-context` KB.
+Per-host context (which hosts exist, what each is for) lives in the
+`company-context` KB — see `02-monitored-systems.md` (estate) and
+`12-goad-ad-attacks.md` (the GOAD domain).
 
 Tables NOT present and NOT to be referenced:
 `SigninLogs`, `AuditLogs`, `AuthenticationLogs`, Entra / Azure AD
@@ -64,26 +77,29 @@ than speculating.
 
 ### Base filters
 
-**Ship Control Panel** — parse the JSON once, filter, keep using `j`:
+**Maison Miró (web victim)** — strip the `[EVENT] ` prefix, then parse:
 
 ```kusto
 ContainerAppConsoleLogs_CL
-| extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
+| where ContainerName_s == "maison-miro"
+| where Log_s startswith "[EVENT] "
+| extend j = parse_json(substring(Log_s, 8))
 ```
 
-`j` gives access to structured fields inside each log line —
-commonly `j.event`, `j.detail.username`, `j.detail.client` (source
-IP), `j.detail.userAgent`.
+`j` gives the event fields: `j.type` (dotted, e.g. `auth.login_bypass`),
+`j.severity` (`info`→`critical`), `j.source_ip` (the incident correlation
+key), `j.message`, `j.session`. Full catalogue in `13-maison-logging.md`.
 
-**Endpoint — Windows audit (`SecurityEvent`)** — for who-logged-in /
-process-create / privilege questions, columns are pre-parsed:
+**Endpoint / AD — Windows audit (`SecurityEvent`)** — for
+who-logged-in / process-create / privilege / Kerberos / directory
+questions, columns are pre-parsed. Scope to the host(s) the incident
+names; omit the host filter to search the whole estate:
 
 ```kusto
 SecurityEvent
 | where TimeGenerated > ago(1h)
-| where Computer == "BRIDGE-WS"
-// then filter by EventID, AccountName, LogonType, IpAddress, …
+// | where Computer == "<host from the incident>"   // e.g. "BRIDGE-WS" or "dc01"
+// then filter by EventID, AccountName, TargetUserName, LogonType, IpAddress, …
 ```
 
 **Endpoint — everything else (`Event`)** — Sysmon and generic
@@ -92,7 +108,7 @@ Windows logs:
 ```kusto
 Event
 | where TimeGenerated > ago(1h)
-| where Computer == "BRIDGE-WS"
+// | where Computer == "<host from the incident>"
 // optionally: | where Source == "Microsoft-Windows-Sysmon"
 ```
 

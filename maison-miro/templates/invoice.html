@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Invoice #{{ '%04d' % order['id'] }}{% endblock %}
+
+{% block content %}
+<section class="invoice-sheet">
+  <div class="invoice-top">
+    <div>
+      <div class="wordmark">MAISON&nbsp;MIRÓ</div>
+      <p class="muted">Rue Antoine Dansaert 12<br>1000 Brussels, Belgium<br>BE 0700.123.456</p>
+    </div>
+    <div class="invoice-meta">
+      <h1>Invoice</h1>
+      <p>#{{ '%08d' % order['id'] }}</p>
+      <p class="muted">{{ order['created_at'] }}</p>
+    </div>
+  </div>
+
+  <div class="invoice-parties">
+    <div>
+      <h4>Billed to</h4>
+      <p>{{ order['ship_name'] }}<br>{{ order['ship_address'] }}<br>{{ order['ship_email'] }}</p>
+    </div>
+    <div>
+      <h4>Status</h4>
+      <p><span class="status status-{{ order['status']|lower }}">{{ order['status'] }}</span></p>
+    </div>
+  </div>
+
+  <table class="order-table invoice-table">
+    <thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr></thead>
+    <tbody>
+      {% for it in items %}
+      <tr>
+        <td>{{ it['name'] }}</td>
+        <td>{{ it['qty'] }}</td>
+        <td>{{ it['price_cents']|eur }}</td>
+        <td>{{ (it['price_cents'] * it['qty'])|eur }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><td colspan="3">Total (incl. VAT)</td><td>{{ order['total_cents']|eur }}</td></tr>
+    </tfoot>
+  </table>
+
+  <p class="invoice-foot muted">Thank you for supporting a small studio. Questions about this invoice? Write to studio@maisonmiro.example</p>
+</section>
+{% endblock %}

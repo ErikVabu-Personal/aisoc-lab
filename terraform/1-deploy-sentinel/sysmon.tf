@@ -33,8 +33,8 @@ variable "enable_sysmon" {
     true (Sysmon is the standard EDR-lite signal source for the
     AISOC demo).
   EOT
-  type    = bool
-  default = true
+  type        = bool
+  default     = true
 }
 
 variable "sysmon_install_script_url" {
@@ -43,8 +43,8 @@ variable "sysmon_install_script_url" {
     this repo's main branch on GitHub. Override if you've forked
     the repo or want to pin to a specific commit SHA.
   EOT
-  type    = string
-  default = "https://raw.githubusercontent.com/ErikVabu-Personal/aisoc-lab/main/terraform/1-deploy-sentinel/scripts/install_sysmon.ps1"
+  type        = string
+  default     = "https://raw.githubusercontent.com/ErikVabu-Personal/aisoc-lab/main/terraform/1-deploy-sentinel/scripts/install_sysmon.ps1"
 }
 
 variable "sysmon_config_url" {
@@ -54,8 +54,8 @@ variable "sysmon_config_url" {
     baseline). Override to pin a specific commit, swap to
     Olaf Hartong's sysmon-modular, or point at your own.
   EOT
-  type    = string
-  default = "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml"
+  type        = string
+  default     = "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml"
 }
 
 

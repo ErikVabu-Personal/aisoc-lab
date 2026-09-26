@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Studio dashboard{% endblock %}
+
+{% block content %}
+<section class="page-head admin-head">
+  <div>
+    <p class="eyebrow">Studio · Internal</p>
+    <h1>Dashboard</h1>
+  </div>
+  <form method="post" action="{{ url_for('admin_reset') }}" onsubmit="return confirm('Reset all demo data to its original state?')">
+    <button type="submit" class="btn btn-ghost">Reset demo data</button>
+  </form>
+</section>
+
+<section class="stat-row">
+  <div class="stat"><span class="stat-label">Customers</span><span class="stat-value">{{ customers|length }}</span></div>
+  <div class="stat"><span class="stat-label">Orders</span><span class="stat-value">{{ orders|length }}</span></div>
+  <div class="stat"><span class="stat-label">Revenue</span><span class="stat-value">{{ revenue|eur }}</span></div>
+</section>
+
+<section class="section">
+  <div class="section-head"><h2>Recent orders</h2></div>
+  <div class="table-wrap">
+    <table class="admin-table">
+      <thead><tr><th>Order</th><th>Customer</th><th>Ship to</th><th>Date</th><th>Status</th><th>Total</th></tr></thead>
+      <tbody>
+        {% for o in orders %}
+        <tr>
+          <td><a href="{{ url_for('admin_order', order_id=o['id']) }}">#{{ '%04d' % o['id'] }}</a></td>
+          <td>{{ o['username'] or 'guest' }}</td>
+          <td>{{ o['ship_name'] }}<br><span class="muted small">{{ o['ship_address'] }}</span></td>
+          <td>{{ o['created_at'] }}</td>
+          <td><span class="status status-{{ o['status']|lower }}">{{ o['status'] }}</span></td>
+          <td>{{ o['total_cents']|eur }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-head"><h2>Customers</h2></div>
+  <div class="table-wrap">
+    <table class="admin-table">
+      <thead><tr><th>ID</th><th>Username</th><th>Name</th><th>Email</th><th>Address</th><th>Phone</th><th>Role</th></tr></thead>
+      <tbody>
+        {% for c in customers %}
+        <tr>
+          <td>{{ c['id'] }}</td>
+          <td>{{ c['username'] }}</td>
+          <td>{{ c['full_name'] }}</td>
+          <td>{{ c['email'] }}</td>
+          <td class="small">{{ c['address'] }}</td>
+          <td>{{ c['phone'] }}</td>
+          <td><span class="status status-{{ 'delivered' if c['role']=='admin' else 'paid' }}">{{ c['role'] }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

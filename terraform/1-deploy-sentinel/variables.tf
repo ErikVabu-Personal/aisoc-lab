@@ -19,7 +19,7 @@ variable "location_candidates" {
 variable "vm_size_candidates" {
   description = "Ordered list of VM sizes to try when auto-selecting (cost-effective first)"
   type        = list(string)
-  default     = [
+  default = [
     "Standard_B2s",
     "Standard_B1ms",
     "Standard_D2as_v5",
@@ -176,10 +176,30 @@ variable "auto_shutdown_timezone" {
   default     = "Romance Standard Time"
 }
 
-# --- Demo target app: Ship Control Panel (Next.js on ACA) ---
+# --- Demo target app: Maison Miró (intentionally-vulnerable store, Flask on ACA) ---
 
-variable "ship_control_panel_image" {
-  description = "Container image for the Ship Control Panel (Next.js). Build via GH Actions and deploy by SHA for determinism."
+variable "maison_image" {
+  description = "Container image for Maison Miró. Built via .github/workflows/deploy-maison-miro.yml (GHCR); pin a :<SHA> tag for deterministic demos."
   type        = string
-  default     = "ghcr.io/erikvabu-personal/aisoc-ship-control-panel:latest"
+  default     = "ghcr.io/erikvabu-personal/aisoc-maison-miro:latest"
+}
+
+variable "soc_key" {
+  description = "Maison Miró SOC API key (X-SOC-Key) for the /soc/* control plane."
+  type        = string
+  default     = "soc-demo-key"
+  sensitive   = true
+}
+
+variable "soc_armed" {
+  description = "Maison Miró automated SOC response armed on boot ('1' on / '0' off)."
+  type        = string
+  default     = "1"
+}
+
+variable "sign_secret" {
+  description = "HMAC key backing Maison Miró's forged-session detection (auth.session_forged)."
+  type        = string
+  default     = "maison-miro-demo-signing-secret"
+  sensitive   = true
 }

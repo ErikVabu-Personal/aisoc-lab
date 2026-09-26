@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Your cart{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Your cart</p>
+  <h1>Shopping bag</h1>
+</section>
+
+<section class="cart-layout">
+  <div class="cart-items" data-cart-items>
+    <!-- populated from localStorage by main.js -->
+  </div>
+
+  <aside class="cart-summary">
+    <h3>Order summary</h3>
+    <div class="summary-row"><span>Subtotal</span><span data-cart-subtotal>€ 0,00</span></div>
+    <div class="summary-row muted"><span>Delivery</span><span>Calculated at next step</span></div>
+    <div class="summary-row summary-total"><span>Total</span><span data-cart-total>€ 0,00</span></div>
+
+    <form class="checkout-form" data-checkout-form>
+      <h4>Shipping details</h4>
+      <label>Full name<input type="text" name="name" value="{{ current_user.name if current_user else '' }}" required></label>
+      <label>Email<input type="email" name="email" required></label>
+      <label>Address<input type="text" name="address" required></label>
+      <button type="submit" class="btn btn-dark btn-block" data-place-order>Place order</button>
+    </form>
+    <p class="muted cart-empty-note" data-cart-empty hidden>Your cart is empty. <a href="{{ url_for('shop') }}">Browse the collection →</a></p>
+  </aside>
+</section>
+{% endblock %}

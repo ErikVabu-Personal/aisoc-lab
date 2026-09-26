@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Something went wrong{% endblock %}
+{% block content %}
+<section class="message-page">
+  <h1>Something went wrong</h1>
+  <p class="muted">The studio has been notified. Technical details are shown below.</p>
+  <div class="error-box">
+    <p class="error-summary">{{ error }}</p>
+    <pre class="error-trace">{{ traceback }}</pre>
+  </div>
+  <a class="btn btn-dark" href="{{ url_for('index') }}">Back to the maison</a>
+</section>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Your account{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Your account</p>
+  <h1>Hello, {{ profile['full_name'].split(' ')[0] if profile else current_user.name }}</h1>
+</section>
+
+<section class="account-layout">
+  <div class="account-card">
+    <h3>Profile</h3>
+    {% if profile %}
+    <dl class="detail-list">
+      <dt>Name</dt><dd>{{ profile['full_name'] }}</dd>
+      <dt>Username</dt><dd>{{ profile['username'] }}</dd>
+      <dt>Email</dt><dd>{{ profile['email'] }}</dd>
+      <dt>Address</dt><dd>{{ profile['address'] }}</dd>
+      <dt>Phone</dt><dd>{{ profile['phone'] }}</dd>
+    </dl>
+    {% endif %}
+    <a class="btn btn-ghost" href="{{ url_for('logout') }}">Sign out</a>
+  </div>
+
+  <div class="account-orders">
+    <h3>Order history</h3>
+    {% if orders %}
+      <table class="order-table">
+        <thead>
+          <tr><th>Order</th><th>Date</th><th>Status</th><th>Total</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for o in orders %}
+          <tr>
+            <td>#{{ '%04d' % o['id'] }}</td>
+            <td>{{ o['created_at'] }}</td>
+            <td><span class="status status-{{ o['status']|lower }}">{{ o['status'] }}</span></td>
+            <td>{{ o['total_cents']|eur }}</td>
+            <td><a href="{{ url_for('order_detail', order_id=o['id']) }}">View →</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">You have no orders yet. <a href="{{ url_for('shop') }}">Start browsing →</a></p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
