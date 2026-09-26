@@ -1,0 +1,15 @@
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4769
+| where TicketEncryptionType == "0x17"          // RC4-HMAC - the roastable cipher
+| where ServiceName !endswith "$"               // target is a user service account, not a machine
+| where ServiceName != "krbtgt"
+| where TargetUserName !endswith "$" and TargetUserName != "krbtgt"
+| summarize DistinctServices = dcount(ServiceName),
+            Services = make_set(ServiceName, 25),
+            RequestCount = count(),
+            FirstSeen = min(TimeGenerated),
+            LastSeen = max(TimeGenerated)
+        by TargetUserName, IpAddress
+| where DistinctServices >= 5
+| extend timestamp = LastSeen
