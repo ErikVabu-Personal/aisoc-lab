@@ -48,19 +48,27 @@ TI knows the world. Local context first, then external context.
 ## Default workflow
 
 - Start from incident context (`get_incident`).
-- Identify key entities (usernames, client IPs, user agents) and time
-  window.
-- **Enumerate the Control Panel dataset first**: query
-  `ContainerAppConsoleLogs_CL` with the base filter from common
-  instructions to confirm what event types are present in the time
-  window you care about. Treat the schema as discovered, not assumed.
-- Run targeted KQL to confirm/deny and expand scope.
-- Only `ContainerAppConsoleLogs_CL` is available (see common
-  instructions). If the question can't be answered from that table
-  alone, say so explicitly rather than hallucinating other tables.
+- Identify key entities (usernames, client IPs, hostnames, service
+  names) and the time window.
+- **Determine the incident's data source from the firing rule**, then
+  enumerate THAT table first to confirm which event types are present
+  in the window (treat the schema as discovered, not assumed):
+    - **Ship Control Panel** rule → `ContainerAppConsoleLogs_CL`
+      (base filter from common instructions) — follow the SCP path below.
+    - **GOAD / Active Directory** rule → `SecurityEvent` on the DC(s)
+      the alert names — follow the "Active Directory investigation
+      path" section and `12-goad-ad-attacks.md`.
+- Run targeted KQL to confirm/deny and expand scope. `ContainerAppConsoleLogs_CL`,
+  `SecurityEvent` and `Event` are all available — use whichever the
+  case needs; don't restrict yourself to one table.
 - Build a short timeline of key events.
 
-## Required first step — retrieve the SCP logging schema
+## SCP incidents — required first step: retrieve the SCP logging schema
+
+*(This section and the two below are the **Ship Control Panel** path —
+follow them when the firing rule reads `ContainerAppConsoleLogs_CL`.
+For a GOAD / Active Directory incident, skip to "Active Directory
+investigation path" further down.)*
 
 Before running ANY KQL against `ContainerAppConsoleLogs_CL`, retrieve
 **`11-ship-control-panel-logging.md`** from the company-context KB.
@@ -161,6 +169,73 @@ ContainerAppConsoleLogs_CL
 | order by TimeGenerated asc
 | take 50
 ```
+
+## Active Directory investigation path (GOAD incidents)
+
+When the firing rule reads `SecurityEvent` on a domain controller
+(Kerberoasting, DCSync, password spray, AS-REP roasting), follow this
+instead of the SCP path above.
+
+**First step:** retrieve **`12-goad-ad-attacks.md`** from the
+company-context KB — it has the EID reference, the per-attack detection
+logic, "what normal looks like," and the verdict/escalation mapping.
+Also retrieve `03-account-naming.md` for account intent.
+
+**Schema discovery** — see what the DC emitted in the window:
+
+```kusto
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where Computer has "dc"            // or the host named on the alert
+| summarize n = count() by EventID
+| order by n desc
+```
+
+**Per-attack confirm queries** (match to the rule that fired):
+
+```kusto
+// Kerberoasting — RC4 service-ticket requests (4769) for user SPNs
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4769 and TicketEncryptionType == "0x17"
+| where ServiceName !endswith "$" and ServiceName != "krbtgt"
+| summarize distinct_services = dcount(ServiceName),
+            services = make_set(ServiceName, 25), n = count(),
+            first_seen = min(TimeGenerated), last_seen = max(TimeGenerated)
+    by TargetUserName, IpAddress
+| order by distinct_services desc
+```
+
+```kusto
+// DCSync — directory replication by a non-machine account (4662)
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4662 and AccessMask has "0x100"
+| where Properties has_any ("1131f6aa-9c07-11d1-f79f-00c04fc2dcd2",
+        "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2","89e95b76-444d-4c62-991a-0facbeda640c")
+| where SubjectUserName !endswith "$"
+| summarize n = count() by SubjectUserName, Computer, first_seen = min(TimeGenerated)
+```
+
+```kusto
+// Password spray — one source, many accounts (4625 / 4771)
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID in (4625, 4771) and TargetUserName !endswith "$"
+| summarize distinct_users = dcount(TargetUserName),
+            accounts = make_set(TargetUserName, 40), n = count()
+    by IpAddress
+| order by distinct_users desc
+```
+
+**Pivot to who + where.** AD-attack source IPs are usually internal
+(an attacker foothold). Resolve the workstation/account behind the IP:
+correlate the source IP to a host (Sysmon EID 3 outbound, or the
+DC's 4624/4625 `IpAddress`/`WorkstationName`), then find the
+interactive user on that host (4624 `LogonType in (2,10,11)`), then
+use the KB (`03-account-naming.md`, `12-goad-ad-attacks.md`) for
+role/context. Record the compromised account + the source host in
+your **Entities (resolved)** block.
 
 ## Threat Intel hook (`query_threat_intel`)
 

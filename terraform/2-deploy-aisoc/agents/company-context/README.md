@@ -22,6 +22,7 @@ conventions, runbooks, glossary.
 | `09-endpoint-telemetry.md`           | `BRIDGE-WS` + Sysmon — schema, base filter, common Sysmon EIDs, KQL pivot patterns |
 | `10-org-chart.md`                    | Authoritative roster (bridge officers, engineering, SOC team) + the captain-on-`BRIDGE-WS` correlation pattern that resolves false positives on the credential-stuffing alert via SCP source-IP → workstation → Windows-logon-user |
 | `11-ship-control-panel-logging.md`   | Canonical SCP logging schema: `ContainerAppConsoleLogs_CL` shape, base filter, `event` catalogue, `detail.*` field reference, time-window guidance, "table looks empty" diagnostic ladder |
+| `12-goad-ad-attacks.md`              | GOAD Active Directory estate: AD-attack EID reference (`SecurityEvent`), per-attack detection logic + runbooks (Kerberoast / DCSync / password spray / AS-REP roast), verdict/escalation mapping |
 
 ## Uploading to the blob container
 

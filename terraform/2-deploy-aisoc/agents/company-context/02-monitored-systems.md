@@ -1,6 +1,6 @@
 # Monitored systems — Ship Control Panel subsystems
 
-Two assets are currently in scope for AISOC monitoring:
+The following assets are in scope for AISOC monitoring:
 
 1. The **Ship Control Panel** (Bridge & Operations) — the
    operations surface the bridge officer uses while at sea. App
@@ -15,6 +15,15 @@ Two assets are currently in scope for AISOC monitoring:
    `Computer == "BRIDGE-WS"`. See `09-endpoint-telemetry.md`
    for the schema, base filters, and pivot patterns; the
    captain ↔ host pairing is in `10-org-chart.md`.
+3. The **corporate Active Directory estate (GOAD)** — the
+   shore-side Windows domains behind the fleet: domain
+   controllers `dc01` / `dc02` / `dc03` and member servers
+   `srv02` / `srv03`, all with the Azure Monitor Agent + Sysmon.
+   Their audit + Sysmon telemetry flows into `SecurityEvent`
+   and `Event`. This is where identity attacks (Kerberoasting,
+   DCSync, password spray, AS-REP roasting) show up. The EID
+   reference, detection logic, and AD runbooks are in
+   **`12-goad-ad-attacks.md`**.
 
 The Ship Control Panel groups its functionality into the
 following subsystems — each is a distinct tab in the UI and emits

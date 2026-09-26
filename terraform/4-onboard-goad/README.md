@@ -70,14 +70,22 @@ PixelAgents Web.
 | `enable_ad_rules` | `true` | Deploy the AD analytic rules |
 | `sysmon_config_url` | SwiftOnSecurity | Sysmon config XML |
 
-## Still needed for full AD triage (agent content — separate change)
+## Agent content for AD triage (done in this branch)
 
-The data plane needs no changes, but the agents are still ship-themed. To make AD
-incidents read well, edit `terraform/2-deploy-aisoc/agents/`:
-- de-hardcode `Computer == "BRIDGE-WS"` in `instructions/common.md`;
-- add an AD path to `investigator.md` (and drop "only `ContainerAppConsoleLogs_CL`");
-- allow `SecurityEvent`/`Event` in `detection-engineer.md`;
-- revise the "Windows 4625 = noise" framing in `triage.md` / KB `09` / `11`;
-- add `company-context/` pages: GOAD monitored systems, an AD-attack EID reference, and
-  AD runbooks (Kerberoast/DCSync/spray/AS-REP). Push via `upload_company_context.sh`.
+The data plane needs no changes; the agent prompts + KB were de-coupled from the
+Ship Control Panel so AD incidents triage well (`terraform/2-deploy-aisoc/agents/`):
+- `instructions/common.md` — `SecurityEvent`/`Event` generalized to the whole Windows
+  estate + AD EIDs; `Computer == "BRIDGE-WS"` hardcode removed;
+- `instructions/triage.md` — AD rule family added; "match signal to the rule's table"
+  reframed bidirectionally (Windows events are signal on AD incidents, not noise);
+- `instructions/investigator.md` — workflow branches by table; new "Active Directory
+  investigation path" (per-attack KQL + source-IP→host→user pivot);
+- `instructions/detection-engineer.md` — `SecurityEvent`/`Event` allowed;
+- `company-context/02-monitored-systems.md` — GOAD estate added;
+- `company-context/12-goad-ad-attacks.md` — **new**: AD EID reference + runbooks
+  (Kerberoast/DCSync/spray/AS-REP) + verdict mapping.
+
+**After deploy**, push the KB changes so the agents see them:
+`cd terraform/2-deploy-aisoc/agents/company-context && ./upload_company_context.sh`
+(then re-run the agent deploy script if you changed instructions).
 ```

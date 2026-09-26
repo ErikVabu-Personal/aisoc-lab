@@ -55,6 +55,11 @@ events in other tables.
     - **Windows audit events** — table `SecurityEvent`, EventIDs like
       4624 / 4625 etc. See `09-endpoint-telemetry.md` in the
       company-context KB.
+    - **Active Directory attacks** — table `SecurityEvent`, EventIDs
+      4769 (Kerberoasting) / 4768 (AS-REP roast) / 4662 (DCSync) /
+      4625 / 4771 (password spray), usually on a domain controller
+      (`dc01`/`dc02`/`dc03`). See `12-goad-ad-attacks.md` in the
+      company-context KB.
     - **Sysmon / endpoint other** — table `Event` filtered to
       `Source == "Microsoft-Windows-Sysmon"`.
 - **Run the rule's own query (or a close variant)** in the alert's
@@ -72,6 +77,13 @@ query, gets 0 rows, and reports "no failed login bursts found"
 on an incident the rule definitively fired on. That output is
 WORSE than no triage at all because the human reading it has to
 re-do the work AND distrust the agent.
+
+The checklist below is written for **Ship Control Panel** incidents
+(table `ContainerAppConsoleLogs_CL`). For a **GOAD / AD** incident,
+apply the identical principle against `SecurityEvent`: run the firing
+rule's own query (see `12-goad-ad-attacks.md`) in a window that
+brackets the alert by ±15 min, widen to `ago(2h)`, then
+`summarize count() by EventID` to see what the DC actually emitted.
 
 **You are not allowed to conclude "no events" without running
 this checklist first:**
@@ -104,21 +116,30 @@ alert's window. So if your variant of that query returns nothing,
 the difference between your query and the rule's is your bug —
 NOT "no data." Find the difference.
 
-### Anti-conflation: SCP auth ≠ Windows brute-force
+### Match the signal to the rule's table (don't cross the streams)
 
-The `BRIDGE-WS` host is internet-exposed in this demo and gets
-unrelated brute-force attempts at the Windows RDP / SMB layer
-(EventID 4625 with `AccountName` like `ADMINISTRATOR`,
-`ADMINISTRADOR`, `ADMIN`, `SYSTEM`, etc., from random external
-IPs). Those events are real but they are **NOT** what an SCP
-`Control Panel: multiple failed logins` incident is about — that
-incident's rule reads from `ContainerAppConsoleLogs_CL`, not from
-`SecurityEvent`.
+Each incident's rule reads from ONE table. Summarize THAT table's
+evidence — don't drift to a different data source that happens to have
+similar-looking events.
 
-If your triage output names a Windows-side username
-(`-\SYSTEM` / `-\ADMINISTRADOR` / domain-prefixed names) on an
-SCP-rule incident, you've crossed the streams. Re-run scoped to
-`ContainerAppConsoleLogs_CL` and report THAT evidence instead.
+- On a **Ship Control Panel** incident (rule table
+  `ContainerAppConsoleLogs_CL`, e.g. `Control Panel: multiple failed
+  logins`): stay in the SCP logs. `BRIDGE-WS` is internet-exposed and
+  gets unrelated Windows RDP/SMB brute-force (4625 for `ADMINISTRATOR`
+  / `SYSTEM` / domain-prefixed names from random IPs). Those
+  `SecurityEvent` rows are real but they are **NOT** what an SCP
+  incident is about. If your SCP triage names a Windows-side username,
+  you've crossed the streams — re-run scoped to
+  `ContainerAppConsoleLogs_CL`.
+- On a **GOAD / Active Directory** incident (rule table
+  `SecurityEvent`, e.g. Kerberoasting / DCSync / password spray): the
+  Windows audit events **ARE** the signal — do NOT dismiss
+  4625/4769/4662 as "brute-force noise." Summarize the `SecurityEvent`
+  rows the rule matched (target account, service name, source IP, the
+  DC it fired on). See `12-goad-ad-attacks.md`.
+
+The rule name + its table tell you which world you're in. Report the
+evidence from the rule's own table.
 
 Follow the playbook in `agents/skills/incident_triage.md` for the
 detail of what fields to surface and what shape the summary should

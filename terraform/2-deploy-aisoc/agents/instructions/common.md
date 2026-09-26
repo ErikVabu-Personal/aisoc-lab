@@ -37,24 +37,35 @@ Three tables are in scope:
 
 1. **`ContainerAppConsoleLogs_CL`** — Ship Control Panel application
    logs (auth + every state-changing UI event).
-2. **`SecurityEvent`** — Windows audit events from `BRIDGE-WS`
-   (the bridge workstation). Native Sentinel-parsed table; rows
-   are individual security audit events with proper columns
-   (`Account`, `AccountName`, `LogonType`, `IpAddress`,
-   `WorkstationName`, `Process`, `CommandLine`, …). Use this for
-   any user / logon / process-create question — EID 4624 (logon
-   success), 4625 (failure), 4634 (logoff), 4672 (special privilege),
-   4688 (process create), 4720 (account created), 4740 (locked
-   out).
-3. **`Event`** — Application / System / Sysmon from `BRIDGE-WS`.
-   Sysmon writes to the `Microsoft-Windows-Sysmon/Operational`
-   channel (`Source == "Microsoft-Windows-Sysmon"`) with the
-   SwiftOnSecurity verbose config. Schema is loose — body lives
-   in `EventData` as XML; `parse_xml()` it for fields beyond
-   `Source`, `EventID`, `Computer`, `RenderedDescription`.
+2. **`SecurityEvent`** — Windows audit events from the monitored
+   Windows estate: the `BRIDGE-WS` workstation **and** the GOAD
+   Active Directory hosts (`dc01`/`dc02`/`dc03`/`srv02`/`srv03`).
+   Native Sentinel-parsed table; rows are individual security audit
+   events with proper columns (`Account`, `AccountName`,
+   `LogonType`, `IpAddress`, `WorkstationName`, `Process`,
+   `CommandLine`, `ServiceName`, `TicketEncryptionType`,
+   `PreAuthType`, `Properties`, …). Use this for any user / logon /
+   process / Kerberos / directory question:
+   - Endpoint: 4624 (logon success), 4625 (failure), 4634 (logoff),
+     4672 (special privilege), 4688 (process create), 4720 (account
+     created), 4740 (locked out).
+   - **Active Directory attacks:** 4768 (TGT/AS-REQ — AS-REP roast),
+     4769 (service ticket/TGS — Kerberoasting), 4771 (pre-auth
+     failure — spray), 4776 (NTLM validation), 4662 (directory
+     access — DCSync), 5136 (directory object change). The AD-attack
+     EID → detection map + runbooks are in the KB page
+     `12-goad-ad-attacks.md`.
+3. **`Event`** — Application / System / Sysmon from the monitored
+   Windows hosts. Sysmon writes to the
+   `Microsoft-Windows-Sysmon/Operational` channel
+   (`Source == "Microsoft-Windows-Sysmon"`) with the SwiftOnSecurity
+   verbose config. Schema is loose — body lives in `EventData` as
+   XML; `parse_xml()` it for fields beyond `Source`, `EventID`,
+   `Computer`, `RenderedDescription`.
 
-Per-host context (who uses `BRIDGE-WS`, why it sees what it sees)
-lives in the `company-context` KB.
+Per-host context (which hosts exist, what each is for) lives in the
+`company-context` KB — see `02-monitored-systems.md` (estate) and
+`12-goad-ad-attacks.md` (the GOAD domain).
 
 Tables NOT present and NOT to be referenced:
 `SigninLogs`, `AuditLogs`, `AuthenticationLogs`, Entra / Azure AD
@@ -76,14 +87,16 @@ ContainerAppConsoleLogs_CL
 commonly `j.event`, `j.detail.username`, `j.detail.client` (source
 IP), `j.detail.userAgent`.
 
-**Endpoint — Windows audit (`SecurityEvent`)** — for who-logged-in /
-process-create / privilege questions, columns are pre-parsed:
+**Endpoint / AD — Windows audit (`SecurityEvent`)** — for
+who-logged-in / process-create / privilege / Kerberos / directory
+questions, columns are pre-parsed. Scope to the host(s) the incident
+names; omit the host filter to search the whole estate:
 
 ```kusto
 SecurityEvent
 | where TimeGenerated > ago(1h)
-| where Computer == "BRIDGE-WS"
-// then filter by EventID, AccountName, LogonType, IpAddress, …
+// | where Computer == "<host from the incident>"   // e.g. "BRIDGE-WS" or "dc01"
+// then filter by EventID, AccountName, TargetUserName, LogonType, IpAddress, …
 ```
 
 **Endpoint — everything else (`Event`)** — Sysmon and generic
@@ -92,7 +105,7 @@ Windows logs:
 ```kusto
 Event
 | where TimeGenerated > ago(1h)
-| where Computer == "BRIDGE-WS"
+// | where Computer == "<host from the incident>"
 // optionally: | where Source == "Microsoft-Windows-Sysmon"
 ```
 
