@@ -91,7 +91,8 @@ Usage: ./aisoc_demo.sh <command> [options]
 Commands:
   deploy    Walk Phases 1 → 2 → 3 — Terraform applies, function-app
             code workflows, Foundry bootstrap, smoke-test print.
-            Idempotent; safe to re-run.
+            Idempotent; safe to re-run. Add --onboard-goad to also run
+            Phase 4 (attach an existing GOAD AD lab to Sentinel).
   destroy   Tear down all phases (Phase 3 → 2 → 1) via terraform
             destroy. Leaves the OIDC trust and AZURE_* repo
             variables in place so the next `deploy` is one command.
@@ -135,6 +136,14 @@ Other:
                               (use if you've already bootstrapped or are
                               re-running from a fresh shell). Only meaningful
                               for the `deploy` command.
+  --onboard-goad              Also run Phase 4: onboard an existing GOAD Active
+                              Directory lab (deployed separately with
+                              `goad.sh -p azure`, in the SAME region as Phase 1)
+                              into Sentinel — AMA + DCR association + Sysmon on
+                              its VMs, AD analytic rules, and the AD KB runbooks.
+                              Off by default. (Or AISOC_ONBOARD_GOAD=1 in aisoc.config.)
+  --goad-resource-group=...   GOAD's Azure resource group (its lab_identifier;
+                              default: GOAD). Only used with --onboard-goad.
   -h, --help                  show this help
 
 Config file:
@@ -170,6 +179,7 @@ EOF
 declare -A USER_VARS=()
 SUBSCRIPTION_OVERRIDE=""
 SKIP_OIDC=0
+ONBOARD_GOAD=0
 ACTION=""
 
 # Snapshot which TF_VAR_* the operator had set in their shell BEFORE
@@ -219,6 +229,7 @@ unset _name
 #   AISOC_GITHUB_REPO=<owner>/<repo>  -> override the GitHub repo
 #   AZURE_SUBSCRIPTION_OVERRIDE=<id>  -> switch subscription
 [[ "${AISOC_SKIP_OIDC:-0}" == "1" ]] && SKIP_OIDC=1
+[[ "${AISOC_ONBOARD_GOAD:-0}" == "1" ]] && ONBOARD_GOAD=1
 [[ -n "${AISOC_GITHUB_REPO:-}" ]] && REPO="$AISOC_GITHUB_REPO"
 [[ -n "${AZURE_SUBSCRIPTION_OVERRIDE:-}" ]] && SUBSCRIPTION_OVERRIDE="$AZURE_SUBSCRIPTION_OVERRIDE"
 
@@ -252,6 +263,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)              usage; exit 0 ;;
     --skip-oidc-bootstrap)  SKIP_OIDC=1; shift ;;
+    --onboard-goad)         ONBOARD_GOAD=1; shift ;;
     --subscription=*)       SUBSCRIPTION_OVERRIDE="${1#*=}"; shift ;;
     --subscription)         [[ $# -ge 2 ]] || die "missing value for --subscription"
                             SUBSCRIPTION_OVERRIDE="$2"; shift 2 ;;
@@ -442,6 +454,12 @@ if [[ "$ACTION" == "destroy" ]]; then
     fi
   }
 
+  # Phase 4 (GOAD onboarding) is optional and attaches to Phase 1's DCR
+  # + GOAD's own VMs, so tear it down FIRST (before Phase 1 removes the
+  # workspace/DCR). destroy_phase self-skips if it was never applied.
+  # NOTE: run this BEFORE destroying GOAD (`goad.sh -p azure` destroy) —
+  # Phase 4's data sources reference the GOAD VMs, so they must still exist.
+  destroy_phase terraform/4-onboard-goad
   destroy_phase terraform/3-deploy-pixelagents-web
   pre_destroy_phase2_cleanup
   destroy_phase terraform/2-deploy-aisoc
@@ -695,6 +713,29 @@ say "Phase 3: PixelAgents Web"
 apply_phase terraform/3-deploy-pixelagents-web
 ok "Phase 3 applied (runner + orchestrator wired with PIXELAGENTS_URL/TOKEN)"
 
+# ── 5b) Phase 4 (optional) — onboard GOAD into Sentinel ──────────────
+# Gated behind --onboard-goad / AISOC_ONBOARD_GOAD=1. Requires GOAD to be
+# deployed on Azure (goad.sh -p azure) IN THE SAME REGION as Phase 1.
+# Attaches GOAD's Windows VMs to Phase 1's workspace/DCR and deploys the
+# AD analytic rules; see terraform/4-onboard-goad/README.md.
+if [[ "$ONBOARD_GOAD" == "1" ]]; then
+  say "Phase 4: onboard GOAD (AD lab) into Sentinel"
+  apply_phase terraform/4-onboard-goad
+  ok "Phase 4 applied (GOAD hosts wired to the workspace; AD analytic rules deployed)"
+
+  # Push the company-context KB so the agents pick up the AD runbooks
+  # (12-goad-ad-attacks.md + the GOAD entry in 02-monitored-systems.md).
+  # Best-effort: the storage account exists after Phase 2; if the upload
+  # hiccups the deploy still succeeds and you can re-run it by hand.
+  say "Uploading company-context KB (AD runbooks)"
+  if ( cd terraform/2-deploy-aisoc/agents/company-context && ./upload_company_context.sh ); then
+    ok "company-context KB uploaded (indexer picks it up within ~30 min)"
+  else
+    warn "company-context upload failed — run it by hand:"
+    warn "  cd terraform/2-deploy-aisoc/agents/company-context && ./upload_company_context.sh"
+  fi
+fi
+
 # ── 6) Completion summary ────────────────────────────────────────────
 PIXEL_URL="$(cd terraform/3-deploy-pixelagents-web && terraform output -raw pixelagents_url)"
 SHIPCP_URL="$(cd terraform/1-deploy-sentinel && terraform output -raw ship_control_panel_url)"
@@ -727,6 +768,18 @@ printf '%s%s%s\n\n'   "$YELLOW" "$HR" "$NC"
 if [[ -n "$VM_PASSWORD" ]]; then
   printf '  Password:    %s%s%s   %s(stable across re-applies)%s\n' \
          "$BOLD" "$VM_PASSWORD" "$NC" "$YELLOW" "$NC"
+fi
+
+# ── GOAD onboarding (when --onboard-goad was used). ────────────────────
+if [[ "$ONBOARD_GOAD" == "1" ]]; then
+  GOAD_VMS="$(cd terraform/4-onboard-goad && terraform output -json onboarded_vms 2>/dev/null | jq -r 'join(", ")' 2>/dev/null || true)"
+  printf '\n%s%s%s\n'   "$YELLOW" "$HR" "$NC"
+  printf '  %sGOAD Active Directory lab (onboarded to Sentinel)%s\n'  "$BOLD" "$NC"
+  printf '%s%s%s\n'     "$YELLOW" "$HR" "$NC"
+  [[ -n "$GOAD_VMS" ]] && printf '  Hosts wired:  %s\n' "$GOAD_VMS"
+  printf '  Verify:       Logs → %sHeartbeat | summarize by Computer%s\n' "$BOLD" "$NC"
+  printf '  Attack it:    run a Kerberoast / password spray from an attacker box →\n'
+  printf '                Sentinel incident → Triage → Investigator → Reporter.\n'
 fi
 
 # ── How to drive the demo. ─────────────────────────────────────────────
