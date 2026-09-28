@@ -1,15 +1,16 @@
-# Maison Miró (vendored)
+# Maison Miró
 
 This is the **Maison Miró** intentionally-vulnerable web store — the aisoc-lab web
 victim (it replaced the Ship Control Panel). A single-file Flask/gunicorn app that
 prints structured `[EVENT] {json}` security events to stdout, which Azure Container
 Apps ships to Sentinel's `ContainerAppConsoleLogs_CL`.
 
-> **Vendored copy.** The canonical source lives in the separate `maison-miro` repo
-> (LAN Forgejo). It's vendored here because aisoc-lab builds its images on GitHub
-> Actions → GHCR, which can't reach the LAN Forgejo. **This copy can drift** — when
-> the upstream store changes, re-copy `app.py`, `templates/`, `static/`,
-> `requirements.txt`, `Dockerfile`, `.dockerignore` here.
+> **This is the canonical copy.** Maison Miró exists only for this SOC demo, so it
+> lives here in aisoc-lab — develop it **here**. A copy also sits in the standalone
+> `maison-miro` repo (LAN Forgejo), but that repo now matters only as the home of the
+> **frozen AWS fallback lab** (`infra/goad-demo/`, which zips + ships the app to an
+> EC2 box). The AWS copy is not tracking this one and is not being changed. When the
+> AWS fallback is retired, delete the standalone repo — Maison lives on here.
 
 ## Build / deploy
 
