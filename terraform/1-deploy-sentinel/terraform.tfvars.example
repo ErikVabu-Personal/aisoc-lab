@@ -4,7 +4,7 @@
 
 # --- Sentinel workspace (Phase 1) ---
 azure_location      = "westus" # West US
-resource_group_name = "rg-sentinel-test"
+resource_group_name = "aisoc-demo"
 workspace_name      = "law-sentinel-test"
 
 # Microsoft Sentinel on the workspace (default true).

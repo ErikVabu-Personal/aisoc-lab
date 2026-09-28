@@ -18,7 +18,7 @@ Inputs:
 Usage:
   python3 scripts/deploy_foundry_project.py \
     --tfstate terraform/2-deploy-aisoc/terraform.tfstate \
-    --resource-group rg-sentinel-test
+    --resource-group aisoc-demo
 
 Notes:
 - Project name is taken from Terraform output `foundry_project_name` (auto-generated if unset).

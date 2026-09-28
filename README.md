@@ -124,10 +124,10 @@ Commands:
 
 Common Terraform variables:
   --resource-group=...    Resource group to create / use in Azure
-                          (default: rg-sentinel-test). Phase 1 creates
+                          (default: aisoc-demo). Phase 1 creates
                           the RG with this name; Phases 2 & 3 deploy
                           into it.
-  --azure-location=...    Azure region for Sentinel + lab VM
+  --azure-location=...    Azure region for the Sentinel workspace
                           (default: westus). Phase 2 deploys to
                           westcentralus by default — those two
                           together are the empirically-validated

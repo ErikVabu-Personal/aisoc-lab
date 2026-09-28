@@ -7,7 +7,7 @@ variable "azure_location" {
 variable "resource_group_name" {
   description = "Resource group name"
   type        = string
-  default     = "rg-sentinel-test"
+  default     = "aisoc-demo"
 }
 
 variable "workspace_name" {

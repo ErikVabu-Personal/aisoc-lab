@@ -93,7 +93,7 @@ Commands:
 
 Common Terraform variables:
   --resource-group=...    Resource group to create / use in Azure
-                          (default: rg-sentinel-test). Phase 1 creates
+                          (default: aisoc-demo). Phase 1 creates
                           the RG with this name; Phases 2 & 3 deploy
                           into it.
   --azure-location=...    Azure region for the Sentinel workspace
@@ -465,7 +465,7 @@ fi  # SKIP_OIDC
 # resolved from CLI flags / env vars (TF_VAR_*) with the variable
 # defaults from each phase's variables.tf as fallbacks.
 print_plan_summary() {
-  local rg="${TF_VAR_resource_group_name:-rg-sentinel-test}"
+  local rg="${TF_VAR_resource_group_name:-aisoc-demo}"
   local region="${TF_VAR_azure_location:-westus}"
   local phase2_region="${TF_VAR_location_override:-westcentralus}"
   local foundry_region="${TF_VAR_foundry_location:-eastus2}"
