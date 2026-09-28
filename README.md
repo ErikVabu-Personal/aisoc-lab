@@ -2,7 +2,7 @@
 
 An end-to-end demo of an **AI-powered Security Operations Center**, built
 on top of Microsoft Sentinel and Azure AI Foundry. The fictional NVISO
-Cruiseways fleet runs a vulnerable web store (**Maison Miró**) that emits
+Cruiseways business runs a vulnerable web store (**Maison Miró**) that emits
 structured security events to Sentinel; a roster of Foundry agents triages,
 investigates, reports on, and proposes improvements to the analytic rules
 that catch attacks against it.
@@ -10,34 +10,41 @@ that catch attacks against it.
 > **Range extensions (Phases 4 & 5, opt-in):** the SOC also ingests the
 > **GOAD** Active Directory lab (`--onboard-goad`, see
 > `terraform/4-onboard-goad/`) and can deploy the **RedAmon** AI attacker into
-> GOAD's VNet (`--with-redamon`, see `terraform/5-deploy-redamon/`). The web
-> victim is now **Maison Miró** (it replaced the original "Ship Control Panel";
-> some deeper docs/examples below still say Ship Control Panel — the shared ACA
-> environment keeps that name internally). See `maison-miro/` and
-> `terraform/2-deploy-aisoc/agents/company-context/13-maison-logging.md`.
+> GOAD's VNet (`--with-redamon`, see `terraform/5-deploy-redamon/`). Together
+> that's a full red-vs-blue range: a web victim (Maison) + a Windows AD estate
+> (GOAD), an AI attacker (RedAmon), and the AI SOC that defends both.
+>
+> Note: the shared Azure Container Apps environment + App Insights keep the
+> internal Terraform address `shipcp` (they predate the Maison swap and Phase
+> 2/3 consume their outputs via remote state) — that's the only place the old
+> "Ship Control Panel" name survives, and only in the `.tf` internals.
 
-The whole stack — Sentinel workspace, lab VM, the gateway Functions,
-the agent runner, and the operator-facing PixelAgents web — comes up
-from a single command. One operator, one Azure subscription, one
-laptop's worth of CLI tools. Everything is Terraform; no portal
-clicks required.
+The whole stack — Sentinel workspace, the Maison Miró store, the gateway
+Functions, the agent runner, and the operator-facing PixelAgents web —
+comes up from a single command. One operator, one Azure subscription, one
+laptop's worth of CLI tools. Everything is Terraform; no portal clicks
+required.
 
 ## What you get
 
 When the deploy finishes you have:
 
-- **A Microsoft Sentinel workspace** with three pre-loaded analytic
-  rules covering the Ship Control Panel's login surface (failed-
-  login bursts, password spray, user-agent anomalies).
-- **A lab Windows 11 VM** wired into the workspace so you can
-  generate "real" telemetry by RDPing in.
-- **The Ship Control Panel** running as a public Container App —
-  not just a login gate, a full bridge-and-operations surface
-  (Navigation / Anchor / Stabilizers / Connectivity / Climate /
-  Entertainment / **Security CCTV grid**) emitting structured JSON
-  events for every state change. Hitting `/login` is the obvious
-  trigger; flipping the security toggle to "cameras off" is a
-  more interesting one.
+- **A Microsoft Sentinel workspace** with pre-loaded analytic rules for
+  **Maison Miró** — crown-jewel theft / fraud (critical) and web attacks
+  (SQLi / auth-bypass / forged session / XSS). With Phase 4 you also get
+  the **GOAD AD** rules (Kerberoasting, DCSync, password spray, AS-REP
+  roasting).
+- **Maison Miró** running as a public Container App — an intentionally-
+  vulnerable e-commerce store. Every security-relevant action prints one
+  structured `[EVENT] {json}` line to stdout (recon, SQL-injection auth
+  bypass, forged sessions, stored XSS, bulk PII exfiltration, IDOR,
+  checkout fraud). It has a **built-in auto-SOAR** (`/soc/*`): when armed,
+  a `critical` event auto-contains the source. A decoy **honeytoken**
+  customer record gives a zero-false-positive "theft in progress" signal.
+- **A Windows-event Data Collection Rule** wired into the workspace,
+  ready for the GOAD hosts to attach to in Phase 4 (Security → `SecurityEvent`,
+  Sysmon / Application / System → `Event`). No standalone lab VM — the
+  range's Windows telemetry comes from GOAD.
 - **A six-agent Foundry roster** (Triage, Investigator, Reporter,
   Detection Engineer, SOC Manager, Threat Intel) with shared and
   role-specific prompts, all wired through an authenticated runner
@@ -49,11 +56,11 @@ When the deploy finishes you have:
   - **`detection-rules`** — Sigma / KQL / writeups. Attached only
     to the Detection Engineer agent for grounding new-rule
     proposals.
-  - **`company-context`** — organisational context (fleet,
-    subsystems, naming conventions, IR runbooks, glossary,
-    escalation, HR / IT policies). Federates two corpora
-    (`company-context` + `company-policies` blob containers) and
-    is attached to Triage / Investigator / Reporter / SOC Manager
+  - **`company-context`** — organisational context (the monitored
+    systems, account naming, endpoint telemetry, GOAD AD attacks,
+    Maison logging, glossary, escalation, HR / IT policies). Federates
+    two corpora (`company-context` + `company-policies` blob containers)
+    and is attached to Triage / Investigator / Reporter / SOC Manager
     / Threat Intel. SharePoint-swap-ready: the same agents work
     unchanged when you replace the underlying source via the
     Foundry portal.
@@ -94,19 +101,25 @@ az login
 gh auth login
 
 # 3. Deploy
-./aisoc_demo.sh deploy --resource-group=rg-aisoc-demo --azure-location=westus
+./aisoc_demo.sh deploy --resource-group=aisoc-demo --azure-location=westus
 
-# … 15-20 minutes later, the script prints the URL of the operator UI
-# plus the lab-VM admin credentials.
+# … 15-20 minutes later, the script prints the operator UI URL
+# and the Maison Miró store URL.
 
 # 4. When you're done
 ./aisoc_demo.sh destroy
 ```
 
 `aisoc_demo.sh` is the only entry point you need. It walks the three
-Terraform phases in order, drives the post-apply Foundry / Function-
-App / Container-App configuration scripts, and at the end prints the
-admin URLs + credentials.
+Terraform phases in order (plus the opt-in Phase 4 / 5 range extensions),
+drives the post-apply Foundry / Function-App / Container-App configuration
+scripts, and at the end prints the admin URLs.
+
+> **One-time prerequisite:** the Maison image is pulled from GHCR
+> anonymously, so the `aisoc-maison-miro` GHCR package must be public
+> (Package settings → Change visibility → Public). It's built + pushed by
+> `.github/workflows/deploy-maison-miro.yml` on the first push of
+> `maison-miro/**` to `main`.
 
 ### `./aisoc_demo.sh --help`
 
@@ -116,7 +129,8 @@ Usage: ./aisoc_demo.sh <command> [options]
 Commands:
   deploy    Walk Phases 1 → 2 → 3 — Terraform applies, function-app
             code workflows, Foundry bootstrap, smoke-test print.
-            Idempotent; safe to re-run.
+            Idempotent; safe to re-run. Add --onboard-goad to also run
+            Phase 4 (attach an existing GOAD AD lab to Sentinel).
   destroy   Tear down all phases (Phase 3 → 2 → 1) via terraform
             destroy. Leaves the OIDC trust and AZURE_* repo
             variables in place so the next `deploy` is one command.
@@ -128,8 +142,8 @@ Common Terraform variables:
                           the RG with this name; Phases 2 & 3 deploy
                           into it.
   --azure-location=...    Azure region for the Sentinel workspace
-                          (default: westus). Phase 2 deploys to
-                          westcentralus by default — those two
+                          (Phase 1, default: westus). Phase 2 deploys
+                          to westcentralus by default — those two
                           together are the empirically-validated
                           combo for new subs whose other regions
                           have zero App Service / EP-series quota.
@@ -138,14 +152,6 @@ Common Terraform variables:
   --foundry-location=...  Region for Foundry hub/project/model
                           (default: eastus2 — Model Router is
                           region-gated to East US 2 / Sweden Central).
-  --vm-size=...           Lab VM size (default: Standard_D2s_v3)
-
-  (Lab VM admin password is auto-generated by Terraform — printed
-   at the end of the run. It's stored in Terraform state and stays
-   stable across re-applies. To force your own value, pre-set
-   TF_VAR_admin_password in the env.
-
-   RDP is open from any source — this is a throwaway test box.)
 
 Common Terraform variables (Phase 2):
   --location-override=...     Region for Function Apps (default: westcentralus)
@@ -160,13 +166,25 @@ Other:
                               (use if you've already bootstrapped or are
                               re-running from a fresh shell). Only meaningful
                               for the `deploy` command.
+  --onboard-goad              Also run Phase 4: onboard an existing GOAD Active
+                              Directory lab (deployed separately with
+                              `goad.sh -p azure`, in the SAME region as Phase 1)
+                              into Sentinel — AMA + DCR association + Sysmon on
+                              its VMs, AD analytic rules, and the AD KB runbooks.
+                              Off by default. (Or AISOC_ONBOARD_GOAD=1 in aisoc.config.)
+  --goad-resource-group=...   GOAD's Azure resource group (its lab_identifier;
+                              default: GOAD). Used with --onboard-goad / --with-redamon.
+  --with-redamon              Also run Phase 5: deploy RedAmon (AI red-team) into
+                              GOAD's VNet (needs GOAD on Azure). The on-box install
+                              runs in tmux; reach the UI via an SSH tunnel.
+                              (Or AISOC_DEPLOY_REDAMON=1 in aisoc.config.)
   -h, --help                  show this help
 
 Config file:
   ./aisoc.config (gitignored, optional). Sourced before CLI parsing so
   it acts as your baseline; --flag values override for the current run.
   Copy ./aisoc.config.example to get started — everything documented
-  there: RG, regions, VM password, Foundry model, demo user roster, etc.
+  there: RG, regions, Foundry model, demo user roster, etc.
 
 Generic pass-through:
   Any unrecognized --key=value is forwarded as TF_VAR_<key>=<value>.
@@ -178,14 +196,18 @@ Sensitive values:
   listings. Pre-set env vars take precedence over --flag values.
 
 Examples:
-  # Minimal first-time deploy (admin password auto-generated):
+  # Minimal first-time deploy:
   ./aisoc_demo.sh deploy \
-      --resource-group=rg-aisoc-demo --azure-location=westus
+      --resource-group=aisoc-demo --azure-location=westus
 
   # Override Foundry region:
   ./aisoc_demo.sh deploy \
-      --resource-group=rg-aisoc-demo \
+      --resource-group=aisoc-demo \
       --azure-location=westus --foundry-location=swedencentral
+
+  # Full red-vs-blue range (needs GOAD on Azure in the Phase 1 region):
+  ./aisoc_demo.sh deploy --resource-group=aisoc-demo \
+      --onboard-goad --with-redamon --goad-resource-group=GOAD
 
   # Tear it all down:
   ./aisoc_demo.sh destroy
@@ -193,8 +215,8 @@ Examples:
 
 Configuration precedence: **shell-preset env vars > CLI flags >
 `aisoc.config` > Terraform variable defaults**. Anything sensitive
-(passwords, API keys) should be pre-exported in your shell so it
-never lands in CLI history or `aisoc.config`.
+(SOC key, sign secret, API keys) should be pre-exported in your shell so
+it never lands in CLI history or `aisoc.config`.
 
 ### Prerequisites
 
@@ -211,16 +233,17 @@ never lands in CLI history or `aisoc.config`.
 
 ## Architecture
 
-The demo is split into **three Terraform phases** plus a stack of
-runtime components. The three phases are independent state files
-that depend on each other through `terraform_remote_state`.
+The demo is built as **three core Terraform phases** plus two opt-in
+range extensions. Each phase is an independent state file; the later
+phases depend on Phase 1 through `terraform_remote_state`.
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
-│ Phase 1 — Sentinel + Ship Control Panel + lab VM                  │
-│   Microsoft Sentinel workspace │ analytic rules │ Win11 lab VM    │
-│   Ship Control Panel (Container App, public)                      │
-│   Shared Key Vault │ App Insights                                 │
+│ Phase 1 — Sentinel + Maison Miró                                  │
+│   Microsoft Sentinel workspace │ Maison analytic rules            │
+│   Maison Miró store (Container App, public, :8000)                │
+│   Windows-event DCR (unassociated; GOAD attaches in Phase 4)      │
+│   Shared Container Apps env │ Key Vault │ App Insights            │
 └───────────────────────────────────────────────────────────────────┘
                               ▲ remote-state outputs
                               │
@@ -244,6 +267,11 @@ that depend on each other through `terraform_remote_state`.
 │   Auto-pickup loop, HITL routing, Foundry agent invocation,       │
 │   /dashboard, /improvements, /audit, /config, /                   │
 └───────────────────────────────────────────────────────────────────┘
+
+Opt-in range extensions (hang off Phase 1's workspace/DCR + a
+separately-deployed GOAD lab):
+  Phase 4 — onboard GOAD (AMA + DCR association + Sysmon + AD rules)
+  Phase 5 — RedAmon AI red-team VM inside GOAD's VNet
 ```
 
 ### Agents
@@ -265,9 +293,9 @@ the `CONFIDENCE_THRESHOLD` slider (how readily it asks humans), and
 the role-specific instruction text are all editable live. Common
 preamble (`common.md`) is trimmed to the technical contract only —
 KQL filter, tool rules, output format, the `{ok: false}` envelope.
-Organisational context (fleet, subsystems, naming, runbooks)
-lives in the `company-context` KB and is retrieved on demand, so
-the SOC manager can edit it without redeploying agents.
+Organisational context (monitored systems, naming, telemetry,
+runbooks) lives in the `company-context` KB and is retrieved on
+demand, so the SOC manager can edit it without redeploying agents.
 
 ---
 
@@ -277,22 +305,25 @@ the SOC manager can edit it without redeploying agents.
 .
 ├─ aisoc_demo.sh              # one-shot deploy / destroy driver
 ├─ aisoc.config.example       # baseline config (copy → aisoc.config)
-├─ terraform/                 # 3 Terraform phases + scripts
+├─ terraform/                 # 3 core phases + 2 opt-in extensions + scripts
 ├─ pixelagents_web/           # operator-facing FastAPI app + UI
 ├─ runner/                    # AISOC Runner Container App
-├─ ship-control-panel/        # the lab "victim" web auth surface
+├─ maison-miro/               # the intentionally-vulnerable web store (the victim)
 └─ scripts/                   # cross-phase Python helpers
 ```
 
 ### `terraform/`
 
-Three independent stacks. Always apply in order; destroy in reverse.
+Independent stacks. Always apply in order (1 → 2 → 3, then optional
+4 / 5); destroy in reverse.
 
 | Folder | What it builds |
 |--------|----------------|
-| `1-deploy-sentinel/` | Microsoft Sentinel workspace, three analytic rules (`sentinel_rules.tf`), the Ship Control Panel Container App (`ship_control_panel.tf`), the lab VM (`main.tf`), shared Key Vault (`aisoc_kv.tf`), App Insights (`appinsights_shipcp.tf`), Defender for Endpoint onboarding (`mde_kv.tf`). README + PHASES + MDE + SECURITY docs sit alongside. |
-| `2-deploy-aisoc/` | Foundry hub + project (`foundry.tf`) + a primary model deployment + zero-or-more extras (`foundry_deployments.tf`). The SOC Gateway Function (`main.tf`), the AISOC Orchestrator Function (`orchestrator.tf` + `orchestrator/`), the Runner Container App (`runner.tf`). The Azure AI Search service shared by both knowledge bases — Detection Rules KB (`detection_rules_kb.tf`) + Company Context KB with two federated corpora (`company_context_kb.tf`). Bing Grounding account + auto-wired project connection (`bing_grounding.tf`). The Foundry agents themselves (`agents/agents.json` + `agents/instructions/*.md`) are deployed by `scripts/deploy_prompt_agents_with_runner_tools.py`. The KB corpora live alongside in `agents/company-context/*.md` (SOC-curated runbooks / glossary / escalation) and `agents/company-policies/*.md` (HR-IT-curated AUP + asset inventory) — uploaded to blob via the per-folder `upload_*.sh` scripts after apply. |
+| `1-deploy-sentinel/` | Microsoft Sentinel workspace + the Windows-event DCR (`main.tf`), the Maison Miró Container App (`maison_miro.tf`) in the shared Container Apps environment (`ship_control_panel.tf`), the Maison analytic rules deployed post-apply (`post_apply_scripts.tf` + `scripts/rules/*.kql`), shared Key Vault (`aisoc_kv.tf`), App Insights (`appinsights_shipcp.tf`). README + PHASES + SECURITY docs sit alongside. |
+| `2-deploy-aisoc/` | Foundry hub + project (`foundry.tf`) + a primary model deployment + zero-or-more extras (`foundry_deployments.tf`). The SOC Gateway Function (`main.tf`), the AISOC Orchestrator Function (`orchestrator.tf` + `orchestrator/`), the Runner Container App (`runner.tf`). The Azure AI Search service shared by both knowledge bases — Detection Rules KB (`detection_rules_kb.tf`) + Company Context KB with two federated corpora (`company_context_kb.tf`). Bing Grounding account + auto-wired project connection (`bing_grounding.tf`). The Foundry agents themselves (`agents/agents.json` + `agents/instructions/*.md`) are deployed by `scripts/deploy_prompt_agents_with_runner_tools.py`. The KB corpora live alongside in `agents/company-context/*.md` (SOC-curated: monitored systems / telemetry / runbooks / glossary) and `agents/company-policies/*.md` (HR-IT-curated AUP + asset inventory) — uploaded to blob via the per-folder `upload_*.sh` scripts after apply. |
 | `3-deploy-pixelagents-web/` | Just the PixelAgents Web Container App + its env-var wiring. |
+| `4-onboard-goad/` *(opt-in)* | Attaches an existing GOAD AD lab to the Phase-1 workspace: per host, an AMA extension + a DCR association to Phase 1's `dcr_id`, plus Sysmon + AD-audit policy via `azurerm_virtual_machine_run_command`; then the AD analytic rules (Kerberoast / DCSync / password spray / AS-REP). |
+| `5-deploy-redamon/` *(opt-in)* | A RedAmon AI red-team VM (Ubuntu, D4s_v3 / 200 GB) inside GOAD's VNet. The on-box install runs in tmux on first boot; reach the UI via an SSH tunnel (the GOAD subnet NSG allows SSH only). |
 
 Each phase has its own `scripts/` folder for post-apply work that
 Terraform itself can't model cleanly (function host keys, Container
@@ -380,34 +411,44 @@ Tools the runner exposes:
   `company-context` (Triage / Investigator / Reporter / SOC
   Manager / Threat Intel). Both expose `knowledge_base_retrieve`.
 
-### `ship-control-panel/`
+### `maison-miro/`
 
-The "victim" web app — a Next.js bridge-and-operations console for
-the fictional NVISO Cruiseways fleet. Visually skinned as a real
-maritime operations surface (light theme, navy + steel-blue,
-monospace readouts) with seven subsystem tabs:
+The "victim" web app — an intentionally-vulnerable e-commerce store
+for the fictional NVISO Cruiseways business. A single-file Flask /
+gunicorn app on `:8000` with a self-seeding SQLite database, vendored
+here (its canonical copy lives on a private LAN Forgejo the GitHub
+runners can't reach) and built into a public GHCR image by
+`.github/workflows/deploy-maison-miro.yml`.
 
-- **Navigation** — chart with destination, throttle telegraph,
-  collision-detection toggle.
-- **Anchor** — four states (HOME / PAYING_OUT / HOLDING / DRAGGING).
-- **Stabilizers** — fin angles, OFF / STANDBY / AUTO / MANUAL modes.
-- **Connectivity** — Starlink uplink + simulated speedtest.
-- **Climate** — per-room AC.
-- **Entertainment** — pool / wellness / media / lighting scenes.
-- **Security** — 2x3 CCTV grid with a "disable cameras" toggle that
-  emits a `severity:warn` event Sentinel rules can pivot off.
+Every security-relevant action prints one `[EVENT] {json}` line to
+stdout. Container Apps ships stdout to Log Analytics as
+`ContainerAppConsoleLogs_CL` (`ContainerName_s == "maison-miro"`),
+where the analytic rules pick it up. Each event carries a dotted
+`type`, a `severity` (`info`→`critical`), a `message`, and a
+`source_ip` — **the incident correlation key** (one attacker walks the
+whole kill chain from one IP). The event families:
 
-Every state change emits a structured JSON line to stdout
-(`auth.login.failure`, `auth.login.success`, `navigation.throttle`,
-`anchor`, `connectivity`, `security`, `climate`, …). Container
-Apps ships stdout to Log Analytics, where Sentinel's analytic
-rules pick them up.
+- **Recon** — `recon.disallowed_path` (scanning `/api*`, `/admin`,
+  `/invoice*`).
+- **Break-in** (high) — `auth.sqli_attempt`, `auth.login_bypass`
+  (SQL-injection auth bypass), `auth.session_forged` (forged
+  privilege cookie), `xss.stored_attempt`.
+- **Impact** (critical) — `data.exfil_attempt` (bulk PII pull),
+  `data.honeytoken_touched` (the decoy record was read — **zero false
+  positives**), `data.idor_access`, `fraud.price_mismatch`.
+- **Response** (info) — `containment.engaged` / `containment.blocked`
+  from the built-in auto-SOAR.
 
-The two demo-friendly attack triggers: hit `/login` repeatedly
-with bad credentials, or sign in once and flip the Security tab's
-cameras-disabled toggle. The cameras-off event is a textbook
-attacker-tradecraft signal — it's the case the Investigator's
-runbook in `company-context` is written around.
+Maison has a **built-in SOC control plane** (`/soc/*`, key
+`X-SOC-Key`): when armed (`SOC_ARMED=1`), a `critical` event
+auto-contains the source. It's pinned to a single replica because
+that SOC state (honeytoken containment, scores) is in-memory per
+process. The full schema + attack runbook is in
+`terraform/2-deploy-aisoc/agents/company-context/13-maison-logging.md`.
+
+The demo-friendly attack chain: recon → SQL-injection login bypass →
+read `/api/customers` (trips the honeytoken). That fires the Maison
+critical rule → Sentinel incident → the agents triage it.
 
 ### `scripts/`
 
@@ -449,10 +490,6 @@ The example documents every supported knob. Highlights:
   primary `gpt-4.1-mini`.
 - **`TF_VAR_detection_rules_kb_enabled`** — flips the Foundry IQ
   rule-library subsystem on or off. Default: `true`.
-- **`TF_VAR_company_context_kb_enabled`** — flips the second
-  Foundry IQ KB (org context + HR/IT policies, federated). Default:
-  `true`. Requires `detection_rules_kb_enabled` because both KBs
-  share the Search service.
 - **`TF_VAR_bing_grounding_enabled`** — when `true` (default),
   Phase 2 provisions a `Microsoft.Bing/accounts` (kind=
   `Bing.Grounding`) and the agent deploy script auto-creates the
@@ -461,8 +498,11 @@ The example documents every supported knob. Highlights:
   clicks. Backward-compat: if you've already wired a project
   connection by hand, set `AISOC_BING_GROUNDING_CONNECTION` to
   its name and the auto-provision step is skipped.
+- **`AISOC_ONBOARD_GOAD`** / **`AISOC_DEPLOY_REDAMON`** +
+  **`TF_VAR_goad_resource_group`** — the opt-in Phase 4 / 5 range
+  extensions (equivalents of `--onboard-goad` / `--with-redamon`).
 
-Sensitive values (admin password, API keys) should ideally be
+Sensitive values (SOC key, sign secret, API keys) should ideally be
 exported in your shell rather than written to `aisoc.config` —
 the precedence rules in `aisoc_demo.sh` honor pre-shell env vars
 above everything else.
@@ -473,16 +513,18 @@ above everything else.
 
 ### Generating an incident
 
-The Sentinel analytic rules fire on the Ship Control Panel's
-auth telemetry. Easiest demo trigger: hit `/login` from a
-browser and try a few wrong passwords. Within ~5 minutes a
-Sentinel incident will pop up in the workspace.
+The Sentinel analytic rules fire on Maison Miró's telemetry. Easiest
+demo trigger: run the attack chain against the store — a SQL-injection
+login bypass, then hit `/api/customers` to trip the honeytoken. Within
+~5 minutes a Sentinel incident pops up in the workspace.
 
 If `Auto-pickup` is on (the toggle on `/config`, default ON), the
 orchestrator runs Triage → Investigator → Reporter automatically,
 the agents annotate the incident in Sentinel, and the case ends in
 either an autonomous closure or a hand-off to a human (depending on
-the per-agent CONFIDENCE_THRESHOLD).
+the per-agent CONFIDENCE_THRESHOLD). With Phase 4 deployed, running an
+AD attack against GOAD (Kerberoast / spray) produces the same flow off
+a `SecurityEvent` rule.
 
 ### Roles you'll need
 
@@ -504,33 +546,31 @@ fallback (`erik.vanbuggenhout@nviso.eu`) holds all four.
 ./aisoc_demo.sh destroy
 ```
 
-The script tears down Phase 3 → 2 → 1 in reverse order, with two
-small safeguards baked in:
-
-1. The Foundry hub can't be deleted while it has child projects, so
-   the script makes a direct ARM `DELETE` on the project before
-   `terraform destroy` reaches the hub.
-2. The Phase 1 lab VM auto-shuts down on a schedule, and Azure won't
-   let extensions be modified on a deallocated VM. Before destroying
-   Phase 1 the script `az vm start`s the VM and polls for `running`,
-   then if it didn't come up in time, falls back to
-   `terraform state rm`'ing each `azurerm_virtual_machine_extension`
-   — Azure cleans those up automatically when the parent VM is
-   deleted further down the destroy.
+The script tears down Phase 5 → 4 → 3 → 2 → 1 in reverse order (the
+opt-in phases self-skip if never applied). One safeguard is baked in:
+the Foundry hub can't be deleted while it has child projects, so the
+script makes a direct ARM `DELETE` on the project before
+`terraform destroy` reaches the hub.
 
 OIDC trust + AZURE_* repo variables stay in place; the next
 `deploy` is one command from a fresh teardown.
+
+> Destroying Phases 4 / 5 tears down only what this repo added to GOAD
+> (the AMA extensions, DCR associations, AD rules, and the RedAmon VM) —
+> the GOAD lab itself is deployed and destroyed separately with
+> `goad.sh -p azure`.
 
 ---
 
 ## Pointers
 
 - **Phase 1** = `terraform/1-deploy-sentinel/README.md` for Sentinel-
-  workspace specifics + the analytic rules.
+  workspace specifics, the Maison analytic rules, and the DCR.
 - **Phase 3** = `terraform/3-deploy-pixelagents-web/README.md` for the
   Container App side.
-- **MDE / Defender for Endpoint** onboarding is documented in
-  `terraform/1-deploy-sentinel/MDE.md`.
+- **Phases 4 & 5** = `terraform/4-onboard-goad/README.md` and
+  `terraform/5-deploy-redamon/README.md` for the GOAD onboarding + the
+  RedAmon attacker.
 - **Phase ordering + remote-state contracts** are in
   `terraform/1-deploy-sentinel/PHASES.md` and
   `terraform/2-deploy-aisoc/PHASES.md`.
@@ -544,9 +584,10 @@ OIDC trust + AZURE_* repo variables stay in place; the next
   re-deploy.
 - **Knowledge base corpora**:
   - SOC-curated: `terraform/2-deploy-aisoc/agents/company-context/`
-    (8 starter pages — fleet, subsystems, naming, runbooks,
-    glossary, escalation). README in that folder documents the
-    upload flow + the SharePoint swap procedure.
+    (monitored systems, account naming, endpoint telemetry, GOAD AD
+    attacks, Maison logging, glossary, escalation, org chart). The
+    README in that folder documents the upload flow + the SharePoint
+    swap procedure.
   - HR/IT-curated: `terraform/2-deploy-aisoc/agents/company-policies/`
     (acceptable use, asset inventory). Same Foundry IQ KB; second
     blob source federated in. Edit either folder and re-run the

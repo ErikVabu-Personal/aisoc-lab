@@ -153,11 +153,11 @@ Sensitive values:
 Examples:
   # Minimal first-time deploy:
   ./aisoc_demo.sh deploy \
-      --resource-group=rg-aisoc-demo --azure-location=westus
+      --resource-group=aisoc-demo --azure-location=westus
 
   # Override Foundry region:
   ./aisoc_demo.sh deploy \
-      --resource-group=rg-aisoc-demo \
+      --resource-group=aisoc-demo \
       --azure-location=westus --foundry-location=swedencentral
 
   # Tear it all down:
