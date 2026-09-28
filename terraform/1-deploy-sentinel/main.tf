@@ -116,5 +116,12 @@ resource "azurerm_monitor_data_collection_rule" "dcr" {
     destinations = ["law"]
   }
 
+  # The Microsoft-SecurityEvent stream lands audit events in the SecurityEvent
+  # table, which only exists once the SecurityInsights (Microsoft Sentinel)
+  # solution is active on the workspace. Without this ordering Terraform can
+  # create the DCR before onboarding finishes, and Azure rejects the payload
+  # with "InvalidPayload: Data collection rule is invalid".
+  depends_on = [azurerm_sentinel_log_analytics_workspace_onboarding.sentinel]
+
   tags = local.tags
 }
