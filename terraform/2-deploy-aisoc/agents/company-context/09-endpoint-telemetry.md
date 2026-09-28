@@ -1,9 +1,11 @@
-# Endpoint telemetry — bridge workstation (`BRIDGE-WS`) + Sysmon
+# Endpoint telemetry — the GOAD Windows estate + Sysmon
 
-The bridge workstation (`BRIDGE-WS`) is a second monitored asset
-alongside the Ship Control Panel. Endpoint telemetry from the host
-lands in two different Sentinel tables, depending on which Windows
-channel produced it:
+The Windows hosts in the corporate Active Directory estate (GOAD)
+— domain controllers `dc01` / `dc02` / `dc03` and member servers
+`srv02` / `srv03` — are monitored assets. Each runs the Azure
+Monitor Agent + Sysmon, and their endpoint telemetry lands in two
+different Sentinel tables, depending on which Windows channel
+produced it:
 
 - **`SecurityEvent`** — Security channel (Windows audit events:
   4624 logon-success, 4625 logon-failure, 4634 logoff, 4672
@@ -12,38 +14,42 @@ channel produced it:
   `LogonType`, `IpAddress`, `WorkstationName`, `Process`,
   `CommandLine`, etc. are all first-class fields you can `where`
   and `summarize` on directly.
-- **`Event`** — everything else from the host: Application /
+- **`Event`** — everything else from the hosts: Application /
   System logs and Sysmon. These channels don't have a structured
   Sentinel-native table; the body lives in `EventData` as XML and
   needs `parse_xml()` per-query for fields beyond `Source`,
   `EventID`, `Computer`, and `RenderedDescription`.
 
-Use this page when you need to pivot from a Ship-Control-Panel
-event into "what was happening on the host at the same time", or
-when an alert is purely host-side.
+Use this page when an alert is host-side (a logon, a process, a
+network connection on one of the GOAD hosts), or when you need to
+pivot from a **Maison Miró** web event into "what was happening on
+the domain at the same time". The AD-attack detections that sit on
+top of this telemetry (Kerberoasting, DCSync, password spray,
+AS-REP roasting) are in `12-goad-ad-attacks.md`.
 
-## Scope warning — Windows brute-force on `BRIDGE-WS` ≠ SCP auth alert
+## Scope warning — a Windows 4625 burst ≠ a Maison web-auth alert
 
-`BRIDGE-WS` is internet-exposed in this demo. As a result,
-`SecurityEvent` carries a steady background of EventID 4625
-(failed logon) rows from random external IPs targeting common
-Windows usernames — `Administrator`, `Admin`, `administrador`,
-`SYSTEM`, etc. These are real attacks, but they're against the
-Windows RDP / SMB layer, not against the Ship Control Panel web
-app.
+The GOAD domain controllers carry a steady background of EventID
+4625 (failed logon) rows — service accounts with stale passwords,
+misconfigured clients, and (in this lab) the red-team's own
+password-spray probes. These are Windows / Kerberos / NTLM layer
+events.
 
-**The Ship Control Panel `Control Panel: multiple failed logins
-(user + IP)` analytic rule reads from `ContainerAppConsoleLogs_CL`,
-not from `SecurityEvent`.** When triaging or investigating an
-incident from that SCP rule, do not summarise SecurityEvent 4625
-rows alongside SCP `auth.login.failure` rows — they're separate
-phenomena that happen to look similar in the abstract.
+**The Maison Miró analytic rules read from
+`ContainerAppConsoleLogs_CL`, not from `SecurityEvent`.** When
+triaging or investigating a Maison incident (`auth.sqli_attempt`,
+`auth.login_bypass`, …), do not summarise `SecurityEvent` 4625
+rows alongside Maison `auth.*` events — they are separate
+phenomena on separate surfaces (Windows domain logon vs. the web
+storefront) that happen to look similar in the abstract.
 
-The disambiguator: SCP usernames in this deploy are bare names
-(`administrator`, `crew_lindgren`, …) with the source IP in
-`j.detail.client`. Windows-side 4625 usernames have a domain
-prefix or backslash (`-\Administrator`, `WORKGROUP\Admin`) and
-the source IP is in `IpAddress` on the SecurityEvent row.
+The disambiguator: Maison events carry the client in `source_ip`
+(a field inside the `[EVENT]` JSON, correlation key for the whole
+incident) and a dotted `type`. Windows-side 4625 rows carry the
+target account in `Account` / `AccountName` (often with a domain
+prefix, e.g. `NORTH\eddard.stark`) and the source in `IpAddress`
+on the `SecurityEvent` row. Keep the two corpora in separate parts
+of a case note.
 
 ## What's collected, where it lands
 
@@ -65,7 +71,7 @@ the source IP is in `IpAddress` on the SecurityEvent row.
 ```kusto
 SecurityEvent
 | where TimeGenerated > ago(1h)
-| where Computer == "BRIDGE-WS"
+| where Computer == "dc01"   // the host named in the incident (dc01/dc02/dc03/srv02/srv03)
 ```
 
 `SecurityEvent` columns you'll use most:
@@ -73,8 +79,8 @@ SecurityEvent
 | Column | Meaning |
 |--------|---------|
 | `EventID` | 4624 (logon success), 4625 (failure), 4634 (logoff), 4672 (special priv), 4688 (process create), 4720 (account created), 4740 (account locked out), … |
-| `Account` | `DOMAIN\user` form, e.g. `BRIDGE-WS\jack.sparrow` |
-| `AccountName` | bare username, e.g. `jack.sparrow` |
+| `Account` | `DOMAIN\user` form, e.g. `NORTH\eddard.stark` |
+| `AccountName` | bare username, e.g. `eddard.stark` |
 | `LogonType` | 2 = interactive at console, 3 = network, 7 = unlock, 10 = RemoteInteractive (RDP), 11 = CachedInteractive |
 | `IpAddress` / `WorkstationName` | source of the logon (4624 / 4625) |
 | `Process` / `ProcessName` / `CommandLine` | for 4688 process-create |
@@ -85,7 +91,7 @@ SecurityEvent
 ```kusto
 Event
 | where TimeGenerated > ago(1h)
-| where Computer == "BRIDGE-WS"
+| where Computer == "dc01"   // the host named in the incident
 ```
 
 For Sysmon-only:
@@ -133,12 +139,12 @@ Event
 
 ## Pivot patterns
 
-**Is a given external IP a managed / internal host?** When an SCP
-event names a `detail.client` IP and you want to know if that IP
-belongs to a host you have telemetry from, pivot via Sysmon EID 3:
-managed hosts log every outbound connection they make. If the SCP
-saw inbound traffic from IP X.X.X.X, the host that originated that
-traffic logged its outbound to the SCP at the same time.
+**Is a given external IP a managed / internal host?** When an
+event names a source IP and you want to know if that IP belongs to
+a host you have telemetry from, pivot via Sysmon EID 3: managed
+hosts log every outbound connection they make. If some surface saw
+inbound traffic from IP X.X.X.X, the host that originated that
+traffic logged its outbound at the same time.
 
 ```kusto
 // Time window = the burst window ± 5 min
@@ -154,16 +160,15 @@ Event
 | order by n desc
 ```
 
-If a `Computer` shows up here making outbound connections to the
-SCP during the window, the burst is from a **managed internal
-workstation**: the `Computer` field is the host name. If the
-result is empty, the source IP is unmanaged — likely external.
+If a `Computer` shows up here making outbound connections during
+the window, the traffic is from a **managed host in the estate**:
+the `Computer` field is the host name. If the result is empty, the
+source IP is unmanaged — likely an external attacker (in this lab,
+the RedAmon red-team box operating from outside the domain).
 
 This is the canonical first move when triaging any alert that
 carries a source IP and you need to know whether it's an internal
-managed host. The credential-stuffing runbook
-(`04-runbook-credential-stuffing.md`) uses it as step 2 and pivots
-on the resulting `Computer` to find the interactive user.
+managed host.
 
 **Process tree from a single suspicious process.** Sysmon writes
 ProcessGuid (a unique ID) — chain it parent ↔ child:
@@ -209,45 +214,44 @@ Event
 | project TimeGenerated, DestinationIp, DestinationPort
 ```
 
-## When to consult endpoint telemetry vs. Ship Control Panel
+## When to consult endpoint telemetry vs. Maison Miró
 
 The two corpora answer different questions:
 
 | Question | Look in |
 |----------|---------|
-| Who attempted to log in to the **SCP**? | `ContainerAppConsoleLogs_CL` (`auth.login.failure` / `success`) |
-| Was an SCP security toggle flipped? | `ContainerAppConsoleLogs_CL` (`event="security"` / `connectivity` / `collision`) |
-| Who logged in / failed to log in / logged off **on the host**? | **`SecurityEvent`** (EID 4624 / 4625 / 4634) |
-| What process did *that* on the bridge workstation (`BRIDGE-WS`)? | **`SecurityEvent`** (EID 4688 process create — has `Process` / `CommandLine` parsed) AND `Event` (Sysmon EID 1 — has full process tree via ProcessGuid) |
-| Did the host phone out somewhere? | `Event` (Sysmon EID 3, 22) |
+| Who attacked the **web store** (SQLi login, auth bypass, forged session, IDOR, exfil, fraud, XSS)? | `ContainerAppConsoleLogs_CL` (`ContainerName_s == "maison-miro"` — see `13-maison-logging.md`) |
+| Who logged in / failed to log in / logged off **on a GOAD host**? | **`SecurityEvent`** (EID 4624 / 4625 / 4634) |
+| What process ran **on a GOAD host**? | **`SecurityEvent`** (EID 4688 process create — has `Process` / `CommandLine` parsed) AND `Event` (Sysmon EID 1 — has full process tree via ProcessGuid) |
+| Did a host phone out somewhere? | `Event` (Sysmon EID 3, 22) |
 | Did anything inject into another process? | `Event` (Sysmon EID 8, 10) |
 | Was a privileged Windows event audited? | **`SecurityEvent`** (4672 special privilege, 4720 account created, 4740 account locked out) |
+| Is this a Kerberoast / DCSync / spray / AS-REP roast? | **`SecurityEvent`** — detection logic in `12-goad-ad-attacks.md` |
 
-In practice the investigator should query **both** when
-investigating a suspicious user — the Ship Control Panel auth
-trail tells you when they signed in; the endpoint telemetry tells
-you what they did once they were on the host.
+In a full kill-chain the investigator should query **both**
+corpora: Maison tells you how the attacker got in at the web tier;
+the endpoint telemetry tells you what they did once they pivoted
+to the domain.
 
 ## Verifying the channel is alive
 
-If a query returns no rows for `Source == "Microsoft-Windows-Sysmon"`,
-the install or the DCR forwarding may have failed. Diagnostic
-ladder:
+If a query returns no rows for `Source == "Microsoft-Windows-Sysmon"`
+on a host you expect telemetry from, the Sysmon install or the DCR
+forwarding may have failed. Diagnostic ladder:
 
-1. RDP into the bridge workstation (`BRIDGE-WS`), check
-   `C:\ProgramData\AISOC\Sysmon\install.log` — every install step
-   is logged there.
-2. On the VM, run `Get-Service Sysmon64` — should be `Running`.
-3. On the VM, run
+1. Reach the host (through the GOAD jumpbox), and confirm the
+   Sysmon service: `Get-Service Sysmon64` — should be `Running`.
+2. On the host, run
    `Get-WinEvent -LogName 'Microsoft-Windows-Sysmon/Operational' -MaxEvents 5`
-   — confirms the channel is producing.
-4. In the workspace, check for any rows from this Computer:
-   `Event | where Computer == "BRIDGE-WS" | take 5` (Sysmon /
+   — confirms the channel is producing locally.
+3. In the workspace, check for any rows from this Computer:
+   `Event | where Computer == "dc01" | take 5` (Sysmon /
    Application / System) and
-   `SecurityEvent | where Computer == "BRIDGE-WS" | take 5` (audit
+   `SecurityEvent | where Computer == "dc01" | take 5` (audit
    events). If both return zero rows, the AMA isn't forwarding
-   from this host at all (check the DCR association in the
-   portal). If only one is empty, that channel's stream binding
-   in the DCR is broken — Security → `SecurityEvent` (via
-   `Microsoft-SecurityEvent` stream), other channels → `Event`
-   (via `Microsoft-Event` stream).
+   from this host at all — check that `4-onboard-goad` associated
+   it to the DCR (the association is per-host). If only one is
+   empty, that channel's stream binding in the DCR is broken —
+   Security → `SecurityEvent` (via `Microsoft-SecurityEvent`
+   stream), other channels → `Event` (via `Microsoft-Event`
+   stream).

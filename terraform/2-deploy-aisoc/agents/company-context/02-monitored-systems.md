@@ -10,24 +10,18 @@ The following assets are in scope for AISOC monitoring:
    session, IDOR, bulk PII exfiltration, checkout fraud, stored XSS) show
    up. The full logging schema, event catalogue, and attack runbook are in
    **`13-maison-logging.md`**.
-2. **`BRIDGE-WS`** — the **bridge workstation**, a Windows 11
-   host with the Azure Monitor Agent and Sysmon installed.
-   Physically on the bridge of M/S Aegir; the captain
-   (Jack Sparrow) is its only interactive user. Endpoint
-   telemetry (Application / System / Security event logs +
-   Sysmon) flows into the `Event` table where it appears as
-   `Computer == "BRIDGE-WS"`. See `09-endpoint-telemetry.md`
-   for the schema, base filters, and pivot patterns; the
-   captain ↔ host pairing is in `10-org-chart.md`.
-3. The **corporate Active Directory estate (GOAD)** — the
-   shore-side Windows domains behind the fleet: domain
-   controllers `dc01` / `dc02` / `dc03` and member servers
-   `srv02` / `srv03`, all with the Azure Monitor Agent + Sysmon.
-   Their audit + Sysmon telemetry flows into `SecurityEvent`
-   and `Event`. This is where identity attacks (Kerberoasting,
-   DCSync, password spray, AS-REP roasting) show up. The EID
-   reference, detection logic, and AD runbooks are in
-   **`12-goad-ad-attacks.md`**.
+2. The **corporate Active Directory estate (GOAD)** — the
+   Windows domains behind the business: domain controllers
+   `dc01` / `dc02` / `dc03` and member servers `srv02` / `srv03`,
+   all with the Azure Monitor Agent + Sysmon installed. Their
+   audit telemetry flows into `SecurityEvent` and their Sysmon /
+   Application / System logs into `Event`. This is where both
+   host-level activity (logons, process creation, network
+   connections) and identity attacks (Kerberoasting, DCSync,
+   password spray, AS-REP roasting) show up. The Windows event
+   schema, base filters, and Sysmon pivot patterns are in
+   **`09-endpoint-telemetry.md`**; the AD-attack EID reference,
+   detection logic, and runbooks are in **`12-goad-ad-attacks.md`**.
 
 ## Maison Miró — the store
 

@@ -1,7 +1,7 @@
 # GOAD — Active Directory attacks: EID reference + runbooks
 
 The corporate Active Directory estate (**GOAD**) is monitored alongside
-the Ship Control Panel. This page is what Triage / Investigator /
+the Maison Miró web store. This page is what Triage / Investigator /
 Reporter retrieve when an incident's rule reads `SecurityEvent` on a
 domain controller. It covers the estate, the audit events that matter,
 per-attack detection logic, and the verdict mapping.

@@ -8,10 +8,13 @@
   agent missed something.
 - **L2 → L3** (investigator to incident commander):
   - Confirmed compromise of a VIP / service / admin account
-  - State changes affecting safety-of-life systems (navigation,
-    stabilizers in manual at sea, anchor at sea)
-  - Confirmed disabling of cameras or uplink
-  - Cross-vessel pattern (same indicator on >1 ship)
+  - Confirmed data theft or crown-jewel access on **Maison Miró**
+    (`data.honeytoken_touched`, bulk PII exfiltration, IDOR on
+    invoices / orders, checkout fraud)
+  - Domain-level compromise on **GOAD** (DCSync, or a user added to
+    Domain / Enterprise Admins outside a change window)
+  - A cross-surface kill chain (a Maison web break-in followed by AD
+    attack activity attributable to the same actor)
 - **L3 → CISO**: any incident that triggers a regulator
   notification (PSA, GDPR Art. 33, IMO 2021 cyber-resilience
   reporting).
@@ -39,19 +42,23 @@
   `detection-engineer` → `detection-engineer`; `soc-manager` →
   `soc-manager`; `threat-intel` → `threat-intel-analyst`.
 
-## Approved tooling
+## Approved tooling / expected automation
 
-The following tools are explicitly **expected** to be active on the
-Ship Control Panel:
+The following are explicitly **expected** to be active on the
+monitored surfaces and should NOT be flagged as anomalous on their
+own:
 
-- **NVISO Telemetry agent** — runs on every vessel, pushes logs to
-  the Container App. Authenticates as `svc_telemetry`.
-- **HealthCheck probe** — synthetic login attempts every 5 minutes
-  to validate the auth path. Authenticates as `svc_health`.
-  These succeed; they will appear in `auth.login.success` and
-  should NOT be flagged as anomalous.
-- **NVISO Indexer** — feeds the search index. Authenticates as
-  `svc_indexer`. No interactive login expected.
+- **Azure Monitor Agent + Sysmon** on every GOAD host — the
+  telemetry pipeline into Sentinel. Heartbeats and forwarded audit /
+  Sysmon events are normal background.
+- **Maison health probe** — periodic `/healthz` hits keep the
+  Container App warm. These do not emit `[EVENT]` security lines.
+- **Maison auto-SOAR** — Maison's own `/soc/*` responder. When
+  armed, `containment.engaged` / `containment.blocked` events with
+  `by: "auto-soar"` are the platform responding to a critical event,
+  not attacker activity.
 
-Anything outside this list calling the auth endpoint should be
-treated as suspect.
+Anything outside this list acting on the monitored surfaces —
+interactive logons by service / machine accounts, an unrecognised
+process on a domain controller, or privileged actions on Maison from
+a new `source_ip` — should be treated as suspect.

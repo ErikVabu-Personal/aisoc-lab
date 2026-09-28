@@ -1,89 +1,53 @@
-# Account naming conventions
+# Account naming + intent
 
-The Ship Control Panel uses a single auth realm. Account names follow
-these conventions — useful when triaging an alert against a username
-without other context.
+The two monitored surfaces name identities differently. Work out
+which surface an account came from, resolve it against that
+surface's conventions, then apply the generic intent rules below.
 
-## Shared bridge operational account
+## GOAD Active Directory (the Windows domains)
 
-**`administrator`** is the bridge's shared operational account on
-the SCP. Every officer on watch — captain, staff captain, watch
-officers — signs into the panel under this single username. The
-SCP itself was built before the realm migration, and per-person
-SCP logins were out of scope at the time. As a result, the
-**SCP username on its own does NOT identify the human at the
-keyboard**.
+Users, service accounts, and machine accounts across three domains
+in two forests (`sevenkingdoms.local`, `north.sevenkingdoms.local`,
+`essos.local`). Conventions:
 
-To attribute an SCP event to a specific person, the SOC has to
-pivot on the source IP recorded on the SCP event (`detail.client`),
-check whether endpoint telemetry maps that IP to a managed host
-(Sysmon EID 3 outbound to the SCP), and check who was interactively
-signed in there at the time (Security 4624). The "Source-IP triage"
-step in `04-runbook-credential-stuffing.md` is the canonical
-procedure; the KB then provides role / identity context for the
-host and user names that emerge.
+- **User accounts** — fictional Game-of-Thrones names, e.g.
+  `eddard.stark`, `cersei.lannister`, `daenerys.targaryen`,
+  `jon.snow`. On a `SecurityEvent` row they appear as
+  `TargetUserName` / `AccountName`, often with a domain prefix
+  (`NORTH\eddard.stark`).
+- **Service accounts** — accounts that carry a Service Principal
+  Name (SPN). These are the **Kerberoast targets**: a service
+  account appearing as the *actor* requesting many RC4 service
+  tickets, or as the actor in a DCSync, is a high-severity signal.
+  The attack-relevant principals (SPN-holders, DCSync-capable
+  accounts, Domain / Enterprise Admins) are enumerated in
+  `12-goad-ad-attacks.md`.
+- **Machine accounts** — end in `$` (`dc01$`, `srv02$`). Domain
+  controllers replicate constantly as `DC$`; that is normal. A
+  non-DC machine account — or a *user* account — performing
+  directory replication is not.
 
-## Prefixes (per-person SCP accounts, where they exist)
+## Maison Miró (the web store)
 
-| Prefix      | Meaning                          | Example          | Notes |
-|-------------|----------------------------------|------------------|-------|
-| `crew_`     | Crew (non-bridge, interactive)   | `crew_lindgren`  | Hospitality. |
-| `eng_`      | Engineering crew (interactive)   | `eng_yusuf`      | Engineering officers; flagged separately because they have engine-room privileges. |
-| `svc_`      | **Service account** (automation) | `svc_telemetry`  | Should never have an interactive login. Any `auth.login.*` event for a `svc_*` account from a non-allow-listed IP is **alert-worthy**. |
-| `admin_`    | Admin / IT (rare)                | `admin_lkr`      | Any login is logged AND reviewed. |
-| `vendor_`   | External vendor (scheduled)      | `vendor_starl`   | Vendor accounts; only legitimate during scheduled maintenance windows. |
+Maison has its own customer accounts, but an attacker there is
+**not** identified by a username — the correlation key is
+`source_ip` (one attacker walks the whole kill chain from a single
+IP). The login form is itself the SQL-injection / auth-bypass
+target, so a "username" in a Maison event is attacker-controlled
+input, not a trustworthy identity. Attribute Maison activity by
+`source_ip`; see `13-maison-logging.md`.
 
-## Service-account inventory (don't expect interactive logins)
+## Generic intent rules (both surfaces)
 
-- `svc_telemetry`        — pushes telemetry to Brussels
-- `svc_health`           — runs the health-check probe
-- `svc_indexer`          — feeds the search index
-- `svc_admin`            — **legacy** service account; deprecated but
-                            still around. Any login attempt is
-                            suspicious by default.
-- `svc_backup`           — nightly backup uploads
-
-## VIP / sensitive accounts
-
-These accounts get extra-careful triage. A failed-login burst against
-any of them should escalate to L2 immediately, not stay at L1.
-
-- **`administrator`** (SCP) — the shared bridge operational account
-  (see top of this page). Failed-login bursts AGAINST `administrator`
-  are common-but-noisy; the verdict turns on the **source IP** of
-  the burst, not on the username. The Source-IP triage step in
-  `04-runbook-credential-stuffing.md` is the canonical procedure.
-- `admin_lkr` — IT admin at HQ, reaches every vessel.
-- `svc_admin` — the legacy service account. Any login is suspicious;
-  a successful one is a near-certain compromise indicator.
-
-## Cross-system identity mappings
-
-A single person often appears under different account names across
-the systems we monitor. The org-chart page (`10-org-chart.md`) is
-the authoritative roster; this is the cheat sheet most relevant for
-triage.
-
-| Person | SCP (shared) | Workstation (Windows) | Workstation host |
-|--------|--------------|------------------------|------------------|
-| Jack Sparrow (Captain) | `administrator` (the shared bridge account) | `jack.sparrow` | `BRIDGE-WS` |
-
-`jack.sparrow` is the **only** account that legitimately signs in
-interactively on `BRIDGE-WS`. Combined with the SCP shared-account
-note at the top of this page, the implication for any
-investigation is generic: an SCP `administrator` event by itself
-identifies neither the human nor the source machine. The standard
-pivot is data-driven — find the source IP in the SCP event, check
-whether endpoint telemetry maps it to a managed host (Sysmon EID 3
-to the SCP), and check who was interactively signed in there
-(Security 4624). The KB then attaches role / identity meaning to
-those names; the "Source-IP triage" step in
-`04-runbook-credential-stuffing.md` walks the procedure.
-
-## What to do with an unknown account
-
-Treat any account that is NOT `administrator` and does not match
-one of the documented prefixes (`crew_`, `eng_`, `svc_`, `admin_`,
-`vendor_`) as untrusted until an analyst can verify it. Examples
-seen in past incidents that turned out to be attackers: `root`,
-`sa`, `test`, `user1`. Any login attempt against those is hostile.
+- **Service / automation accounts should never log in
+  interactively.** Any interactive logon (or, on the web tier, any
+  privileged action) by an automation identity from a
+  non-allow-listed source is alert-worthy.
+- **Treat any account you can't place as untrusted** until an
+  analyst verifies it. Classic attacker-supplied names seen in past
+  incidents: `root`, `sa`, `test`, `admin`, `user1`. Any auth
+  attempt involving those is hostile by default.
+- The org chart (`10-org-chart.md`) maps *staff* names to real
+  people for HITL routing — it is not a catalogue of attacker
+  identities, and attacker activity should never be attributed to a
+  staff member without corroborating evidence.

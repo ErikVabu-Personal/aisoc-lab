@@ -40,8 +40,8 @@ Three tables are in scope:
    fraud) under `ContainerName_s == "maison-miro"`. Full schema + attack
    catalogue in the KB page `13-maison-logging.md`.
 2. **`SecurityEvent`** — Windows audit events from the monitored
-   Windows estate: the `BRIDGE-WS` workstation **and** the GOAD
-   Active Directory hosts (`dc01`/`dc02`/`dc03`/`srv02`/`srv03`).
+   Windows estate: the GOAD Active Directory hosts
+   (`dc01`/`dc02`/`dc03`/`srv02`/`srv03`).
    Native Sentinel-parsed table; rows are individual security audit
    events with proper columns (`Account`, `AccountName`,
    `LogonType`, `IpAddress`, `WorkstationName`, `Process`,
@@ -98,7 +98,7 @@ names; omit the host filter to search the whole estate:
 ```kusto
 SecurityEvent
 | where TimeGenerated > ago(1h)
-// | where Computer == "<host from the incident>"   // e.g. "BRIDGE-WS" or "dc01"
+// | where Computer == "<host from the incident>"   // e.g. "dc01" or "srv02"
 // then filter by EventID, AccountName, TargetUserName, LogonType, IpAddress, …
 ```
 

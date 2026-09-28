@@ -12,11 +12,14 @@ Alaskan inside passage, North Atlantic crossings).
 | M/S Saga     | Aegir     | 1280 | 480  | Sister ship                            |
 | M/S Njord    | Aegir-II  | 1640 | 540  | Newer build, same Bridge & Operations stack |
 
-All three vessels run the same Bridge & Operations control surface
-(the **Ship Control Panel** that AISOC monitors), with vessel-
-specific configuration injected at boot. A finding on one ship
-usually has equivalents on the others; cross-fleet correlation is
-common during incident response.
+All three vessels run the same onboard operations stack, with
+vessel-specific configuration injected at boot.
+
+What AISOC actually monitors is the **corporate IT estate** behind
+the business: the customer-facing web store (**Maison Miró**) and
+the shore-side **Active Directory domains (GOAD)**. A finding on one
+system often has equivalents elsewhere in the estate; cross-system
+correlation is common during incident response.
 
 ## Corporate footprint
 

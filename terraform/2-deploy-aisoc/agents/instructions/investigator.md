@@ -152,7 +152,7 @@ evidence. See `13-maison-logging.md` for the verdict mapping.
 
 When the firing rule reads `SecurityEvent` on a domain controller
 (Kerberoasting, DCSync, password spray, AS-REP roasting), follow this
-instead of the SCP path above.
+instead of the web-victim (Maison) path above.
 
 **First step:** retrieve **`12-goad-ad-attacks.md`** from the
 company-context KB — it has the EID reference, the per-attack detection
@@ -372,8 +372,8 @@ because that's the one thing every L2 hand-off needs to surface.
 the operator's CONFIDENCE_THRESHOLD.
 
 **Next:** Reporter — one-line recommendation. Example: "recommend
-Closed/True Positive; cameras-disabled suggests deliberate evasion,
-flag scope".
+Closed/True Positive; honeytoken touched confirms data theft,
+auto-SOAR contained the source".
 ```
 
 Rules:
@@ -418,28 +418,28 @@ Worked example (assume the orchestrator passed
 **🧪 Investigator — evidence + timeline**
 **Run:** 8e2c4a93 · 2026-05-01T14:11:48Z
 
-**Summary:** Confirmed credential-stuffing; one login succeeded for `svc_admin` from the attacker IP at 14:02:18 UTC. Provisional verdict: true positive.
+**Summary:** Confirmed Maison break-in → data theft; SQL-injection auth bypass at 14:02:18 UTC followed by a honeytoken read from the same `source_ip`. Provisional verdict: true positive (auto-SOAR contained it).
 
 **Entities (resolved):**
-- Username(s): `svc_admin`
 - Source IP(s): `198.51.100.7`
-- Hostname(s): — (external IP, no endpoint correlation)
+- Hostname(s): — (external attacker, no managed-host correlation via Sysmon EID 3)
 
 **Findings:**
-- 47 failures + 1 success from `198.51.100.7` against `svc_admin` (KQL #1, #2)
-- IP geolocates to RU; user's 14-day baseline is CH-only (KQL #3)
-- TI: IP listed on AbuseIPDB / GreyNoise / SANS ISC as credential-stuffing source (`query_threat_intel`)
-- Successful login followed at 14:03:09 UTC by `setSecurity {camerasEnabled: false}` from the same session (KQL #4)
+- Full `source_ip` timeline: `recon.disallowed_path` → `auth.sqli_attempt` → `auth.login_bypass` → `data.honeytoken_touched` (critical) (KQL #1)
+- `data.honeytoken_touched` is zero-false-positive — no legitimate flow reads that record (KB `13-maison-logging.md`)
+- IP geolocates to RU; TI: listed on AbuseIPDB / GreyNoise as a web-attack source (`query_threat_intel`)
+- Auto-SOAR fired: `containment.engaged` then `containment.blocked` for `198.51.100.7` at 14:03:11 UTC (KQL #2) — crown-jewels protected
 
 **Timeline:**
-- 13:50:08 UTC — first failure burst from 198.51.100.7
-- 13:58:42 UTC — burst rate slows; spray for unrelated users mixed in
-- 14:02:18 UTC — success for `svc_admin`
-- 14:03:09 UTC — `security.cameras.disabled` from same client
+- 13:50:08 UTC — `recon.disallowed_path` sweep from 198.51.100.7
+- 13:58:42 UTC — `auth.sqli_attempt` ×3
+- 14:02:18 UTC — `auth.login_bypass` (SQLi auth bypass succeeds)
+- 14:02:55 UTC — `data.honeytoken_touched` (critical)
+- 14:03:11 UTC — `containment.engaged` + `containment.blocked` (auto-SOAR)
 
-**Confidence:** High — verdict supported by auth + post-auth evidence; TI corroborates.
+**Confidence:** High — verdict supported by the full kill chain + the zero-FP honeytoken; TI corroborates.
 
-**Next:** Reporter — recommend `Closed/True Positive`; cameras-disabled suggests deliberate evasion, flag for scope.
+**Next:** Reporter — recommend `Closed/True Positive`; honeytoken confirms data theft, auto-SOAR contained the source, flag for scope.
 ```
 
 ## Status is reporter-only

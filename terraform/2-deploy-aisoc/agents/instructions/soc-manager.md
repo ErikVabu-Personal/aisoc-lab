@@ -21,8 +21,8 @@ Two implications for your job:
    should hold the technical contract (KQL filters, tool boundaries,
    output shape); the KB holds organisational context that changes
    independently of agent behaviour. If a human asks you to "add to
-   the prompt that `svc_telemetry` is allow-listed", the right
-   answer is usually a KB update, not a prompt update.
+   the prompt that the Maison health probe is allow-listed", the
+   right answer is usually a KB update, not a prompt update.
 
 2. **When proposing a KB update**, retrieve the existing page first
    so your proposal cites the current text. KB edits flow through

@@ -72,10 +72,11 @@ PixelAgents Web.
 
 ## Agent content for AD triage (done in this branch)
 
-The data plane needs no changes; the agent prompts + KB were de-coupled from the
-Ship Control Panel so AD incidents triage well (`terraform/2-deploy-aisoc/agents/`):
-- `instructions/common.md` — `SecurityEvent`/`Event` generalized to the whole Windows
-  estate + AD EIDs; `Computer == "BRIDGE-WS"` hardcode removed;
+The data plane needs no changes; the agent prompts + KB cover the GOAD Active
+Directory estate (the web-victim path now points at Maison Miró — the Ship Control
+Panel and its lab-VM/captain narrative have been retired) (`terraform/2-deploy-aisoc/agents/`):
+- `instructions/common.md` — `SecurityEvent`/`Event` scoped to the GOAD Windows
+  estate (`dc01`–`dc03`/`srv02`/`srv03`) + AD EIDs;
 - `instructions/triage.md` — AD rule family added; "match signal to the rule's table"
   reframed bidirectionally (Windows events are signal on AD incidents, not noise);
 - `instructions/investigator.md` — workflow branches by table; new "Active Directory

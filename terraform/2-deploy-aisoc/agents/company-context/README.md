@@ -12,18 +12,14 @@ conventions, runbooks, glossary.
 | File                                 | What's in it |
 |--------------------------------------|--------------|
 | `01-company-overview.md`             | NVISO Cruiseways, fleet, SOC team structure |
-| `02-monitored-systems.md`            | Ship Control Panel subsystems + what "normal" looks like |
-| `03-account-naming.md`               | Shared `administrator` SCP account; per-person prefixes (`crew_`, `eng_`, `svc_`, …); VIP list; cross-system identity-mapping cheat sheet |
-| `04-runbook-credential-stuffing.md`  | IR runbook for repeated-failure alerts |
-| `05-runbook-cameras-disabled.md`     | IR runbook for the security-cameras-off alert |
-| `06-runbook-uplink-disabled.md`      | IR runbook for connectivity-disabled |
-| `07-glossary.md`                     | Maritime + Ship Control Panel + AISOC terminology |
+| `02-monitored-systems.md`            | The two monitored surfaces — Maison Miró (web store) + the GOAD AD estate — and what "normal" looks like |
+| `03-account-naming.md`               | Account intent across the estate: GOAD domain / service accounts, Maison's `source_ip`-based attribution, generic "service accounts never log in interactively / unknown accounts are hostile" rules |
+| `07-glossary.md`                     | SOC / AISOC terminology + NVISO-specific abbreviations |
 | `08-escalation.md`                   | Escalation matrix, oncall, approved tooling |
-| `09-endpoint-telemetry.md`           | `BRIDGE-WS` + Sysmon — schema, base filter, common Sysmon EIDs, KQL pivot patterns |
-| `10-org-chart.md`                    | Authoritative roster (bridge officers, engineering, SOC team) + the captain-on-`BRIDGE-WS` correlation pattern that resolves false positives on the credential-stuffing alert via SCP source-IP → workstation → Windows-logon-user |
-| `11-ship-control-panel-logging.md`   | Canonical SCP logging schema: `ContainerAppConsoleLogs_CL` shape, base filter, `event` catalogue, `detail.*` field reference, time-window guidance, "table looks empty" diagnostic ladder |
+| `09-endpoint-telemetry.md`           | GOAD Windows estate + Sysmon — `SecurityEvent`/`Event` schema, base filters, common Sysmon EIDs, KQL pivot patterns |
+| `10-org-chart.md`                    | Authoritative roster (SOC team for HITL routing + business/crew staff) and how to map log identities (GOAD AD users, Maison `source_ip`) to the right surface |
 | `12-goad-ad-attacks.md`              | GOAD Active Directory estate: AD-attack EID reference (`SecurityEvent`), per-attack detection logic + runbooks (Kerberoast / DCSync / password spray / AS-REP roast), verdict/escalation mapping |
-| `13-maison-logging.md`               | Maison Miró web victim: `[EVENT]` log schema + base filter, event/attack catalogue, `source_ip` correlation, honeytoken = zero-FP theft signal, auto-SOAR containment, investigation runbook + verdict mapping. **Replaces the retired Ship Control Panel (`11`).** |
+| `13-maison-logging.md`               | Maison Miró web victim: `[EVENT]` log schema + base filter, event/attack catalogue, `source_ip` correlation, honeytoken = zero-FP theft signal, auto-SOAR containment, investigation runbook + verdict mapping |
 
 ## Uploading to the blob container
 

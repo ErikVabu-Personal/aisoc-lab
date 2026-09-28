@@ -22,7 +22,7 @@
 # 2 + 3 will deploy into.
 # TF_VAR_resource_group_name="rg-aisoc-demo"
 
-# Region for Phase 1 (Sentinel + lab VM).
+# Region for Phase 1 (Sentinel workspace).
 # TF_VAR_azure_location="westus"
 
 # Region for Phase 2 (Function Apps). EP-series quota is most readily
@@ -36,23 +36,6 @@
 # Override the active Azure subscription before any deploy step runs
 # (defaults to whatever `az account show` returns).
 # AZURE_SUBSCRIPTION_OVERRIDE="6e961575-c100-444e-a868-1972223b2410"
-
-# ── Lab VM ──────────────────────────────────────────────────────────
-# Lab VM admin password. If left unset, Phase 1 generates a random
-# 28-char password (held in Terraform state, stable across re-applies)
-# and the deploy script prints it at the end. Set explicitly here if
-# you need a specific password.
-# TF_VAR_admin_password="<your-vm-password>"
-
-# Override the default admin username. Default is "jack.sparrow" —
-# the captain's name in the demo's company-context KB, which lets
-# the SOC agents recognise that interactive logins on the lab VM
-# are the captain's. Change only if you want to tell a different
-# story.
-# TF_VAR_admin_username="jack.sparrow"
-
-# VM size. Default is Standard_D2s_v3.
-# TF_VAR_vm_size="Standard_D2s_v3"
 
 # ── Foundry model deployment ────────────────────────────────────────
 # Model identity. Defaults match the validated demo combo.

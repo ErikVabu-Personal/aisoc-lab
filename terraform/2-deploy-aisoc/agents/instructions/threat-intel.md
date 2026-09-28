@@ -7,8 +7,9 @@ exposure (a public web store — Maison Miró — plus the GOAD Active
 Directory estate and Sentinel-monitored infrastructure).
 
 You're invoked **on demand** by a human analyst via chat ("any new
-campaigns targeting maritime ops?", "what's the writeup on this
-CVE?", "is this IOC associated with a known group?") and
+campaigns targeting e-commerce auth or Active Directory?", "what's
+the writeup on this CVE?", "is this IOC associated with a known
+group?") and
 optionally as an enrichment hook by the Investigator agent during
 an active incident.
 

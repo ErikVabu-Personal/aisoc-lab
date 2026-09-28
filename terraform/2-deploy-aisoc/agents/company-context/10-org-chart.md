@@ -1,40 +1,13 @@
-# Org chart — who's who on M/S Aegir
+# Org chart — who's who at NVISO Cruiseways
 
-Authoritative roster for the M/S Aegir's current crew. Used by the
-SOC agents to map identities seen in logs (Ship Control Panel
-usernames, bridge-workstation logins, Sentinel incident "owner"
-assignments) back to actual people.
+Authoritative roster for NVISO Cruiseways. Used by the SOC agents
+to (a) route human-in-the-loop questions to the right person via
+`ask_human`, and (b) map identities seen in logs back to real
+people where a name is ambiguous.
 
-This page is curated by the SOC Manager + HR. When a crew change
-happens (promotion, sign-on, sign-off) the change shows up here
-first; the AISOC agents pick it up on their next KB retrieval.
-
-## Bridge officers
-
-The Ship Control Panel itself uses a small set of **shared
-operational accounts** for the bridge — the panel was built before
-the realm migration, and per-person SCP accounts didn't exist when
-it shipped. The bridge's primary operational account is
-`administrator`. Per-person identity is recovered from
-**workstation logs** (Windows auth on the workstation a session
-came from), not from the SCP username; the procedure is in
-`04-runbook-credential-stuffing.md` and is reusable for any alert
-that names a source IP.
-
-| Person | Role | Workstation account | Notes |
-|--------|------|---------------------|-------|
-| **Jack Sparrow** | **Master / Captain** | **`jack.sparrow`** (local admin on **`BRIDGE-WS`**, the bridge workstation) | Highest authority on board. The captain works almost exclusively at `BRIDGE-WS` while in port; while at sea he operates the SCP from the bridge under the shared `administrator` account. |
-| Anneke Lindgren | Staff Captain | — | Second-in-command. Full bridge privileges; operates SCP under `administrator` from the bridge during her watches. |
-| Ryotaro Kobayashi | Chief Officer | — | Navigation watch lead. Same shared-account pattern. |
-| Lukas Akkermans | Second Officer | — | Watchkeeper, in alternation with the staff captain. |
-| Mira Eikholt | Third Officer | — | Watchkeeper. Most recently signed on (CR-2614). |
-
-## Engineering officers
-
-| Person | Role | Ship Control Panel account | Notes |
-|--------|------|----------------------------|-------|
-| Hassan Yusuf | Chief Engineer | `eng_yusuf` | Engine-room lead, full privileges on engine + stabiliser subsystems. |
-| Sara Pellegrini | Second Engineer | `eng_pellegrini` | Watchkeeper. |
+This page is curated by the SOC Manager + HR. When a staffing
+change happens it shows up here first; the AISOC agents pick it up
+on their next KB retrieval.
 
 ## SOC team (Brussels HQ)
 
@@ -49,51 +22,48 @@ These are the humans the AISOC agents route HITL questions to via
 | Ryotaro Kobayashi | L2 senior analyst (secondary) | `ryotaro.kobayashi@nviso-cruiseways.eu` |
 | Asha Mansfield | Threat-intel analyst | `asha.mansfield@nviso-cruiseways.eu` |
 
-(Note: Lindgren / Kobayashi / Akkermans appear in both lists
-because the SOC analyst rotation is filled in part by senior
-bridge officers between voyages — a quirk of NVISO Cruiseways'
-small SOC headcount.)
+## Business / crew roster
 
-## Identity-mapping cheat sheet for the SOC
+Context for staff identities that may surface in company systems.
+NVISO Cruiseways operates the M/S Aegir; the shipboard crew are
+staff, not SOC operators.
 
-When a log line names a username, **first** retrieve this page and
-the naming-conventions page (`03-account-naming.md`), then resolve:
+| Person | Role |
+|--------|------|
+| Jack Sparrow | Master / Captain |
+| Anneke Lindgren | Staff Captain (also SOC L2 — see above) |
+| Ryotaro Kobayashi | Chief Officer (also SOC L2 — see above) |
+| Lukas Akkermans | Second Officer (also SOC deputy IC — see above) |
+| Mira Eikholt | Third Officer (most recently signed on, CR-2614) |
+| Hassan Yusuf | Chief Engineer |
+| Sara Pellegrini | Second Engineer |
 
-- **`administrator`** on the Ship Control Panel → a SHARED bridge
-  operational account. The username alone does NOT identify the
-  human at the keyboard. To attribute, pivot on the `client`
-  (source IP) of the SCP event and cross-reference Windows logon
-  events on the workstation owning that IP at the same time.
-- Windows local logon for **`jack.sparrow`** on **`BRIDGE-WS`** →
-  **Jack Sparrow** working at the bridge workstation. He's the
-  only person who legitimately uses that account, and `BRIDGE-WS`
-  is the only host that account legitimately appears on.
-- `eng_<lastname>` → engineering officer in the table above.
-- `svc_*`, `vendor_*`, `admin_*` → see naming-conventions page.
+(Lindgren / Kobayashi / Akkermans appear on both rosters because
+the SOC analyst rotation is filled in part by senior officers
+between voyages — a quirk of NVISO Cruiseways' small SOC headcount.)
 
-## Workstation-to-person facts the KB owns
+## Mapping log identities to people
 
-The KB does not pre-bake conclusions for specific incident
-patterns; it owns the facts an investigator needs to interpret
-what the telemetry showed. The relevant facts here:
+The two monitored surfaces name identities in different ways —
+resolve them against the right page, not against this roster:
 
-- **`BRIDGE-WS`** is the bridge workstation — physically on the
-  bridge of M/S Aegir, in scope for AISOC monitoring (asset
-  inventory in the `company-policies` KB).
-- The only human who interactively logs into `BRIDGE-WS` under
-  `jack.sparrow` is Jack Sparrow, the master / captain.
-- The Ship Control Panel does NOT carry per-person SCP accounts
-  for the bridge. All bridge officers — captain included — sign
-  in as the shared `administrator` account (see `03-account-
-  naming.md`). This means the SCP `username` field by itself
-  cannot identify the human; identity has to be reconstructed
-  from other sources.
+- **GOAD Active Directory users** (the Windows domains behind the
+  business) use fictional Game-of-Thrones names — `eddard.stark`,
+  `cersei.lannister`, `daenerys.targaryen`, plus service accounts.
+  The naming conventions and per-domain user lists are in
+  `03-account-naming.md`; the attack-relevant principals
+  (Kerberoast targets, DCSync-capable accounts) are called out in
+  `12-goad-ad-attacks.md`. These are **not** the staff above.
+- **Maison Miró** (the public web store) has its own customer
+  accounts. An attacker there is identified by `source_ip` — the
+  correlation key for the whole incident — not by a staff
+  identity. See `13-maison-logging.md`.
 
-How the SOC reconstructs identity from those facts is a generic
-investigation pattern, documented in `04-runbook-credential-
-stuffing.md` (source-IP triage) and `09-endpoint-telemetry.md`
-(IP-to-host pivot). The KB doesn't hardcode the captain example;
-the agent assembles it from the facts above plus the runbook.
+When a log line names a username, first decide which surface it
+came from (Windows host → `SecurityEvent`/`Event`; web store →
+`ContainerAppConsoleLogs_CL`), then resolve it against that
+surface's page above. This roster is for HITL routing and
+staff-name lookups, not for attributing attacker activity.
 
 ## Editing this page
 

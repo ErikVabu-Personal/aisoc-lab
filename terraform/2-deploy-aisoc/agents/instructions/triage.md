@@ -66,10 +66,10 @@ events in other tables.
 - **Run the rule's own query (or a close variant)** in the alert's
   time window. That's the evidence you summarize.
 - **Do NOT cross-correlate to other tables in triage.** That's the
-  investigator's job, and only when justified (e.g. the captain-on-
-  `BRIDGE-WS` pattern needs `Event` cross-correlation and the
-  investigator's runbook explicitly walks that). At triage you
-  stay in the alert's own table.
+  investigator's job, and only when justified (e.g. an AD-attack
+  alert on `SecurityEvent` that needs Sysmon `Event`
+  cross-correlation, and the investigator's runbook explicitly
+  walks that). At triage you stay in the alert's own table.
 
 ### Robust handling when your first query returns 0 rows
 
@@ -221,21 +221,20 @@ Worked example (assume the orchestrator passed
 **🔎 Triage — L1 first pass**
 **Run:** 8e2c4a93 · 2026-05-01T14:08:12Z
 
-**Summary:** Brute-force pattern against `svc_admin` from a single IP, 47 failed logins over 12 minutes.
+**Summary:** Web-attack pattern against Maison Miró from a single source IP — recon sweep followed by SQL-injection auth-bypass attempts.
 
 **Entities:**
-- Username(s): `svc_admin`
 - Source IP(s): `198.51.100.7`
 
 **Findings:**
-- Rule: `Auth — Repeated login failures` (Medium)
+- Rule: `Maison Miró: web attack (SQLi / auth bypass / forged session / XSS)` (Medium)
 - Window: 13:50 → 14:02 UTC
-- 47 failures, 0 successes for `svc_admin` from `198.51.100.7`
-- Note: `svc_admin` is a service account; flag for investigator
+- From `198.51.100.7`: `recon.disallowed_path` ×6, then `auth.sqli_attempt` ×3 and one `auth.login_bypass` (high)
+- Note: `source_ip` is the correlation key; a `high` break-in with no follow-on `critical` yet — flag for investigator to check for data-theft events from the same IP
 
 **Confidence:** Medium — single-rule signal, no enrichment yet.
 
-**Next:** Investigator — confirm whether any login succeeded; geolocate IP.
+**Next:** Investigator — pull the full `source_ip` timeline; check for any `critical` (`data.*` / `fraud.*`) event and whether auto-SOAR contained it.
 ```
 
 ## Status is reporter-only

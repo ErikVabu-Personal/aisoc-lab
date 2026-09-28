@@ -1,5 +1,9 @@
 #############################################
-# Application Insights for Ship Control Panel logs
+# Shared Application Insights (Maison Miró + the Phase 2 gateway/orchestrator).
+#
+# Kept named `shipcp` (address + `appi-shipcp-*` name) ON PURPOSE: its
+# connection string is exported as output `application_insights_connection_string`
+# and consumed via terraform_remote_state by Phase 2. Renaming would churn it.
 #
 # Container Apps diagnostic settings may expose metrics-only in some regions.
 # App Insights gives us a reliable pipeline for application logs/telemetry

@@ -1,26 +1,29 @@
-# Phase 1 — Sentinel + Ship Control Panel + lab VM
+# Phase 1 — Sentinel + Maison Miró
 
-The foundation phase. Stands up the Microsoft Sentinel workspace
-and three things that produce telemetry into it: the Ship Control
-Panel Container App (the "victim" web app), a Windows 11 lab VM
-(for portal-side observation + manual telemetry generation), and a
-shared Key Vault used by Phases 2 and 3 for Function host keys and
-secrets.
+The foundation phase. Stands up the Microsoft Sentinel workspace and the
+shared plumbing every later phase builds on: the **Maison Miró** Container
+App (the intentionally-vulnerable "victim" web store), the shared Container
+Apps environment + Application Insights it runs in, a shared Key Vault used
+by Phases 2 and 3, and the Windows Event Log **Data Collection Rule** that the
+GOAD hosts attach to in `4-onboard-goad`.
+
+There is **no lab VM in this phase** — the range's Windows telemetry comes
+entirely from the GOAD domain (Phase 4). Phase 1 only *creates* the DCR
+(unassociated) and exports its id.
 
 ## What gets created
 
 | Resource | File | Notes |
 |----------|------|-------|
-| Resource Group | (top-level provider config) | Created if it doesn't exist; chosen via `var.resource_group_name`. |
-| Log Analytics workspace + Sentinel onboarding | `main.tf` | Workspace name is suffixed with a random 6-char string. |
-| Three analytic rules | `sentinel_rules.tf` | Repeated-failed-logins, password-spray, suspicious-user-agent. Defined as JSON ARM templates and applied via `azapi_resource`. |
-| Ship Control Panel Container App | `ship_control_panel.tf` | Public ingress, image pulled from GHCR. Logs stdout to the workspace via the App Insights connection-string in the Container App's env. |
-| Windows 11 lab VM | `main.tf` | Optional manual-trigger telemetry source. Auto-shutdown configured. RDP open from any source — throwaway demo box. |
-| Azure Monitor Agent + DCR | `main.tf` | Forwards Windows Event Logs to the workspace. |
-| **Sysmon (Sysinternals)** | `sysmon.tf` + `scripts/install_sysmon.ps1` | CustomScriptExtension installs Sysmon with the SwiftOnSecurity verbose config; the DCR is extended to forward `Microsoft-Windows-Sysmon/Operational` into the workspace. Toggleable via `enable_sysmon` (default `true`). |
+| Resource Group | `main.tf` | Created if it doesn't exist; `var.resource_group_name`. |
+| Log Analytics workspace + Sentinel onboarding | `main.tf` | Workspace name suffixed with a random 6-char string. |
+| Windows Event Log DCR | `main.tf` | Collects Application/System/Sysmon (`Event`) + Security (`SecurityEvent`). Created **unassociated**; `4-onboard-goad` associates the GOAD hosts to it via the exported `dcr_id`. Gated on `enable_windows_event_logs` (default `true`). |
+| Maison Miró Container App | `maison_miro.tf` | Public ingress on `:8000`, image pulled from GHCR. Prints `[EVENT] {json}` to stdout → `ContainerAppConsoleLogs_CL`. Pinned to 1 replica (SOC state is in-memory). |
+| Shared Container Apps environment | `ship_control_panel.tf` | `cae-shipcp-*`. Kept named `shipcp` on purpose — its id is exported as `container_app_environment_id` and consumed by Phase 2/3 via remote state. |
+| Shared App Insights | `appinsights_shipcp.tf` | Workspace-based; connection string exported for the Phase 2 gateway + orchestrator. |
+| Container App diagnostics | `containerapp_diagnostics.tf` | Routes the environment's console/system logs to the workspace. |
+| Maison analytic rules | `post_apply_scripts.tf` + `scripts/rules/*.kql` | Two scheduled rules (crown-jewel theft/fraud, web attack), deployed after apply by `scripts/deploy_sentinel_scheduled_rule.sh`. |
 | Shared Key Vault | `aisoc_kv.tf` | Used by Phases 2 and 3 to publish Function host keys and Container App secrets. |
-| App Insights for the Ship Control Panel | `appinsights_shipcp.tf` | Connection-string only (no sampling configured); Container App reads it and emits trace + metrics. |
-| Defender for Endpoint onboarding | `mde_kv.tf`, `MDE.md` | Optional — disabled by default. See `MDE.md` for the manual onboarding-script step. |
 
 ## Prerequisites
 
@@ -51,82 +54,40 @@ terraform apply
 terraform destroy
 ```
 
-The top-level destroy script handles a quirk where the lab VM has
-to be running for its agent extensions to be removed cleanly — see
-the README at the repo root for details.
-
-## Defender for Endpoint
-
-There are two parts:
-
-1. **Onboard the lab VM to MDE.** Terraform can do this only if you
-   provide the PowerShell onboarding script exported from the MDE
-   portal. Drop it in `mde/` and set
-   `TF_VAR_mde_onboarding_script=mde/<filename>.ps1`.
-2. **Enable the Sentinel data connector for MDE** so MDE alerts /
-   incidents flow into the workspace.
-
-Both are documented in `MDE.md`. Both are disabled by default.
-
 ## DCR + analytic-rules notes
 
-- The DCR uses the default ingestion endpoint (no DCE) to keep
-  payloads simple and avoid API validation edge cases.
-- The DCR's XPath queries collect Levels 1–3 from Application /
-  System and Levels 1–4 from Security (Security audit events are
-  Level=4 / Information). When Sysmon is enabled, the DCR also
-  forwards `Microsoft-Windows-Sysmon/Operational` Levels 1–4 (all
-  Sysmon events are Level=4 by design — must be included or
-  nothing arrives).
-- Analytic rules are defined as JSON ARM templates under
-  `analytic_rules/` and applied via `azapi_resource` because the
-  azurerm provider's coverage of Sentinel-rule shapes lags the
-  product. Each rule's KQL is heavily commented; edit directly +
-  re-apply.
-
-## Sysmon notes
-
-- The CustomScriptExtension downloads two files via `fileUris`:
-  `scripts/install_sysmon.ps1` from this repo's `main` branch, and
-  the SwiftOnSecurity `sysmonconfig-export.xml` from upstream. Both
-  URLs are configurable via `var.sysmon_install_script_url` /
-  `var.sysmon_config_url` — pin to a commit SHA for prod, or swap
-  in Olaf Hartong's sysmon-modular config.
-- The script is **idempotent** — it detects an existing Sysmon
-  service and reloads the config in place (`Sysmon64.exe -c <file>`)
-  instead of reinstalling. Re-running `terraform apply` is safe.
-- All install output is captured at
-  `C:\ProgramData\AISOC\Sysmon\install.log` on the VM. RDP in and
-  read it if the channel doesn't appear in Log Analytics.
-- Once Sysmon events are flowing, you'll see them in the workspace
-  under the `Event` table (the same table that holds Application /
-  System / Security):
-
-  ```kusto
-  Event
-  | where Source == "Microsoft-Windows-Sysmon"
-  | summarize n = count() by EventID, RenderedDescription
-  | order by n desc
-  ```
-
-  Common Sysmon event IDs you'll get: 1 (process create), 3 (network
-  connection), 7 (image loaded), 10 (process access), 11 (file
-  create), 12/13/14 (registry), 22 (DNS query), 25 (process
-  tampering).
+- The DCR uses the default ingestion endpoint (no DCE) to keep payloads
+  simple and avoid API validation edge cases.
+- Its XPath queries collect Levels 1–3 from Application / System, all of
+  `Security!*` (Windows audit events are Level=0 / LogAlways — a level
+  filter would silently drop 4624/4625/4688/…), and Levels 1–4 from
+  `Microsoft-Windows-Sysmon/Operational` (every Sysmon event is Level=4 by
+  design — must be included or nothing arrives). Each GOAD host's own
+  `sysmonconfig.xml` is the authoritative gate; the AMA filter is broad on
+  purpose.
+- Analytic rules are **not** created by Terraform directly. Sentinel
+  validates KQL at rule-creation time, and the Maison rules query
+  `ContainerAppConsoleLogs_CL`, which Log Analytics creates lazily on first
+  ingest — ARM would reject the rule on a cold deploy. `post_apply_scripts.tf`
+  instead runs `scripts/deploy_sentinel_scheduled_rule.sh`, which polls for
+  the table (skipping with a warning if it isn't there yet) then PUTs the
+  rule. RULE_IDs are held in Terraform state so re-applies upgrade in place.
 
 ## Observability tip
 
-The Ship Control Panel logs stream to the workspace via Container
-Apps' default `ContainerAppConsoleLogs_CL` table. The base filter
-the AISOC agents use (and the one to start with for any manual
-exploration):
+Maison Miró streams its `[EVENT]` lines to the workspace via Container Apps'
+default `ContainerAppConsoleLogs_CL` table. The base filter the AISOC agents
+use (and the one to start with for any manual exploration):
 
 ```kusto
 ContainerAppConsoleLogs_CL
-| where Stream_s == "stdout"
-| extend j = parse_json(Log_s)
-| where j.service == "ship-control-panel"
+| where ContainerName_s == "maison-miro"
+| where Log_s startswith "[EVENT] "
+| extend e = parse_json(substring(Log_s, 8))
+| project TimeGenerated, type = e.type, severity = e.severity,
+          source_ip = e.source_ip, message = e.message
 ```
 
-That gets you every state-change event from the panel in
-structured form (`j.event`, `j.detail`, `j.meta`).
+That gets you every security-relevant event from the store in structured
+form. Incidents correlate by `source_ip`. See the agent KB
+`company-context/13-maison-logging.md` for the full event/attack catalogue.

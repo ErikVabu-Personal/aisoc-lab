@@ -1,72 +1,27 @@
-# Rename to terraform.tfvars and fill in values
+# Rename to terraform.tfvars and override values as needed.
+# Every variable has a sensible default, so an empty tfvars applies cleanly —
+# override only what you want to change.
 
-# Region
-azure_location = "westus" # West US
-
-# Disable auto-pick (it can be slow because it probes multiple regions/SKUs)
-auto_select_location_and_sku = false
-
-# (Optional) If you re-enable auto-pick later:
-# location_candidates = ["westus"]
-# vm_size_candidates  = ["Standard_B1ms", "Standard_B2s", "Standard_D2as_v5"]
-
-# Windows VM credentials
-# admin_username = "azureadmin"
-
-# OpenRouter (optional)
-# openrouter_api_key = "sk-or-v1-..."
+# --- Sentinel workspace (Phase 1) ---
+azure_location      = "westus" # West US
 resource_group_name = "rg-sentinel-test"
 workspace_name      = "law-sentinel-test"
-vm_name             = "bridge-workstation"
-# In-OS Windows hostname (cap 15 chars, NetBIOS — no underscores). This
-# is what shows up in Sentinel as Event.Computer.
-vm_computer_name    = "BRIDGE-WS"
-vm_size             = "Standard_D2s_v3"
 
-# Lab VM RDP is intentionally open on 3389 from any source — this is a
-# throwaway test environment, gated only by the admin password.
+# Microsoft Sentinel on the workspace (default true).
+# sentinel_enabled = true
 
-admin_username = "azureadmin"
+# Create the Windows Event Log Data Collection Rule (Application/System/Sysmon +
+# Security) that the GOAD hosts attach to in 4-onboard-goad. Its id is exported
+# as `dcr_id`. Leave true unless you are onboarding no Windows hosts.
+# enable_windows_event_logs = true
 
-# admin_password is optional. If left unset, Terraform generates a
-# random one (held in state, stable across re-applies) and surfaces
-# it via `terraform output -raw vm_password`. The deploy script
-# prints it at the end of the run.
-# admin_password = "CHANGEME-StrongPassword-123!"
+# OpenRouter (optional) — prefer leaving null and setting the Key Vault secret
+# manually after apply.
+# openrouter_api_key = "sk-or-v1-..."
 
-# Enable log collection via Azure Monitor Agent
-enable_ama               = true
-enable_windows_event_logs = true
-
-# Defender for Endpoint onboarding (optional)
-# This uses Key Vault to avoid copy/paste into tfvars.
-# Steps:
-# 1) terraform apply with enable_defender_for_endpoint=true
-# 2) Provide the onboarding script.
-#    Option A (recommended): upload it with az CLI:
-#      az keyvault secret set --vault-name <vaultName> --name MDE-ONBOARD --file onboarding.cmd
-#    Option B (LAB ONLY): let Terraform upload it (will be stored in TF state):
-#      mde_onboarding_script_path = "./onboarding.cmd"
-# 3) terraform apply again
-#
-# Cleanup note:
-# - We allow full teardown by default.
-# - If you want a safety rail to avoid KV deletions during iteration, uncomment
-#   the prevent_destroy lifecycle block in mde_kv.tf.
-
-enable_defender_for_endpoint  = true
-mde_onboarding_secret_name    = "MDE-ONBOARD"
-mde_onboarding_script_path    = "./onboarding.cmd"
-
-enable_sentinel_mde_connector = false
-
-# --- Demo target app: Maison Miró (intentionally-vulnerable store, Flask on ACA)
-# Default uses :latest, but for deterministic demos use a commit SHA tag from GHCR.
+# --- Demo target app: Maison Miró (intentionally-vulnerable store, Flask on ACA) ---
+# Default uses :latest; for deterministic demos pin a commit SHA tag from GHCR.
 # maison_image = "ghcr.io/erikvabu-personal/aisoc-maison-miro:<GITHUB_SHA>"
 # soc_key      = "soc-demo-key"     # X-SOC-Key for Maison's /soc/* API (sensitive)
-# soc_armed    = "1"                 # "0" to demo the no-SOC catastrophe
-# sign_secret  = "..."               # HMAC key for forged-session detection (sensitive)
-
-# Optional: auto shutdown time (HHMM) or null
-auto_shutdown_time     = "1900"
-auto_shutdown_timezone = "Romance Standard Time"
+# soc_armed    = "1"                # "0" to demo the no-SOC catastrophe
+# sign_secret  = "..."              # HMAC key for forged-session detection (sensitive)

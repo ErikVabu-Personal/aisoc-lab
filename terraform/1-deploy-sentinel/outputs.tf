@@ -23,27 +23,27 @@ output "maison_id" {
 
 output "container_app_environment_name" {
   value       = azurerm_container_app_environment.shipcp.name
-  description = "Name of the Container Apps environment used for Ship Control Panel."
+  description = "Name of the shared Container Apps environment (hosts Maison Miró; consumed by Phase 2/3)."
 }
 
 output "container_app_environment_id" {
   value       = azurerm_container_app_environment.shipcp.id
-  description = "Resource ID of the Container Apps environment used for Ship Control Panel."
+  description = "Resource ID of the shared Container Apps environment (consumed by Phase 2 runner + Phase 3 web via remote state)."
 }
 
 output "application_insights_name" {
   value       = azurerm_application_insights.shipcp.name
-  description = "Name of the Application Insights resource for Ship Control Panel (workspace-based)."
+  description = "Name of the shared Application Insights resource (workspace-based)."
 }
 
 output "application_insights_id" {
   value       = azurerm_application_insights.shipcp.id
-  description = "Resource ID of the Application Insights resource for Ship Control Panel."
+  description = "Resource ID of the shared Application Insights resource."
 }
 
 output "application_insights_connection_string" {
   value       = azurerm_application_insights.shipcp.connection_string
-  description = "Application Insights connection string injected into the Ship Control Panel container."
+  description = "Application Insights connection string (consumed by the Phase 2 gateway + orchestrator via remote state)."
   sensitive   = true
 }
 
@@ -61,52 +61,9 @@ output "sentinel_enabled" {
   value = var.sentinel_enabled
 }
 
-output "vm_name" {
-  value       = azurerm_windows_virtual_machine.vm.name
-  description = "Azure resource name of the Windows VM (lab/bridge workstation)."
-}
-
-output "vm_computer_name" {
-  value       = azurerm_windows_virtual_machine.vm.computer_name
-  description = "In-OS Windows hostname (NetBIOS) — what shows up as Event.Computer in Sentinel."
-}
-
-output "vm_public_ip" {
-  value = azurerm_public_ip.pip.ip_address
-}
-
-output "rdp_connection" {
-  value = "mstsc /v:${azurerm_public_ip.pip.ip_address}"
-}
-
-output "vm_username" {
-  value       = var.admin_username
-  description = "Local admin username for the Windows VM"
-}
-
-output "vm_password" {
-  value       = local.effective_admin_password
-  description = "Local admin password for the Windows VM. Auto-generated when admin_password is null; stable across re-applies via Terraform state."
-  sensitive   = true
-}
-
-output "selected_location" {
-  value       = azurerm_resource_group.rg.location
-  description = "Location actually used (may differ if auto-selection enabled)"
-}
-
-output "selected_vm_size" {
-  value       = local.selected_vm_size
-  description = "VM size actually used (may differ if auto-selection enabled)"
-}
-
-output "ama_enabled" {
-  value = var.enable_ama
-}
-
 output "dcr_id" {
   value       = try(azurerm_monitor_data_collection_rule.dcr[0].id, null)
-  description = "Data collection rule id (when enabled)"
+  description = "Windows Event Log Data Collection Rule id — consumed by 4-onboard-goad to associate the GOAD hosts (null when enable_windows_event_logs = false)."
 }
 
 output "log_analytics_workspace_workspace_id" {

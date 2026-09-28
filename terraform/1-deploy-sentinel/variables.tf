@@ -1,41 +1,8 @@
 variable "azure_location" {
-  description = "Default Azure region for Sentinel + lab VM. Defaults to West US — the combination of West US (Phase 1) + West Central US (Phase 2) is the empirically-validated happy path for new subs whose other regions have zero App Service quota."
+  description = "Azure region for the Sentinel workspace (Phase 1). Defaults to West US — the combination of West US (Phase 1) + West Central US (Phase 2) is the empirically-validated happy path for new subs whose other regions have zero App Service quota."
   type        = string
   default     = "westus"
 }
-
-variable "auto_select_location_and_sku" {
-  description = "If true, uses Azure CLI to pick the first available (location, VM SKU) from the candidate lists. Default is false so the deploy is deterministic — `azure_location` + `vm_size` are used as-is."
-  type        = bool
-  default     = false
-}
-
-variable "location_candidates" {
-  description = "Ordered list of regions to try when auto-selecting"
-  type        = list(string)
-  default     = ["northeurope", "westeurope", "westus"]
-}
-
-variable "vm_size_candidates" {
-  description = "Ordered list of VM sizes to try when auto-selecting (cost-effective first)"
-  type        = list(string)
-  default = [
-    "Standard_B2s",
-    "Standard_B1ms",
-    "Standard_D2as_v5",
-    "Standard_D2s_v5",
-    "Standard_D2s_v3",
-    "Standard_D2as_v4",
-  ]
-}
-
-variable "openrouter_api_key" {
-  description = "OpenRouter API key (optional). Prefer leaving this null and setting the Key Vault secret manually after apply."
-  type        = string
-  default     = null
-  sensitive   = true
-}
-
 
 variable "resource_group_name" {
   description = "Resource group name"
@@ -55,125 +22,17 @@ variable "sentinel_enabled" {
   default     = true
 }
 
-variable "enable_ama" {
-  description = "Install Azure Monitor Agent on the VM"
-  type        = bool
-  default     = true
-}
-
 variable "enable_windows_event_logs" {
-  description = "Collect Windows Event Logs (Application/System/Security) into Log Analytics via AMA + DCR"
+  description = "Create the Windows Event Log Data Collection Rule (Application/System/Sysmon + Security) that the GOAD hosts attach to in 4-onboard-goad. Its id is exported for that phase; leave true unless you are onboarding no Windows hosts."
   type        = bool
   default     = true
 }
 
-variable "enable_defender_for_endpoint" {
-  description = "Onboard the VM to Microsoft Defender for Endpoint (MDE) by fetching an onboarding script from Key Vault and executing it."
-  type        = bool
-  default     = true
-}
-
-variable "mde_onboarding_secret_name" {
-  description = "Key Vault secret name containing the MDE onboarding script content (CMD/BAT). Set to null to skip running the onboarding extension."
-  type        = string
-  default     = "MDE-ONBOARD"
-}
-
-variable "mde_onboarding_script_path" {
-  description = "Local path to the MDE onboarding script file (CMD/BAT). If set, Terraform will upload it to Key Vault as a secret (LAB ONLY: stored in TF state)."
+variable "openrouter_api_key" {
+  description = "OpenRouter API key (optional). Prefer leaving this null and setting the Key Vault secret manually after apply."
   type        = string
   default     = null
-}
-
-# NOTE: lifecycle.prevent_destroy must be a constant; we cannot toggle it with a variable.
-# If you want a safety rail, uncomment the prevent_destroy block in mde_kv.tf.
-
-variable "enable_sentinel_mde_connector" {
-  description = "Enable the Microsoft Defender for Endpoint data connector in Sentinel. Requires MDE licensing + tenant consent in Sentinel; otherwise Azure returns InvalidLicense/Missing consent."
-  type        = bool
-  default     = false
-}
-
-
-variable "vm_name" {
-  description = <<-EOT
-    Azure resource name for the lab VM. Defaults to `bridge-workstation`
-    to fit the demo narrative (the captain's bridge workstation in
-    port). This is the ARM-resource name only — the in-OS Windows
-    hostname (what shows up in `Event.Computer` / `DeviceName` in
-    Sentinel) is governed separately by `vm_computer_name` because
-    Windows NetBIOS is capped at 15 chars with no underscores.
-  EOT
-  type        = string
-  default     = "bridge-workstation"
-}
-
-variable "vm_computer_name" {
-  description = <<-EOT
-    In-OS Windows hostname for the lab VM. This is what Sentinel /
-    Sysmon will record as `Computer` on every event from the host,
-    and what the SOC agents see when they pivot from a username to
-    a machine. Defaults to `BRIDGE-WS` — the captain's bridge
-    workstation, abbreviated to fit Windows' 15-character NetBIOS
-    limit (no underscores allowed). The accompanying narrative
-    lives in the company-context KB (`02-monitored-systems.md`,
-    `09-endpoint-telemetry.md`, `10-org-chart.md`).
-  EOT
-  type        = string
-  default     = "BRIDGE-WS"
-
-  validation {
-    # NetBIOS rules: 1-15 chars, alphanumeric + hyphen only. No
-    # underscores, no spaces, must not start with hyphen, can't be
-    # all numeric.
-    condition     = can(regex("^[A-Za-z][A-Za-z0-9-]{0,14}$", var.vm_computer_name))
-    error_message = "vm_computer_name must be 1-15 chars, start with a letter, and contain only letters/digits/hyphens (Windows NetBIOS limit)."
-  }
-}
-
-variable "vm_size" {
-  description = "Azure VM size (pick something you have quota for; B/Dv3 are usually widely available)"
-  type        = string
-  default     = "Standard_D2s_v3"
-}
-
-variable "admin_username" {
-  description = <<-EOT
-    Local admin username for the lab VM. Defaults to `jack.sparrow`
-    on purpose: the AISOC demo's narrative leans on the captain
-    (Jack Sparrow per the company-context KB org chart) being the
-    interactive user on the lab VM. Failed-login bursts on the
-    Ship Control Panel originating from the VM's IP are the
-    captain mistyping his password — and the agent should reach
-    that conclusion by retrieving the org chart from the
-    `company-context` KB. Override via TF_VAR_admin_username only
-    if you want to tell a different story.
-
-    Constraints (Azure VM admin_username): 1–20 chars; cannot end
-    with a period; cannot use reserved names like "administrator"
-    or "admin"; cannot contain spaces or @\\:.
-  EOT
-  type        = string
-  default     = "jack.sparrow"
-}
-
-variable "admin_password" {
-  description = "Local admin password for the VM. If null (default), Terraform generates a random one and surfaces it via the vm_password output."
-  type        = string
   sensitive   = true
-  default     = null
-}
-
-variable "auto_shutdown_time" {
-  description = "Auto-shutdown time in HHMM (e.g., 1900). Set null to disable."
-  type        = string
-  default     = "1900"
-}
-
-variable "auto_shutdown_timezone" {
-  description = "Timezone for auto-shutdown"
-  type        = string
-  default     = "Romance Standard Time"
 }
 
 # --- Demo target app: Maison Miró (intentionally-vulnerable store, Flask on ACA) ---
