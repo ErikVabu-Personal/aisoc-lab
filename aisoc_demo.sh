@@ -60,26 +60,19 @@ warn() { printf '%sWARN: %s%s\n' "$YELLOW" "$*" "$NC" >&2; }
 die()  { printf '%sERROR: %s%s\n' "$RED" "$*" "$NC" >&2; exit 1; }
 
 # ── Banner ──────────────────────────────────────────────────────────
-# Pixel-art cruise ship + title, in NVISO blue.
+# Two robot heads facing off — the offensive (red) agent vs the defensive
+# (blue) agent, with a "VS" clash between them.
 print_banner() {
   printf '\n'
-  printf '%s' "$CYAN"
-  cat <<'BANNER'
-                       ____         ____
-                      |____|       |____|
-                 _____|_|_|_________|_|_|_____
-                |____________________________|
-            ____|____________________________|____
-           |_______________________________________|
-            \_____________________________________/
-BANNER
-  printf '%s' "$BLUE"
-  cat <<'BANNER'
-             ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-BANNER
-  printf '%s\n' "$NC"
-  printf '%s%s          N V I S O   C r u i s e s%s\n' "$BOLD" "$CYAN" "$NC"
-  printf '%s          Agentic SOC Demo%s\n\n' "$CYAN" "$NC"
+  printf '     %s.------.%s               %s.------.%s\n'      "$RED" "$NC" "$BLUE" "$NC"
+  printf '     %s|o    o|%s               %s|o    o|%s\n'      "$RED" "$NC" "$BLUE" "$NC"
+  printf '   %s==| >  < |%s   %s>< VS ><%s   %s| >  < |==%s\n' "$RED" "$NC" "$BOLD" "$NC" "$BLUE" "$NC"
+  printf '     %s| ____ |%s               %s| ____ |%s\n'      "$RED" "$NC" "$BLUE" "$NC"
+  printf '     %s`------`%s               %s`------`%s\n'      "$RED" "$NC" "$BLUE" "$NC"
+  printf '    %sRED offense%s           %sBLUE defense%s\n'    "$RED" "$NC" "$BLUE" "$NC"
+  printf '\n'
+  printf '%s%s       N V I S O   Agentic SOC  -  Red vs Blue%s\n' "$BOLD" "$CYAN" "$NC"
+  printf '%s       autonomous offense clashes with defense%s\n\n' "$CYAN" "$NC"
 }
 print_banner
 
