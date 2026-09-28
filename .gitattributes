@@ -1,0 +1,7 @@
+# Shell scripts + shell templates run under bash — including from WSL on the
+# Windows filesystem (/mnt/c) — so force LF regardless of platform / core.autocrlf.
+# Without this, a Windows checkout gets CRLF and the shebang breaks:
+#   env: 'bash\r': No such file or directory
+*.sh   text eol=lf
+*.bash text eol=lf
+*.tpl  text eol=lf
