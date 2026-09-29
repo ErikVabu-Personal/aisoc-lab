@@ -57,8 +57,23 @@ terraform apply \
 # override the roster with -var 'goad_vm_names=["goad-vm-dc01",...]'
 ```
 
-Or, from the repo root, let the driver pass these through:
-`./aisoc_demo.sh deploy --onboard-goad --goad-resource-group GOAD-aa6e32-goad-azure --goad-location westus2`.
+Or, from the repo root, let the driver pass these through (GOAD already built):
+`./aisoc_demo.sh deploy --onboard-goad --goad-resource-group=GOAD-aa6e32-goad-azure --goad-location=westus2`.
+
+**Fresh subscription, no GOAD yet?** `--deploy-goad` builds GOAD first, then onboards it
+in one shot — it runs `scripts/goad_azure_prep.py` (region + Standard public IP +
+capacity-safe VM sizes), then `goad.sh install`, then auto-discovers the hashed RG and
+feeds it to this phase (so you don't pass `--goad-resource-group`):
+
+```bash
+AISOC_REQUEST_QUOTA=1 ./aisoc_demo.sh deploy \
+  --deploy-goad --with-redamon --goad-location=westus2
+# needs a GOAD checkout at ~/GOAD (or --goad-clone=/path); takes a while.
+```
+
+Teardown: `./aisoc_demo.sh destroy` removes this onboarding (and Phase 5), but **not GOAD
+itself** — GOAD has its own lifecycle: `cd ~/GOAD && ./goad.sh -t destroy -l GOAD -p azure`
+(or `az group delete -n GOAD-<hash>-goad-azure`).
 
 ## Verify
 

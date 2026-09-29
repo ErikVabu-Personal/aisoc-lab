@@ -121,19 +121,30 @@ Other:
                               (use if you've already bootstrapped or are
                               re-running from a fresh shell). Only meaningful
                               for the `deploy` command.
-  --onboard-goad              Also run Phase 4: onboard an existing GOAD Active
-                              Directory lab (deployed separately with
-                              `goad.sh -p azure`) into Sentinel — AMA + a
-                              GOAD-region DCR + Sysmon on its VMs, AD analytic
-                              rules, and the AD KB runbooks. GOAD may live in a
-                              different region than Phase 1 (see --goad-location).
-                              Off by default. (Or AISOC_ONBOARD_GOAD=1 in aisoc.config.)
+  --onboard-goad              Also run Phase 4: onboard an EXISTING GOAD Active
+                              Directory lab (already deployed with `goad.sh -p azure`)
+                              into Sentinel — AMA + a GOAD-region DCR + Sysmon on its
+                              VMs, AD analytic rules, and the AD KB runbooks. GOAD may
+                              live in a different region than Phase 1 (see
+                              --goad-location). Off by default.
+                              (Or AISOC_ONBOARD_GOAD=1 in aisoc.config.)
+  --deploy-goad               BUILD GOAD first, then onboard it (implies --onboard-goad).
+                              Runs scripts/goad_azure_prep.py (region + Standard public
+                              IP + capacity-safe VM sizes) → goad.sh install → auto-
+                              discovers the hashed RG it created and feeds it to Phase 4.
+                              Use on a fresh subscription so no manual goad.sh dance is
+                              needed. Needs a GOAD checkout (see --goad-clone) and takes
+                              a while. (Or AISOC_DEPLOY_GOAD=1 in aisoc.config.)
+  --goad-clone=PATH           Path to your GOAD checkout for --deploy-goad
+                              (default: ~/GOAD, or AISOC_GOAD_CLONE).
   --goad-resource-group=...   GOAD's Azure resource group (its lab_identifier, e.g.
                               GOAD-aa6e32-goad-azure; default: GOAD). Used with
-                              --onboard-goad / --with-redamon.
+                              --onboard-goad / --with-redamon. Auto-discovered when
+                              --deploy-goad builds GOAD, so you don't pass it then.
   --goad-location=...         Azure region GOAD is deployed in (must match goad.ini's
-                              az_location, e.g. westus2). Phase 4 creates its DCR there
-                              and Phase 5 picks a RedAmon VM size with capacity there.
+                              az_location, e.g. westus2). With --deploy-goad this is the
+                              region GOAD is BUILT in. Phase 4 creates its DCR there and
+                              Phase 5 picks a RedAmon VM size with capacity there.
                               Omit to reuse Phase 1's region (same-region onboarding).
   --with-redamon              Also run Phase 5: deploy RedAmon (AI red-team) into
                               GOAD's VNet (needs GOAD on Azure). The on-box install
@@ -175,7 +186,9 @@ declare -A USER_VARS=()
 SUBSCRIPTION_OVERRIDE=""
 SKIP_OIDC=0
 ONBOARD_GOAD=0
+DEPLOY_GOAD=0
 DEPLOY_REDAMON=0
+GOAD_CLONE=""
 ACTION=""
 
 # Snapshot which TF_VAR_* the operator had set in their shell BEFORE
@@ -226,7 +239,9 @@ unset _name
 #   AZURE_SUBSCRIPTION_OVERRIDE=<id>  -> switch subscription
 [[ "${AISOC_SKIP_OIDC:-0}" == "1" ]] && SKIP_OIDC=1
 [[ "${AISOC_ONBOARD_GOAD:-0}" == "1" ]] && ONBOARD_GOAD=1
+[[ "${AISOC_DEPLOY_GOAD:-0}" == "1" ]] && { DEPLOY_GOAD=1; ONBOARD_GOAD=1; }
 [[ "${AISOC_DEPLOY_REDAMON:-0}" == "1" ]] && DEPLOY_REDAMON=1
+[[ -n "${AISOC_GOAD_CLONE:-}" ]] && GOAD_CLONE="$AISOC_GOAD_CLONE"
 [[ -n "${AISOC_GITHUB_REPO:-}" ]] && REPO="$AISOC_GITHUB_REPO"
 [[ -n "${AZURE_SUBSCRIPTION_OVERRIDE:-}" ]] && SUBSCRIPTION_OVERRIDE="$AZURE_SUBSCRIPTION_OVERRIDE"
 
@@ -261,6 +276,10 @@ while [[ $# -gt 0 ]]; do
     -h|--help)              usage; exit 0 ;;
     --skip-oidc-bootstrap)  SKIP_OIDC=1; shift ;;
     --onboard-goad)         ONBOARD_GOAD=1; shift ;;
+    --deploy-goad)          DEPLOY_GOAD=1; ONBOARD_GOAD=1; shift ;;
+    --goad-clone=*)         GOAD_CLONE="${1#*=}"; shift ;;
+    --goad-clone)           [[ $# -ge 2 ]] || die "missing value for --goad-clone"
+                            GOAD_CLONE="$2"; shift 2 ;;
     --with-redamon)         DEPLOY_REDAMON=1; shift ;;
     --subscription=*)       SUBSCRIPTION_OVERRIDE="${1#*=}"; shift ;;
     --subscription)         [[ $# -ge 2 ]] || die "missing value for --subscription"
@@ -627,11 +646,70 @@ say "Phase 3: PixelAgents Web"
 apply_phase terraform/3-deploy-pixelagents-web
 ok "Phase 3 applied (runner + orchestrator wired with PIXELAGENTS_URL/TOKEN)"
 
+# ── 5a2) GOAD build (optional) — prep + goad.sh + auto-discover its RG ─
+# Gated behind --deploy-goad / AISOC_DEPLOY_GOAD=1 (which also sets ONBOARD_GOAD).
+# Builds GOAD on Azure from scratch so a fresh subscription needs no manual
+# goad.sh dance before Phase 4:
+#   1. scripts/goad_azure_prep.py — goad.ini region + Standard public IP +
+#      capacity-safe VM sizes (+ quota bump when AISOC_REQUEST_QUOTA=1).
+#   2. goad.sh -t install …       — Orange Cyberdefense's own installer
+#      (-m remote: GOAD's Windows VMs are private, only the jumpbox is public).
+#   3. discover the hashed RG it created (GOAD-<hash>-goad-azure) and hand it to
+#      Phase 4/5 as TF_VAR_goad_resource_group + TF_VAR_goad_location.
+# GOAD's installer is long and can fail mid-way (capacity/ansible); on failure
+# we surface its resume command and stop — nothing already built is destroyed.
+if [[ "$DEPLOY_GOAD" == "1" ]]; then
+  _goad_region="${TF_VAR_goad_location:-${TF_VAR_azure_location:-westus}}"
+  _goad_clone="${GOAD_CLONE:-$HOME/GOAD}"
+  say "GOAD build: prep (${_goad_region}) + goad.sh install in ${_goad_clone}"
+
+  [[ -d "$_goad_clone" ]] || die "GOAD checkout not found at ${_goad_clone} — clone https://github.com/Orange-Cyberdefense/GOAD (or pass --goad-clone=/path / AISOC_GOAD_CLONE)."
+  [[ -x "$_goad_clone/goad.sh" ]] || die "${_goad_clone}/goad.sh missing or not executable — is that a GOAD checkout?"
+
+  # 1. Prep GOAD's Azure provider (region, Standard public IP, capacity sizes).
+  if command -v python3 >/dev/null 2>&1; then
+    python3 scripts/goad_azure_prep.py --region "$_goad_region" --goad-clone "$_goad_clone" \
+      ${AISOC_REQUEST_QUOTA:+--request-quota} \
+      || warn "goad_azure_prep.py exited non-zero — continuing; goad.sh may then hit the capacity/quota issues it fixes"
+  else
+    warn "python3 not found — skipping GOAD prep (region/size/public-IP fixes)"
+  fi
+
+  # 2. Run GOAD's own installer (long-running).
+  say "Running goad.sh install (this takes a while — Windows VMs + ansible over the jumpbox)…"
+  if ! ( cd "$_goad_clone" && ./goad.sh -t install -l GOAD -p azure -m remote ); then
+    die "goad.sh install failed. Fix the cause (often capacity/quota — check the portal), then
+     RESUME the same workspace instead of starting over:
+       (cd ${_goad_clone} && ./goad.sh -t install -l GOAD -p azure -m remote -i <hash>-goad-azure)
+     then re-run this driver (a finished GOAD is picked up idempotently)."
+  fi
+
+  # 3. Discover the hashed RG goad.sh created. Prefer the newest local workspace
+  #    dir (the one this install rendered) and verify it exists as an RG; else
+  #    fall back to the sole goad-azure RG in this region.
+  _goad_rg=""
+  _goad_ws="$(ls -1dt "$_goad_clone"/workspace/*-goad-azure 2>/dev/null | head -1 || true)"
+  if [[ -n "$_goad_ws" ]]; then
+    _cand="GOAD-$(basename "$_goad_ws")"
+    az group show -n "$_cand" >/dev/null 2>&1 && _goad_rg="$_cand"
+  fi
+  if [[ -z "$_goad_rg" ]]; then
+    mapfile -t _rgs < <(az group list --query "[?location=='${_goad_region}' && ends_with(name, 'goad-azure')].name" -o tsv 2>/dev/null || true)
+    [[ "${#_rgs[@]}" -eq 1 ]] && _goad_rg="${_rgs[0]}"
+  fi
+  [[ -n "$_goad_rg" ]] || die "GOAD built but its resource group couldn't be auto-discovered. Re-run with --goad-resource-group=GOAD-<hash>-goad-azure (az group list -o table | grep goad-azure)."
+
+  export TF_VAR_goad_resource_group="$_goad_rg"
+  export TF_VAR_goad_location="$_goad_region"
+  ok "GOAD built in ${_goad_region}; Phase 4 will onboard RG ${_goad_rg}"
+fi
+
 # ── 5b) Phase 4 (optional) — onboard GOAD into Sentinel ──────────────
-# Gated behind --onboard-goad / AISOC_ONBOARD_GOAD=1. Requires GOAD to be
-# deployed on Azure (goad.sh -p azure) IN THE SAME REGION as Phase 1.
-# Attaches GOAD's Windows VMs to Phase 1's workspace/DCR and deploys the
-# AD analytic rules; see terraform/4-onboard-goad/README.md.
+# Gated behind --onboard-goad / AISOC_ONBOARD_GOAD=1 (also set by --deploy-goad).
+# GOAD must be deployed on Azure (via --deploy-goad above, or separately with
+# goad.sh -p azure); it MAY be in a different region than Phase 1 — Phase 4
+# creates its own DCR in GOAD's region (--goad-location). Attaches GOAD's Windows
+# VMs and deploys the AD analytic rules; see terraform/4-onboard-goad/README.md.
 if [[ "$ONBOARD_GOAD" == "1" ]]; then
   say "Phase 4: onboard GOAD (AD lab) into Sentinel"
   apply_phase terraform/4-onboard-goad
