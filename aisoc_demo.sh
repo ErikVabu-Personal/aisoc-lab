@@ -513,7 +513,7 @@ print_plan_summary() {
   local region="${TF_VAR_azure_location:-westus}"
   local phase2_region="${TF_VAR_location_override:-westcentralus}"
   local foundry_region="${TF_VAR_foundry_location:-eastus2}"
-  local foundry_model="${TF_VAR_foundry_model_choice:-gpt-4.1-mini}"
+  local foundry_model="${TF_VAR_foundry_model_choice:-claude-opus-5-5}"
   local sub_name
   sub_name="$(az account show --query name -o tsv 2>/dev/null || echo '?')"
 
@@ -558,18 +558,32 @@ print_plan_summary
 
 apply_phase() {
   local dir="$1"
-  # Build a -var arg for every TF_VAR_* in the env. Why explicit
-  # -var instead of relying on TF_VAR_*? Terraform's precedence is
-  # (lowest to highest):
+
+  # The variables THIS phase's root module declares. We only promote a TF_VAR_*
+  # to an explicit -var when the phase declares it. Terraform ERRORS on an
+  # undeclared variable passed via -var (whereas it silently IGNORES an
+  # undeclared TF_VAR_* env var), so a phase-specific var set globally — e.g.
+  # location_override (Phase 2 only), goad_location / goad_resource_group
+  # (Phase 4/5), azure_location (Phase 1 only) — would otherwise break every
+  # phase that doesn't declare it.
+  local declared
+  declared="$(grep -hoE '^[[:space:]]*variable[[:space:]]+"[^"]+"' "$dir"/*.tf 2>/dev/null \
+                | sed -E 's/.*"([^"]+)".*/\1/' | sort -u)"
+
+  # Build a -var arg for every DECLARED TF_VAR_* in the env. Why explicit -var
+  # instead of relying on TF_VAR_*? Terraform's precedence is (lowest to highest):
   #   variable defaults < terraform.tfvars < *.auto.tfvars
   #     < TF_VAR_* env vars < -var / -var-file (CLI)
-  # …so a stale terraform.tfvars in the phase dir SILENTLY OVERRIDES
-  # an env var. Promoting the env vars to -var puts them at the top
-  # of the chain and matches what print_plan_summary tells the user.
+  # …so a stale terraform.tfvars in the phase dir SILENTLY OVERRIDES an env var.
+  # Promoting the env vars to -var puts them at the top of the chain and matches
+  # what print_plan_summary tells the user.
   local -a var_args=()
   while IFS='=' read -r _name _value; do
     if [[ "$_name" == TF_VAR_* ]]; then
-      var_args+=("-var" "${_name#TF_VAR_}=${_value}")
+      local _var="${_name#TF_VAR_}"
+      if grep -qxF "$_var" <<<"$declared"; then
+        var_args+=("-var" "${_var}=${_value}")
+      fi
     fi
   done < <(env)
 
