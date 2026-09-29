@@ -554,7 +554,6 @@ print_plan_summary() {
   fi
   printf '\n'
 }
-print_plan_summary
 
 apply_phase() {
   local dir="$1"
@@ -653,6 +652,9 @@ if [[ "$AUTO_REGION" == "1" ]]; then
     AUTO_REGION_CHOSEN="${TF_VAR_azure_location} (explicit)"
   fi
 fi
+
+# Print the plan AFTER auto-region so its region lines reflect the chosen region.
+print_plan_summary
 
 # ── 1) Phase 1 — Sentinel + RG + Maison Miró + analytic rules ────────
 say "Phase 1: Sentinel + Maison Miró"

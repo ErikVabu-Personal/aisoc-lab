@@ -102,9 +102,17 @@ def main() -> int:
         return 0
 
     # Fast path: probe --prefer regions first and return as soon as one has capacity for
-    # BOTH sizes, without touching the rest — the common --auto-region case (westcentralus),
-    # which turns a ~17-region survey into a single ~5s probe.
+    # BOTH sizes, without touching the rest — the common --auto-region case (westcentralus).
+    # Check just the TOP DC + TOP RedAmon candidate with cheap per-size lookups first: a
+    # full region SKU list is ~600 entries (~15-30s), whereas two `--size` lookups are a
+    # few seconds. Only fall back to the full region probe if a top candidate is missing
+    # (a rarer candidate might still be available there).
     for p in args.prefer:
+        if args.dc_sizes and args.redamon_sizes:
+            dc0, red0 = args.dc_sizes[0], args.redamon_sizes[0]
+            if az.size_info(p, dc0).get("available") and az.size_info(p, red0).get("available"):
+                az.log(f"  OK {p:20s} fast-path: {dc0} + {red0} available")
+                return _recommend(p, [dc0], [red0], note=" (preferred; fast-path)")
         res = _probe(p, args.dc_sizes, args.redamon_sizes)
         if res and res[0] and res[1]:
             return _recommend(p, res[0], res[1], note=" (preferred; skipped full survey)")
