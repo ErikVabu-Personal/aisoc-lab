@@ -231,6 +231,59 @@ it never lands in CLI history or `aisoc.config`.
 
 ---
 
+## Demo accounts
+
+Everything here is a throwaway demo, so the credentials are committed in
+the clear. There are two separate sign-ins, each at its own `/login`:
+
+- **Maison Miró store** (the victim web app) — the store URL the deploy
+  prints. Login is by **username**.
+- **Agentic SOC frontend** (PixelAgents Web) — the operator UI URL the
+  deploy prints. Login is by **email**.
+
+### Maison Miró store (`maison-miro/`, seeded on first boot)
+
+| Username | Password | Role |
+|----------|----------|------|
+| `admin`  | `MaisonAdmin!2024` | Studio Administrator (`/admin` dashboard) |
+| `amelie` | `sunflower77` | Customer — Amélie Dubois |
+| `lucas`  | `Antwerp2021` | Customer — Lucas Peeters |
+| `sofia`  | `ciaobella!` | Customer — Sofia Romano |
+| `noah`   | `hunter2000` | Customer — Noah Jacobs |
+
+You can also self-register a new customer at `/register`. Note the store is
+*meant* to be broken into: the login form is **intentionally SQL-injectable**
+(`' OR '1'='1' -- ` bypasses it — that's what raises the `auth.login_bypass`
+alert), and admin access is gated only by a **forgeable session cookie**.
+
+> Not a login: `/api/customers` page 1 carries a **honeytoken** decoy record —
+> "Margaux Lambert" (`Brussels#2023`). Reading it is the zero-false-positive
+> `data.honeytoken_touched` theft signal. It is bait, not a real account.
+
+### Agentic SOC frontend — PixelAgents Web (default roster)
+
+This is the shipped default (from `aisoc.config.example` / the `_load_users`
+fallback). Override it by setting `TF_VAR_pixelagents_users` in `aisoc.config`.
+
+| Email | Password | Roles |
+|-------|----------|-------|
+| `erik.vanbuggenhout@nviso.eu` | `admin123` | all |
+| `arne.magnus@nviso.eu` | `sales123` | all |
+| `julian.obenlandrecker@nviso.eu` | `sales123` | all |
+| `maxim.deweerdt@nviso.eu` | `needsmorecowbell` | all |
+| `jeroen.vandeleur@nviso.eu` | `hardcorevibes` | all |
+| `daan.raman@nviso.eu` | `ClasseAffaires` | all |
+| `kurt.ceuppens@nviso.eu` | `iamtheboss` | all |
+| `jan.deblauwe@nviso.eu` | `ebitda` | all |
+| `jeroen.laureys@nviso.eu` | `saleswarmachine` | soc-analyst only |
+
+**all** = `soc-manager` + `detection-engineer` + `soc-analyst` (the SOC manager
+sees every page, including the threat-intel views). `jeroen.laureys` is a plain
+analyst (incident queue + dashboard only). Use `erik.vanbuggenhout@nviso.eu` for
+the full-access walkthrough.
+
+---
+
 ## Architecture
 
 The demo is built as **three core Terraform phases** plus two opt-in
