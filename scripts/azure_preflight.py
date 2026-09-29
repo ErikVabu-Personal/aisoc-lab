@@ -30,8 +30,9 @@ import lib_azure_capacity as az  # noqa: E402
 # 4 vCPU / 16 GB candidates, most-preferred first. D4as_v4 (AMD) leads because
 # it's widely available when the Intel DSv3/DSv5 families are capacity-capped.
 REDAMON_CANDIDATES = [
-    "Standard_D4as_v4", "Standard_D4s_v5", "Standard_D4as_v5",
-    "Standard_D4s_v4", "Standard_D4_v5", "Standard_F4s_v2", "Standard_D4s_v3",
+    "Standard_D4as_v4", "Standard_D4s_v5", "Standard_D4as_v5", "Standard_D4s_v4",
+    "Standard_D4_v5", "Standard_D4a_v4", "Standard_DS3_v2", "Standard_F4s_v2",
+    "Standard_D4s_v3",
 ]
 
 

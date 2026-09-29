@@ -57,6 +57,33 @@ def current_subscription() -> Optional[str]:
 
 # --- Capacity (list-skus) ---------------------------------------------------
 
+def region_vm_skus(region: str) -> dict:
+    """All VM SKUs in a region in ONE az call: {size: {available, vcpus, family, reason}}.
+
+    Much cheaper than size_info() per size when surveying many sizes across many
+    regions (1 call/region instead of 1 call/size/region). `available` is True when
+    the SKU has NO restriction; `reason` carries the restriction reasonCode(s)
+    (e.g. NotAvailableForSubscription) for the unavailable ones.
+    """
+    skus = _az(["vm", "list-skus", "-l", region, "--resource-type", "virtualMachines"])
+    out: dict[str, dict] = {}
+    if not isinstance(skus, list):
+        return out
+    for s in skus:
+        name = s.get("name")
+        if not name:
+            continue
+        restrictions = s.get("restrictions") or []
+        caps = {c["name"]: c["value"] for c in (s.get("capabilities") or [])}
+        out[name] = {
+            "available": len(restrictions) == 0,
+            "vcpus": int(caps.get("vCPUs", caps.get("vCPUsAvailable", 0)) or 0),
+            "family": s.get("family"),
+            "reason": ",".join(r.get("reasonCode", "?") for r in restrictions) or None,
+        }
+    return out
+
+
 def size_info(region: str, size: str) -> dict:
     """Return {available, vcpus, family} for a VM size in a region.
 

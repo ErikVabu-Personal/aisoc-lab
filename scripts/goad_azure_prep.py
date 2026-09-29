@@ -35,7 +35,8 @@ import lib_azure_capacity as az  # noqa: E402
 
 DC_CANDIDATES = [  # 2 vCPU, most-preferred first
     "Standard_D2s_v3", "Standard_D2as_v4", "Standard_D2s_v5",
-    "Standard_D2as_v5", "Standard_D2s_v4", "Standard_F2s_v2",
+    "Standard_D2as_v5", "Standard_D2s_v4", "Standard_DS2_v2", "Standard_F2s_v2",
+    "Standard_D2_v5", "Standard_D2a_v4", "Standard_B2s", "Standard_B2ms",
 ]
 
 
@@ -147,7 +148,9 @@ def main() -> int:
     az.log(f"picking DC size (needs {dc_vcpus} vCPU across {args.dc_count} DCs)…")
     dc = az.pick_size(args.region, DC_CANDIDATES, dc_vcpus, usage)
     if not dc:
-        az.log("no 2-vCPU family has capacity in this region — check the portal; leaving sizes unchanged")
+        az.log(f"no 2-vCPU family has capacity in {args.region} for this subscription. "
+               f"Find a region that does — `python3 scripts/azure_find_region.py` — then re-run "
+               f"with --region <that>. Leaving sizes unchanged.")
         return 0
 
     # Simulate the DCs consuming their family, then pick the jumpbox (2 vCPU) —
