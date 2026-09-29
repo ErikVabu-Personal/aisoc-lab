@@ -28,6 +28,19 @@ variable "goad_resource_group" {
   default     = "GOAD"
 }
 
+variable "goad_location" {
+  description = <<-EOT
+    Azure region GOAD is deployed in. Leave null to reuse Phase 1's region
+    (same-region onboarding). Set it (e.g. "westus2") when GOAD is in a different
+    region than Phase 1 — Phase 4 then creates the DCR in that region (a DCR must
+    be co-located with the VMs it associates) while still routing to the Phase-1
+    Sentinel workspace (DCR → workspace is allowed cross-region). Must match the
+    region you passed to goad.sh (goad.ini az_location).
+  EOT
+  type        = string
+  default     = null
+}
+
 variable "goad_vm_names" {
   description = <<-EOT
     Azure *resource* names of the GOAD Windows VMs (GOAD's azure provider names
@@ -35,8 +48,8 @@ variable "goad_vm_names" {
     in-OS hostname — what Sentinel records as Computer — is dc01). Discovery is by
     the Azure resource name; the KB/analytic rules key off the in-OS hostname.
   EOT
-  type    = list(string)
-  default = ["goad-vm-dc01", "goad-vm-dc02", "goad-vm-dc03", "goad-vm-srv02", "goad-vm-srv03"]
+  type        = list(string)
+  default     = ["goad-vm-dc01", "goad-vm-dc02", "goad-vm-dc03", "goad-vm-srv02", "goad-vm-srv03"]
 }
 
 variable "enable_sysmon" {

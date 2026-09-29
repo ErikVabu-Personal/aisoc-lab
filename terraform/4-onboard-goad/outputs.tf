@@ -3,9 +3,14 @@ output "onboarded_vms" {
   value       = [for v in data.azurerm_virtual_machine.goad : v.name]
 }
 
-output "dcr_id_used" {
-  description = "The Phase-1 DCR the GOAD hosts were associated to."
-  value       = local.dcr_id
+output "goad_dcr_id" {
+  description = "The DCR (created in GOAD's region) the GOAD hosts were associated to."
+  value       = azurerm_monitor_data_collection_rule.goad_dcr.id
+}
+
+output "goad_dcr_location" {
+  description = "Region the GOAD DCR was created in (= GOAD's region)."
+  value       = local.goad_location
 }
 
 output "log_analytics_workspace_name" {
@@ -19,5 +24,5 @@ output "deployed_ad_rules" {
 
 output "verify_hint" {
   description = "KQL to confirm the GOAD hosts are reporting."
-  value       = "Heartbeat | where Computer in (${join(", ", [for n in var.goad_vm_names : "'${n}'"])}) | summarize arg_max(TimeGenerated, *) by Computer"
+  value       = "Heartbeat | where Computer in (${join(", ", [for n in var.goad_vm_names : "'${replace(n, "goad-vm-", "")}'"])}) | summarize arg_max(TimeGenerated, *) by Computer"
 }

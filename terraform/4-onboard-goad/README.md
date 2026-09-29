@@ -3,10 +3,18 @@
 Attaches the **GOAD** Active Directory lab (its 5 Windows Servers) to the Sentinel
 workspace from Phase 1, so real AD attacks (Kerberoasting, DCSync, password spray,
 AS-REP roasting) become Sentinel incidents that the existing Foundry agents triage —
-**no new workspace, no new DCR, no agent/runner code changes**.
+**no new workspace, no agent/runner code changes**.
 
 GOAD itself is deployed separately with `goad.sh -p azure` (its own state); this phase
 only *discovers* GOAD's VMs and wires them in.
+
+**GOAD may live in a different region than Phase 1.** A DCR must be co-located with the
+VMs it associates, so this phase creates its **own** DCR in GOAD's region
+(`dcr-goad-<region>`) rather than reusing Phase 1's. That DCR still routes into the
+Phase-1 Sentinel workspace — DCR → workspace is allowed cross-region — so GOAD can run
+in a capacity-rich region (e.g. `westus2`) even when Phase 1's region has no VM capacity.
+Set `goad_location` to GOAD's region (leave it null to reuse Phase 1's, i.e. same-region
+onboarding).
 
 ## How it works
 
@@ -18,9 +26,11 @@ Per GOAD Windows VM (discovered by name in `var.goad_resource_group`):
    Credential Validation, Directory Service Access/Changes, Certification Services).
    *Not* a `CustomScriptExtension` — GOAD already puts one on these VMs and only one is
    allowed per VM; `run_command` coexists and re-runs when the script changes.
-3. **DCR association** — `azurerm_monitor_data_collection_rule_association` to **Phase 1's
-   existing DCR** (`dcr_id`, read via `terraform_remote_state`). That DCR already forwards
-   `Security!*` → `SecurityEvent` (all AD-attack EIDs) and Sysmon → `Event`.
+3. **DCR + association** — a GOAD-region DCR (`azurerm_monitor_data_collection_rule`,
+   `dcr-goad-<region>`) that forwards `Security!*` → `SecurityEvent` (all AD-attack EIDs)
+   and Sysmon/App/System → `Event`, targeting the Phase-1 Log Analytics workspace (read
+   via `terraform_remote_state`), plus an `azurerm_monitor_data_collection_rule_association`
+   from each host to it. Same shape as Phase 1's DCR, just co-located with GOAD.
 
 Then it deploys a starter set of **AD analytic rules** (`rules.tf` +
 `scripts/rules/*.kql`, via `az rest` PUT — same idempotent pattern as Phase 1):
@@ -30,9 +40,10 @@ Triage → Investigator → Reporter pipeline auto-picks-up.
 
 ## Prerequisites
 
-- **Phase 1 applied** with AMA enabled (default) so its `dcr_id` output is non-null.
-- **GOAD deployed on Azure in the SAME region as Phase 1** — a DCR only associates with
-  VMs in its own region. (`goad.sh -t install -l GOAD -p azure`.)
+- **Phase 1 applied** so its `log_analytics_workspace_id` output is non-null.
+- **GOAD deployed on Azure** (`goad.sh -p azure -l GOAD -m remote`). It may be in any
+  region — pass `goad_location` to match. (West US is capacity-starved for the GOAD VM
+  families; `westus2` is the tested capacity region.)
 - `az` logged in to the same subscription; `terraform` ≥ 1.6; `jq`.
 
 ## Deploy
@@ -41,9 +52,13 @@ Triage → Investigator → Reporter pipeline auto-picks-up.
 cd terraform/4-onboard-goad
 terraform init
 terraform apply \
-  -var goad_resource_group=GOAD          # = GOAD's lab_identifier (az group list -o table)
-# override the roster with -var 'goad_vm_names=["dc01","dc02","dc03","srv02","srv03"]'
+  -var goad_resource_group=GOAD-aa6e32-goad-azure \  # GOAD's hashed RG (az group list -o table | grep goad-azure)
+  -var goad_location=westus2                          # GOAD's region; omit to reuse Phase 1's
+# override the roster with -var 'goad_vm_names=["goad-vm-dc01",...]'
 ```
+
+Or, from the repo root, let the driver pass these through:
+`./aisoc_demo.sh deploy --onboard-goad --goad-resource-group GOAD-aa6e32-goad-azure --goad-location westus2`.
 
 ## Verify
 
@@ -64,8 +79,9 @@ PixelAgents Web.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `goad_resource_group` | `GOAD` | GOAD's Azure RG (its `lab_identifier`) |
-| `goad_vm_names` | `[dc01,dc02,dc03,srv02,srv03]` | GOAD Windows VMs to onboard |
+| `goad_resource_group` | `GOAD` | GOAD's Azure RG (its hashed `lab_identifier`, e.g. `GOAD-aa6e32-goad-azure`) |
+| `goad_location` | `null` | GOAD's region; DCR is created here. `null` = reuse Phase 1's region |
+| `goad_vm_names` | `[goad-vm-dc01,…,goad-vm-srv03]` | GOAD Windows VM *resource* names to onboard |
 | `enable_sysmon` | `true` | Install Sysmon + AD audit policy via run_command |
 | `enable_ad_rules` | `true` | Deploy the AD analytic rules |
 | `sysmon_config_url` | SwiftOnSecurity | Sysmon config XML |
@@ -89,4 +105,3 @@ Panel and its lab-VM/captain narrative have been retired) (`terraform/2-deploy-a
 **After deploy**, push the KB changes so the agents see them:
 `cd terraform/2-deploy-aisoc/agents/company-context && ./upload_company_context.sh`
 (then re-run the agent deploy script if you changed instructions).
-```

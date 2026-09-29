@@ -123,12 +123,18 @@ Other:
                               for the `deploy` command.
   --onboard-goad              Also run Phase 4: onboard an existing GOAD Active
                               Directory lab (deployed separately with
-                              `goad.sh -p azure`, in the SAME region as Phase 1)
-                              into Sentinel — AMA + DCR association + Sysmon on
-                              its VMs, AD analytic rules, and the AD KB runbooks.
+                              `goad.sh -p azure`) into Sentinel — AMA + a
+                              GOAD-region DCR + Sysmon on its VMs, AD analytic
+                              rules, and the AD KB runbooks. GOAD may live in a
+                              different region than Phase 1 (see --goad-location).
                               Off by default. (Or AISOC_ONBOARD_GOAD=1 in aisoc.config.)
-  --goad-resource-group=...   GOAD's Azure resource group (its lab_identifier;
-                              default: GOAD). Used with --onboard-goad / --with-redamon.
+  --goad-resource-group=...   GOAD's Azure resource group (its lab_identifier, e.g.
+                              GOAD-aa6e32-goad-azure; default: GOAD). Used with
+                              --onboard-goad / --with-redamon.
+  --goad-location=...         Azure region GOAD is deployed in (must match goad.ini's
+                              az_location, e.g. westus2). Phase 4 creates its DCR there
+                              and Phase 5 picks a RedAmon VM size with capacity there.
+                              Omit to reuse Phase 1's region (same-region onboarding).
   --with-redamon              Also run Phase 5: deploy RedAmon (AI red-team) into
                               GOAD's VNet (needs GOAD on Azure). The on-box install
                               runs in tmux; reach the UI via an SSH tunnel.
@@ -650,6 +656,20 @@ fi
 # terraform/5-deploy-redamon/README.md.
 if [[ "$DEPLOY_REDAMON" == "1" ]]; then
   say "Phase 5: RedAmon (AI red-team) in the GOAD VNet"
+  # Capacity/quota preflight — RedAmon deploys into GOAD's region, and fresh subs
+  # often lack VM capacity or quota there for the hardcoded size. Auto-pick a size
+  # that has both (best-effort; on any failure we fall back to the Terraform
+  # default). Set AISOC_REQUEST_QUOTA=1 to also request auto-grantable bumps.
+  _redamon_region="${TF_VAR_goad_location:-${TF_VAR_azure_location:-westus}}"
+  if command -v python3 >/dev/null 2>&1; then
+    _sz="$(python3 scripts/azure_preflight.py --region "$_redamon_region" ${AISOC_REQUEST_QUOTA:+--request-quota} | tail -n1 || true)"
+    if [[ "${_sz:-}" == Standard_* ]]; then
+      export TF_VAR_redamon_size="$_sz"
+      ok "RedAmon size auto-selected for ${_redamon_region}: ${_sz}"
+    else
+      warn "RedAmon size preflight returned no size — using the Terraform default"
+    fi
+  fi
   apply_phase terraform/5-deploy-redamon
   ok "Phase 5 applied (RedAmon VM up; on-box install runs in tmux — tunnel to the UI, see below)"
 fi
