@@ -29,3 +29,9 @@ __pycache__/
 # agent-deploy script writes.
 terraform/*/.venv/
 terraform/2-deploy-aisoc/agents/roster.slugs.txt
+
+# Vendored GOAD (Orange Cyberdefense, GPL-3.0 — see GOAD/AISOC_VENDORED.md). Its own
+# GOAD/.gitignore + the Terraform/venv rules above cover its runtime state
+# (workspace/, .terraform/, *.tfstate, ssh keys). This is the one extra our
+# region/size prep (scripts/goad_azure_prep.py) leaves behind.
+GOAD/**/*.bak-*

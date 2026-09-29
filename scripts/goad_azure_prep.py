@@ -33,6 +33,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib_azure_capacity as az  # noqa: E402
 
+# GOAD is vendored into this repo at <root>/GOAD (scripts/ lives under <root>).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_VENDORED_GOAD = os.path.join(_REPO_ROOT, "GOAD")
+
 DC_CANDIDATES = [  # 2 vCPU, most-preferred first
     "Standard_D2s_v3", "Standard_D2as_v4", "Standard_D2s_v5",
     "Standard_D2as_v5", "Standard_D2s_v4", "Standard_DS2_v2", "Standard_F2s_v2",
@@ -118,7 +122,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Prep GOAD's Azure provider for a fresh sub/region.")
     ap.add_argument("--region", required=True)
     ap.add_argument("--goad-config", default=os.path.expanduser("~/.goad/goad.ini"))
-    ap.add_argument("--goad-clone", default=os.path.expanduser("~/GOAD"))
+    ap.add_argument("--goad-clone",
+                    default=_VENDORED_GOAD if os.path.isdir(_VENDORED_GOAD) else os.path.expanduser("~/GOAD"))
     ap.add_argument("--dc-count", type=int, default=5)
     ap.add_argument("--subscription", default=None)
     ap.add_argument("--request-quota", action="store_true")

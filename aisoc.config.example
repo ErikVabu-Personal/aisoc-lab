@@ -151,9 +151,10 @@
 # BUILD GOAD too (not just onboard): set to 1 (or pass --deploy-goad) to run
 # scripts/goad_azure_prep.py -> goad.sh install -> auto-discover its RG before
 # Phase 4. Implies AISOC_ONBOARD_GOAD. Best for a fresh subscription — no manual
-# goad.sh dance. Needs a GOAD checkout (default ~/GOAD) and takes a while.
+# goad.sh dance. GOAD is vendored in this repo (./GOAD), so no separate checkout
+# is needed; takes a while.
 # AISOC_DEPLOY_GOAD=1
-# Path to your GOAD checkout (default: ~/GOAD):
+# Override the GOAD checkout (default: the vendored ./GOAD):
 # AISOC_GOAD_CLONE="$HOME/GOAD"
 # Best-effort request auto-grantable quota bumps (Total Regional vCPUs + the
 # chosen VM family) during GOAD prep and the RedAmon preflight:

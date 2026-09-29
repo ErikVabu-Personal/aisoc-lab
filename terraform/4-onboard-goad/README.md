@@ -67,12 +67,12 @@ feeds it to this phase (so you don't pass `--goad-resource-group`):
 
 ```bash
 AISOC_REQUEST_QUOTA=1 ./aisoc_demo.sh deploy \
-  --deploy-goad --with-redamon --goad-location=westus2
-# needs a GOAD checkout at ~/GOAD (or --goad-clone=/path); takes a while.
+  --deploy-goad --with-redamon --goad-location=westcentralus
+# GOAD is vendored in this repo (./GOAD) — no separate checkout needed; takes a while.
 ```
 
 Teardown: `./aisoc_demo.sh destroy` removes this onboarding (and Phase 5), but **not GOAD
-itself** — GOAD has its own lifecycle: `cd ~/GOAD && ./goad.sh -t destroy -l GOAD -p azure`
+itself** — GOAD has its own lifecycle: `cd GOAD && ./goad.sh -t destroy -l GOAD -p azure`
 (or `az group delete -n GOAD-<hash>-goad-azure`).
 
 ## Verify

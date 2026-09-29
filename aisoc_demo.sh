@@ -143,10 +143,11 @@ Other:
                               IP + capacity-safe VM sizes) → goad.sh install → auto-
                               discovers the hashed RG it created and feeds it to Phase 4.
                               Use on a fresh subscription so no manual goad.sh dance is
-                              needed. Needs a GOAD checkout (see --goad-clone) and takes
-                              a while. (Or AISOC_DEPLOY_GOAD=1 in aisoc.config.)
-  --goad-clone=PATH           Path to your GOAD checkout for --deploy-goad
-                              (default: ~/GOAD, or AISOC_GOAD_CLONE).
+                              needed. GOAD is vendored in this repo (GOAD/), so no separate
+                              checkout is required; takes a while. (Or AISOC_DEPLOY_GOAD=1
+                              in aisoc.config.)
+  --goad-clone=PATH           Override the GOAD checkout used by --deploy-goad
+                              (default: the vendored ./GOAD, or AISOC_GOAD_CLONE).
   --goad-resource-group=...   GOAD's Azure resource group (its lab_identifier, e.g.
                               GOAD-aa6e32-goad-azure; default: GOAD). Used with
                               --onboard-goad / --with-redamon. Auto-discovered when
@@ -709,7 +710,9 @@ ok "Phase 3 applied (runner + orchestrator wired with PIXELAGENTS_URL/TOKEN)"
 # we surface its resume command and stop — nothing already built is destroyed.
 if [[ "$DEPLOY_GOAD" == "1" ]]; then
   _goad_region="${TF_VAR_goad_location:-${TF_VAR_azure_location:-westus}}"
-  _goad_clone="${GOAD_CLONE:-$HOME/GOAD}"
+  # Default to the GOAD tree vendored into this repo (GOAD/), so no separate
+  # ~/GOAD checkout is needed. --goad-clone / AISOC_GOAD_CLONE overrides it.
+  _goad_clone="${GOAD_CLONE:-$ROOT/GOAD}"
   say "GOAD build: prep (${_goad_region}) + goad.sh install in ${_goad_clone}"
 
   [[ -d "$_goad_clone" ]] || die "GOAD checkout not found at ${_goad_clone} — clone https://github.com/Orange-Cyberdefense/GOAD (or pass --goad-clone=/path / AISOC_GOAD_CLONE)."
