@@ -49,9 +49,14 @@ variable "redamon_vm_name" {
 }
 
 variable "redamon_size" {
-  description = "VM size. --gvm (OpenVAS) wants 4 vCPU / 16 GB — Standard_D4s_v3."
+  description = <<-EOT
+    VM size. --gvm (OpenVAS) wants 4 vCPU / 16 GB. Default Standard_D4as_v4
+    (AMD, DASv4 family) rather than D4s_v3 because West US capped the DSv3
+    family (GOAD's DCs already fill its quota there) — DASv4 has capacity +
+    headroom. Override per region/sub as needed.
+  EOT
   type        = string
-  default     = "Standard_D4s_v3"
+  default     = "Standard_D4as_v4"
 }
 
 variable "redamon_disk_gb" {
