@@ -19,11 +19,17 @@ variable "admin_cidrs" {
 }
 
 variable "goad_resource_group" {
-  description = "GOAD's Azure resource group (its lab_identifier; typically 'GOAD')."
+  description = <<-EOT
+    GOAD's Azure resource group. Its lab_identifier is "GOAD-<workspace-hash>-goad-azure"
+    (e.g. "GOAD-aa6e32-goad-azure"), NOT just "GOAD", and the hash changes per install.
+    Pass the actual RG: `az group list -o table | grep goad-azure`.
+  EOT
   type        = string
   default     = "GOAD"
 }
 
+# The VNet/subnet/NSG use the lab NAME ("GOAD"), not the hashed lab_identifier —
+# so these defaults are correct regardless of the workspace hash.
 variable "goad_vnet_name" {
   description = "GOAD's virtual network name (GOAD sets '<lab>-virtual-network')."
   type        = string

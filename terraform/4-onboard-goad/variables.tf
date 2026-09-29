@@ -18,18 +18,25 @@
 
 variable "goad_resource_group" {
   description = <<-EOT
-    Resource group GOAD created on Azure. GOAD names it after its lab_identifier
-    (RG = "{{lab_identifier}}" in GOAD's azure provider). For the full lab this is
-    typically "GOAD". Check with: az group list -o table.
+    Resource group GOAD created on Azure. GOAD's azure provider names it after
+    its lab_identifier, which is "GOAD-<workspace-hash>-goad-azure" (e.g.
+    "GOAD-aa6e32-goad-azure") — NOT just "GOAD", and the hash changes per
+    `goad.sh` install. There is no stable default; pass the actual RG:
+    `az group list -o table | grep goad-azure`.
   EOT
   type        = string
   default     = "GOAD"
 }
 
 variable "goad_vm_names" {
-  description = "Azure resource names of the GOAD Windows VMs to onboard (GOAD's default full-lab roster)."
-  type        = list(string)
-  default     = ["dc01", "dc02", "dc03", "srv02", "srv03"]
+  description = <<-EOT
+    Azure *resource* names of the GOAD Windows VMs (GOAD's azure provider names
+    them "goad-vm-<host>", so the compute resource is goad-vm-dc01 even though the
+    in-OS hostname — what Sentinel records as Computer — is dc01). Discovery is by
+    the Azure resource name; the KB/analytic rules key off the in-OS hostname.
+  EOT
+  type    = list(string)
+  default = ["goad-vm-dc01", "goad-vm-dc02", "goad-vm-dc03", "goad-vm-srv02", "goad-vm-srv03"]
 }
 
 variable "enable_sysmon" {
