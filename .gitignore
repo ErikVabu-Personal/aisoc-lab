@@ -24,7 +24,8 @@ __pycache__/
 *.pyc
 
 
-# ship control panel
-ship-control-panel/node_modules
-ship-control-panel/.next
-ship-control-panel/.env*
+# Generated at deploy time — per-phase Python venvs (each also self-ignores via
+# its own .venv/.gitignore) and the agent-roster slug file the Phase-2
+# agent-deploy script writes.
+terraform/*/.venv/
+terraform/2-deploy-aisoc/agents/roster.slugs.txt
