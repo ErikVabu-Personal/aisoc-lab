@@ -58,6 +58,30 @@ def _avail(skus: dict, names: list[str]) -> list[str]:
     return [n for n in names if skus.get(n, {}).get("available")]
 
 
+def _probe(region: str, dc_sizes: list[str], red_sizes: list[str]):
+    """Probe one region and log the result. Returns (dc_ok, red_ok) or None (no SKU data)."""
+    skus = az.region_vm_skus(region)
+    if not skus:
+        az.log(f"  -- {region:20s} no SKU data")
+        return None
+    dc_ok = _avail(skus, dc_sizes)
+    red_ok = _avail(skus, red_sizes)
+    az.log(f"  {'OK ' if dc_ok and red_ok else '-- '}{region:20s} "
+           f"DC:[{', '.join(dc_ok) or 'none'}]  RedAmon:[{', '.join(red_ok) or 'none'}]")
+    return dc_ok, red_ok
+
+
+def _recommend(best: str, dc_ok: list[str], red_ok: list[str], note: str = "") -> int:
+    az.log("")
+    az.log(f"→ recommended region: {best}{note}")
+    az.log(f"    GOAD DC size will be {dc_ok[0]} (x{DC_COUNT}); RedAmon {red_ok[0]} (x{RED_COUNT})")
+    az.log("  Next:")
+    az.log(f"    python3 scripts/goad_azure_prep.py --region {best} --request-quota")
+    az.log(f"    AISOC_REQUEST_QUOTA=1 ./aisoc_demo.sh deploy --deploy-goad --with-redamon --goad-location={best}")
+    print(best)  # contract: last stdout line = the recommended region
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Find a region with capacity for GOAD + RedAmon.")
     ap.add_argument("--regions", nargs="*", default=DEFAULT_REGIONS,
@@ -67,9 +91,9 @@ def main() -> int:
     ap.add_argument("--default-region", default="eastus2",
                     help="Printed on stdout if nothing has capacity (deploy still validates it).")
     ap.add_argument("--prefer", nargs="*", default=[],
-                    help="Regions to choose first if they have capacity (e.g. westcentralus, "
-                         "which is also the validated App Service region) — picked over a region "
-                         "with more size options.")
+                    help="Regions to probe FIRST and choose the moment one has capacity, "
+                         "skipping the rest (e.g. westcentralus, the validated App Service "
+                         "region). This is the fast path --auto-region uses.")
     args = ap.parse_args()
 
     if not az.current_subscription():
@@ -77,21 +101,23 @@ def main() -> int:
         print(args.default_region)
         return 0
 
-    az.log(f"probing {len(args.regions)} regions for a 2-vCPU DC size + a 4-vCPU RedAmon size…")
+    # Fast path: probe --prefer regions first and return as soon as one has capacity for
+    # BOTH sizes, without touching the rest — the common --auto-region case (westcentralus),
+    # which turns a ~17-region survey into a single ~5s probe.
+    for p in args.prefer:
+        res = _probe(p, args.dc_sizes, args.redamon_sizes)
+        if res and res[0] and res[1]:
+            return _recommend(p, res[0], res[1], note=" (preferred; skipped full survey)")
+
+    # Full survey — the remaining regions (any --prefer region was just probed and didn't
+    # qualify, so skip re-probing it), ranked by how many candidate sizes each exposes.
+    probe_list = [r for r in args.regions if r not in args.prefer]
+    az.log(f"probing {len(probe_list)} regions for a 2-vCPU DC size + a 4-vCPU RedAmon size…")
     rows = []  # (region, dc_ok, red_ok)
-    for region in args.regions:
-        skus = az.region_vm_skus(region)
-        if not skus:
-            az.log(f"  {region:20s} — no SKU data (skipped)")
-            continue
-        dc_ok = _avail(skus, args.dc_sizes)
-        red_ok = _avail(skus, args.redamon_sizes)
-        both = bool(dc_ok) and bool(red_ok)
-        flag = "OK " if both else "-- "
-        az.log(f"  {flag}{region:20s} DC:[{', '.join(dc_ok) or 'none'}]  "
-               f"RedAmon:[{', '.join(red_ok) or 'none'}]")
-        if both:
-            rows.append((region, dc_ok, red_ok))
+    for region in probe_list:
+        res = _probe(region, args.dc_sizes, args.redamon_sizes)
+        if res and res[0] and res[1]:
+            rows.append((region, res[0], res[1]))
 
     if not rows:
         az.log("No probed region has capacity for BOTH a DC size and a RedAmon size. "
@@ -101,29 +127,12 @@ def main() -> int:
         print(args.default_region)
         return 0
 
-    # A --prefer region that has capacity wins outright (e.g. westcentralus is the
-    # validated App Service region, so we consolidate there even if another region
-    # exposes more VM sizes). Otherwise rank: most candidate sizes first, ties broken
-    # by --regions order.
-    by_region = {r[0]: r for r in rows}
-    best = next((p for p in args.prefer if p in by_region), None)
-    if best is None:
-        order = {r: i for i, r in enumerate(args.regions)}
-        rows.sort(key=lambda r: (-(len(r[1]) + len(r[2])), order.get(r[0], 999)))
-        best = rows[0][0]
-    else:
-        az.log(f"preferred region {best} has capacity — choosing it")
-    _, dc_ok, red_ok = by_region[best]
-
-    az.log("")
-    az.log(f"→ recommended region: {best}")
-    az.log(f"    GOAD DC size will be {dc_ok[0]} (x{DC_COUNT}); RedAmon {red_ok[0]} (x{RED_COUNT})")
+    # Rank: most candidate sizes first, ties broken by --regions order.
+    order = {r: i for i, r in enumerate(args.regions)}
+    rows.sort(key=lambda r: (-(len(r[1]) + len(r[2])), order.get(r[0], 999)))
+    best, dc_ok, red_ok = rows[0]
     az.log(f"    {len(rows)} region(s) have capacity: {', '.join(r[0] for r in rows)}")
-    az.log("  Next:")
-    az.log(f"    python3 scripts/goad_azure_prep.py --region {best} --request-quota")
-    az.log(f"    AISOC_REQUEST_QUOTA=1 ./aisoc_demo.sh deploy --deploy-goad --with-redamon --goad-location={best}")
-    print(best)  # <-- contract: last stdout line = the recommended region
-    return 0
+    return _recommend(best, dc_ok, red_ok)
 
 
 if __name__ == "__main__":
