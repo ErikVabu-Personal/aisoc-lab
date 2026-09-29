@@ -633,7 +633,13 @@ trigger_and_wait_workflow() {
 if [[ "$AUTO_REGION" == "1" ]]; then
   _arg_rg="${TF_VAR_resource_group_name:-aisoc-demo}"
   if _ex_region="$(az group show -n "$_arg_rg" --query location -o tsv 2>/dev/null)" && [[ -n "$_ex_region" ]]; then
-    say "Auto-region: ${_arg_rg} already exists in ${_ex_region} — keeping existing phase regions (no move)."
+    say "Auto-region: ${_arg_rg} already exists in ${_ex_region} — reusing it (no move)."
+    # Pin the phases to the existing RG's region so a re-run stays consistent and
+    # doesn't fall back to per-phase defaults (which would fight the existing RG,
+    # e.g. try to relocate/replace it back to westus).
+    [[ -z "${TF_VAR_azure_location:-}" ]]    && export TF_VAR_azure_location="$_ex_region"
+    [[ -z "${TF_VAR_location_override:-}" ]] && export TF_VAR_location_override="$_ex_region"
+    [[ -z "${TF_VAR_goad_location:-}" ]]     && export TF_VAR_goad_location="$_ex_region"
     AUTO_REGION_CHOSEN="${_ex_region} (existing RG)"
   elif [[ -z "${TF_VAR_azure_location:-}" ]]; then
     say "Auto-region: detecting a capacity region (preferring West Central US for App Service)…"

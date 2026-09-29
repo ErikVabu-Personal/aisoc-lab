@@ -10,9 +10,23 @@
 # that Sentinel can query via the same Log Analytics workspace.
 #############################################
 
+locals {
+  # Application Insights (microsoft.insights/components) is NOT offered in a few
+  # regions — notably westcentralus, which --auto-region can pick for the movable
+  # infra (ACA / Log Analytics / Sentinel all DO run there). When the RG's region
+  # can't host the component, place it in a supported fallback (default eastus2,
+  # already in play for Foundry). It's workspace-based, so telemetry still lands in
+  # the (now cross-region) Log Analytics workspace and Sentinel queries it the same.
+  appinsights_unsupported_regions = ["westcentralus"]
+  appinsights_location = coalesce(
+    var.app_insights_location,
+    contains(local.appinsights_unsupported_regions, azurerm_resource_group.rg.location) ? var.app_insights_fallback_location : azurerm_resource_group.rg.location,
+  )
+}
+
 resource "azurerm_application_insights" "shipcp" {
   name                = "appi-shipcp-${random_string.suffix.result}"
-  location            = azurerm_resource_group.rg.location
+  location            = local.appinsights_location
   resource_group_name = azurerm_resource_group.rg.name
 
   application_type = "web"

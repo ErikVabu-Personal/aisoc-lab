@@ -10,6 +10,24 @@ variable "resource_group_name" {
   default     = "aisoc-demo"
 }
 
+variable "app_insights_location" {
+  description = <<-EOT
+    Region for the shared Application Insights component. Leave null to use the
+    RG's region, except App Insights isn't offered everywhere (e.g. westcentralus):
+    there it falls back to app_insights_fallback_location. Set this to pin it
+    explicitly. It's workspace-based, so telemetry lands in the Log Analytics
+    workspace regardless of the component's region.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "app_insights_fallback_location" {
+  description = "Region used for Application Insights when azure_location can't host it (e.g. westcentralus). Must be an App-Insights-supported region; defaults to eastus2 (already used for Foundry)."
+  type        = string
+  default     = "eastus2"
+}
+
 variable "workspace_name" {
   description = "Log Analytics Workspace name (must be globally unique per region/resource group constraints)"
   type        = string
