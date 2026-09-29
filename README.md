@@ -282,6 +282,18 @@ sees every page, including the threat-intel views). `jeroen.laureys` is a plain
 analyst (incident queue + dashboard only). Use `erik.vanbuggenhout@nviso.eu` for
 the full-access walkthrough.
 
+> **These are the shipped defaults, not necessarily *your* logins.** If you set
+> a custom roster via `TF_VAR_pixelagents_users` when you deployed — in
+> `aisoc.config`, a shell env var, or a `--pixelagents-users=…` flag — then that
+> roster is what's live and this table does **not** apply. `aisoc.config` is
+> gitignored, so it's the source of truth for what you actually deployed; the app
+> falls back to the table above only when `TF_VAR_pixelagents_users` is unset. To
+> see what's live now, read the `AISOC_USERS_JSON` secret on the PixelAgents
+> Container App (`az containerapp secret show`), or just try
+> `erik.vanbuggenhout@nviso.eu` — it's the first entry in both the default and the
+> example roster. (The Maison store accounts above are hard-seeded in
+> `maison-miro/app.py`, so they are always exactly as listed.)
+
 ---
 
 ## Architecture
