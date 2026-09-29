@@ -59,9 +59,9 @@ resource "azapi_resource" "foundry_account" {
     }
 
     properties = {
-      disableLocalAuth        = false
-      allowProjectManagement  = true
-      customSubDomainName     = local.foundry_custom_subdomain
+      disableLocalAuth       = false
+      allowProjectManagement = true
+      customSubDomainName    = local.foundry_custom_subdomain
     }
   }
 }

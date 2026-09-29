@@ -29,14 +29,14 @@ locals {
   drk_storage_account_name = lower(replace("aisocdetrules${random_string.suffix.result}", "-", ""))
   drk_storage_container    = "detection-rules"
 
-  drk_search_service_name  = "aisoc-detrules-${random_string.suffix.result}"
+  drk_search_service_name = "aisoc-detrules-${random_string.suffix.result}"
 
   # AI Search names are 2–60 chars, alphanumerics + "-" only, lowercase.
-  drk_index_name           = "detection-rules-idx"
-  drk_data_source_name     = "detection-rules-blob"
-  drk_indexer_name         = "detection-rules-indexer"
-  drk_knowledge_source     = "detection-rules-source"
-  drk_knowledge_base_name  = "detection-rules"
+  drk_index_name          = "detection-rules-idx"
+  drk_data_source_name    = "detection-rules-blob"
+  drk_indexer_name        = "detection-rules-indexer"
+  drk_knowledge_source    = "detection-rules-source"
+  drk_knowledge_base_name = "detection-rules"
 
   # MCP tool wiring. drk_mcp_endpoint isn't built here anymore — the
   # agent deploy script (scripts/deploy_prompt_agents_with_runner_tools.py)

@@ -26,9 +26,9 @@ output "resource_group" {
 locals {
   foundry_prefix = "foundry-soc"
   # Key Vault is created in Phase 1 and reused here.
-  kv_name        = data.terraform_remote_state.sentinel.outputs.aisoc_key_vault_name
-  sa_name        = "safoundrysoc${random_string.suffix.result}" # must be lowercase
-  func_name      = "func-${local.foundry_prefix}-${random_string.suffix.result}"
+  kv_name   = data.terraform_remote_state.sentinel.outputs.aisoc_key_vault_name
+  sa_name   = "safoundrysoc${random_string.suffix.result}" # must be lowercase
+  func_name = "func-${local.foundry_prefix}-${random_string.suffix.result}"
 
   location_effective = var.location_override != null ? var.location_override : data.terraform_remote_state.sentinel.outputs.selected_location
 }
@@ -51,7 +51,7 @@ resource "azurerm_service_plan" "fa" {
   resource_group_name = data.terraform_remote_state.sentinel.outputs.resource_group
   location            = local.location_effective
 
-  os_type  = "Linux"
+  os_type = "Linux"
   # NOTE: Consumption plans use "Dynamic" workers and can fail if your subscription's
   # Dynamic VMs quota is 0 in the selected region.
   sku_name = var.function_plan_sku
@@ -224,7 +224,7 @@ output "foundry_account_id" {
 
 output "foundry_project_id" {
   value       = "${azapi_resource.foundry_account.id}/projects/${local.foundry_project_name_effective}"
-  description = "Foundry project resource id (computed). The project is created post-apply via script." 
+  description = "Foundry project resource id (computed). The project is created post-apply via script."
 }
 
 # The Foundry API endpoint follows a deterministic template:

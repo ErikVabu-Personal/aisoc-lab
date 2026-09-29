@@ -106,8 +106,12 @@ resource "azurerm_role_assignment" "orch_foundry_openai_user" {
 }
 
 resource "azurerm_role_assignment" "orch_foundry_ai_user" {
-  scope                = azapi_resource.foundry_account.id
-  role_definition_name = "Azure AI User"
+  scope = azapi_resource.foundry_account.id
+  # "Azure AI User" was renamed to "Foundry User" in the Azure AI → Microsoft
+  # Foundry rebrand, so the display-name lookup fails ("could not find role").
+  # The role's GUID is unchanged, so reference it by id to survive the rename.
+  # 53ca6127-db72-4b80-b1b0-d745d6d5456d = Azure AI User / Foundry User.
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/53ca6127-db72-4b80-b1b0-d745d6d5456d"
 
   principal_id = azurerm_linux_function_app.orchestrator.identity[0].principal_id
 }

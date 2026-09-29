@@ -161,7 +161,7 @@ variable "foundry_additional_model_deployments" {
       - description: optional 1-line hint for the dropdown ("faster",
         "more capable", etc).
 
-    Defaults to a small recommended set (gpt-4.1, gpt-4o-mini) so a
+    Defaults to a small recommended set (gpt-4.1, gpt-4.1-nano) so a
     fresh deploy already has options beyond gpt-4.1-mini. Override in
     tfvars when you want different models or want to lock the demo
     down to one option.
@@ -178,9 +178,9 @@ variable "foundry_additional_model_deployments" {
     # primary deployment's 1500K already eats most of one family;
     # extras need to fit in what's left for OTHER families. Bump in
     # tfvars when you have headroom (`sku_capacity = 1500` etc).
-    sku_capacity    = optional(number, 100)
-    label           = optional(string, "")
-    description     = optional(string, "")
+    sku_capacity = optional(number, 100)
+    label        = optional(string, "")
+    description  = optional(string, "")
   }))
   default = [
     {
@@ -191,10 +191,10 @@ variable "foundry_additional_model_deployments" {
       description     = "Larger, more capable than 4.1-mini; better for tricky investigations."
     },
     {
-      deployment_name = "gpt-4o-mini"
-      model_name      = "gpt-4o-mini"
-      model_version   = "2024-07-18"
-      label           = "GPT-4o-mini"
+      deployment_name = "gpt-4.1-nano"
+      model_name      = "gpt-4.1-nano"
+      model_version   = "2025-04-14"
+      label           = "GPT-4.1-nano"
       description     = "Fast + cheap; good fit for triage."
     },
   ]

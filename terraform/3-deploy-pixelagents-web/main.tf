@@ -310,10 +310,16 @@ resource "azurerm_role_assignment" "pixelagents_foundry_openai_user" {
   principal_id         = local.pixelagents_principal_id
 }
 
+# The Foundry data-plane role "Azure AI User" was renamed to "Foundry User" in
+# the Azure AI → Microsoft Foundry rebrand, so a display-name lookup fails
+# ("could not find role"). Reference it by its (unchanged) GUID instead.
+data "azurerm_client_config" "current" {}
+
 resource "azurerm_role_assignment" "pixelagents_foundry_ai_user" {
-  scope                = data.terraform_remote_state.aisoc.outputs.foundry_account_id
-  role_definition_name = "Azure AI User"
-  principal_id         = local.pixelagents_principal_id
+  scope = data.terraform_remote_state.aisoc.outputs.foundry_account_id
+  # 53ca6127-db72-4b80-b1b0-d745d6d5456d = Azure AI User / Foundry User.
+  role_definition_id = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/53ca6127-db72-4b80-b1b0-d745d6d5456d"
+  principal_id       = local.pixelagents_principal_id
 }
 
 # Sentinel read access for the incidents table endpoint. Scoped to the Log
@@ -337,7 +343,7 @@ resource "azurerm_role_assignment" "pixelagents_sentinel_reader" {
 # IS the service name, which is the only piece of the ARM id that
 # isn't statically derivable from the RG).
 locals {
-  pixelagents_search_endpoint    = try(data.terraform_remote_state.aisoc.outputs.detection_rules_search_endpoint, "")
+  pixelagents_search_endpoint = try(data.terraform_remote_state.aisoc.outputs.detection_rules_search_endpoint, "")
   # https://<svc>.search.windows.net → <svc>
   pixelagents_search_service_name = trimprefix(
     replace(local.pixelagents_search_endpoint, ".search.windows.net", ""),
@@ -345,8 +351,8 @@ locals {
   )
   pixelagents_search_service_id = (
     local.pixelagents_search_service_name == ""
-      ? ""
-      : "/subscriptions/${data.terraform_remote_state.aisoc.outputs.subscription_id}/resourceGroups/${data.terraform_remote_state.sentinel.outputs.resource_group}/providers/Microsoft.Search/searchServices/${local.pixelagents_search_service_name}"
+    ? ""
+    : "/subscriptions/${data.terraform_remote_state.aisoc.outputs.subscription_id}/resourceGroups/${data.terraform_remote_state.sentinel.outputs.resource_group}/providers/Microsoft.Search/searchServices/${local.pixelagents_search_service_name}"
   )
   pixelagents_search_role_enabled = local.pixelagents_search_service_id != ""
 }

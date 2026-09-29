@@ -17,7 +17,7 @@
 #############################################
 
 locals {
-  bing_enabled    = var.bing_grounding_enabled
+  bing_enabled      = var.bing_grounding_enabled
   bing_account_name = "aisoc-bing-${random_string.suffix.result}"
 }
 

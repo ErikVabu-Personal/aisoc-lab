@@ -17,9 +17,9 @@
 # key and stores it as a Container App secret on the runner.
 resource "null_resource" "configure_runner_socgateway_key" {
   triggers = {
-    runner_name              = azurerm_container_app.runner.name
+    runner_name               = azurerm_container_app.runner.name
     soc_gateway_function_name = azurerm_linux_function_app.soc_gateway.name
-    resource_group           = data.terraform_remote_state.sentinel.outputs.resource_group
+    resource_group            = data.terraform_remote_state.sentinel.outputs.resource_group
     # always_run forces the provisioner to execute on every apply.
     # The underlying script is idempotent (just `az containerapp update`).
     always_run = timestamp()
@@ -28,9 +28,9 @@ resource "null_resource" "configure_runner_socgateway_key" {
   provisioner "local-exec" {
     command = "${path.module}/scripts/configure_runner_socgateway_key.sh"
     environment = {
-      RG           = data.terraform_remote_state.sentinel.outputs.resource_group
-      FUNC_APP     = azurerm_linux_function_app.soc_gateway.name
-      RUNNER_NAME  = azurerm_container_app.runner.name
+      RG          = data.terraform_remote_state.sentinel.outputs.resource_group
+      FUNC_APP    = azurerm_linux_function_app.soc_gateway.name
+      RUNNER_NAME = azurerm_container_app.runner.name
     }
   }
 
@@ -57,25 +57,25 @@ variable "github_repo" {
 
 resource "null_resource" "sync_github_repo_vars_phase2" {
   triggers = {
-    repo                              = var.github_repo
-    aisoc_runner_name                 = azurerm_container_app.runner.name
-    aisoc_orchestrator_function_name  = azurerm_linux_function_app.orchestrator.name
-    aisoc_soc_gateway_function_name   = azurerm_linux_function_app.soc_gateway.name
+    repo                             = var.github_repo
+    aisoc_runner_name                = azurerm_container_app.runner.name
+    aisoc_orchestrator_function_name = azurerm_linux_function_app.orchestrator.name
+    aisoc_soc_gateway_function_name  = azurerm_linux_function_app.soc_gateway.name
     # The KB-storage / Search vars are only set when the
     # detection-rules KB subsystem is enabled; nullable.
-    drk_storage_account               = local.drk_enabled ? azurerm_storage_account.detection_rules[0].name : ""
-    drk_storage_container             = local.drk_enabled ? azurerm_storage_container.detection_rules[0].name : ""
-    drk_search_service                = local.drk_enabled ? azurerm_search_service.detection_rules[0].name : ""
-    always_run                        = timestamp()
+    drk_storage_account   = local.drk_enabled ? azurerm_storage_account.detection_rules[0].name : ""
+    drk_storage_container = local.drk_enabled ? azurerm_storage_container.detection_rules[0].name : ""
+    drk_search_service    = local.drk_enabled ? azurerm_search_service.detection_rules[0].name : ""
+    always_run            = timestamp()
   }
 
   provisioner "local-exec" {
     command = "${path.module}/../../scripts/sync_github_repo_var.sh"
     environment = {
-      REPO                              = var.github_repo
-      AISOC_RUNNER_NAME                 = azurerm_container_app.runner.name
-      AISOC_ORCHESTRATOR_FUNCTION_NAME  = azurerm_linux_function_app.orchestrator.name
-      AISOC_SOC_GATEWAY_FUNCTION_NAME   = azurerm_linux_function_app.soc_gateway.name
+      REPO                             = var.github_repo
+      AISOC_RUNNER_NAME                = azurerm_container_app.runner.name
+      AISOC_ORCHESTRATOR_FUNCTION_NAME = azurerm_linux_function_app.orchestrator.name
+      AISOC_SOC_GATEWAY_FUNCTION_NAME  = azurerm_linux_function_app.soc_gateway.name
 
       # Surface the storage account + container + Search service
       # names so the daily-refresh GitHub Actions workflow knows

@@ -37,7 +37,7 @@ variable "pixelagents_users" {
   #   (b) {email = "password"}             — legacy shape, still accepted
   # The PixelAgents server's _load_users() handles both shapes
   # transparently, so old tfvars files keep deploying cleanly.
-  type = any
+  type        = any
   description = <<-EOT
     Demo login roster. Two accepted shapes:
 

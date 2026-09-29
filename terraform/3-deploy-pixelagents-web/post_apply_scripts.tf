@@ -73,16 +73,16 @@ variable "github_repo" {
 
 resource "null_resource" "sync_github_repo_vars_phase3" {
   triggers = {
-    repo                     = var.github_repo
-    aisoc_pixelagents_name   = azurerm_container_app.pixelagents.name
-    always_run               = timestamp()
+    repo                   = var.github_repo
+    aisoc_pixelagents_name = azurerm_container_app.pixelagents.name
+    always_run             = timestamp()
   }
 
   provisioner "local-exec" {
     command = "${path.module}/../../scripts/sync_github_repo_var.sh"
     environment = {
-      REPO                     = var.github_repo
-      AISOC_PIXELAGENTS_NAME   = azurerm_container_app.pixelagents.name
+      REPO                   = var.github_repo
+      AISOC_PIXELAGENTS_NAME = azurerm_container_app.pixelagents.name
     }
   }
 

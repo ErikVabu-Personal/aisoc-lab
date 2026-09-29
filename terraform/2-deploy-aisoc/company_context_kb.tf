@@ -55,17 +55,17 @@ locals {
   # federated retrieval across both sources. Demonstrates Foundry
   # IQ's source-agnostic pitch: more sources, same KB, no agent
   # changes.
-  cck_index_name             = "company-context-idx"
-  cck_data_source_name       = "company-context-blob"
-  cck_indexer_name           = "company-context-indexer"
-  cck_knowledge_source       = "company-context-source"
-  cck_knowledge_base_name    = "company-context"
+  cck_index_name          = "company-context-idx"
+  cck_data_source_name    = "company-context-blob"
+  cck_indexer_name        = "company-context-indexer"
+  cck_knowledge_source    = "company-context-source"
+  cck_knowledge_base_name = "company-context"
 
-  cck_pol_container_name     = "company-policies"
-  cck_pol_index_name         = "company-policies-idx"
-  cck_pol_data_source_name   = "company-policies-blob"
-  cck_pol_indexer_name       = "company-policies-indexer"
-  cck_pol_knowledge_source   = "company-policies-source"
+  cck_pol_container_name   = "company-policies"
+  cck_pol_index_name       = "company-policies-idx"
+  cck_pol_data_source_name = "company-policies-blob"
+  cck_pol_indexer_name     = "company-policies-indexer"
+  cck_pol_knowledge_source = "company-policies-source"
 
   cck_project_connection_name = "company-context-kb"
 }
@@ -231,23 +231,23 @@ resource "null_resource" "cck_search_seed_policies" {
     command = "${path.module}/scripts/seed_search_kb.sh"
 
     environment = {
-      SEARCH_ENDPOINT          = local.drk_search_endpoint
-      SEARCH_ADMIN_KEY         = azurerm_search_service.detection_rules[0].primary_key
-      STORAGE_ACCOUNT_ID       = azurerm_storage_account.company_context[0].id
-      STORAGE_CONTAINER        = azurerm_storage_container.company_policies[0].name
-      INDEX_NAME               = local.cck_pol_index_name
-      DATA_SOURCE_NAME         = local.cck_pol_data_source_name
-      INDEXER_NAME             = local.cck_pol_indexer_name
-      KNOWLEDGE_SOURCE_NAME    = local.cck_pol_knowledge_source
-      KNOWLEDGE_BASE_NAME      = local.cck_knowledge_base_name
-      DP_API_VERSION           = local.drk_search_dp_api_version
-      KB_API_VERSION           = local.drk_search_kb_api_version
-      KS_DESCRIPTION           = "NVISO Cruiseways HR / IT policies — acceptable use, asset inventory, vendor list."
-      KB_DESCRIPTION           = "Generic organisational context for the AISOC SOC agents. Federates SOC-curated runbooks + HR/IT-curated policies into one KB."
-      FILE_EXTENSIONS          = ".md,.txt"
+      SEARCH_ENDPOINT       = local.drk_search_endpoint
+      SEARCH_ADMIN_KEY      = azurerm_search_service.detection_rules[0].primary_key
+      STORAGE_ACCOUNT_ID    = azurerm_storage_account.company_context[0].id
+      STORAGE_CONTAINER     = azurerm_storage_container.company_policies[0].name
+      INDEX_NAME            = local.cck_pol_index_name
+      DATA_SOURCE_NAME      = local.cck_pol_data_source_name
+      INDEXER_NAME          = local.cck_pol_indexer_name
+      KNOWLEDGE_SOURCE_NAME = local.cck_pol_knowledge_source
+      KNOWLEDGE_BASE_NAME   = local.cck_knowledge_base_name
+      DP_API_VERSION        = local.drk_search_dp_api_version
+      KB_API_VERSION        = local.drk_search_kb_api_version
+      KS_DESCRIPTION        = "NVISO Cruiseways HR / IT policies — acceptable use, asset inventory, vendor list."
+      KB_DESCRIPTION        = "Generic organisational context for the AISOC SOC agents. Federates SOC-curated runbooks + HR/IT-curated policies into one KB."
+      FILE_EXTENSIONS       = ".md,.txt"
       # The federation move — re-PUT the same knowledgeBase but with
       # BOTH sources in its knowledgeSources[] list.
-      EXTRA_KNOWLEDGE_SOURCES  = local.cck_knowledge_source
+      EXTRA_KNOWLEDGE_SOURCES = local.cck_knowledge_source
     }
   }
 

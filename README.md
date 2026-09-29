@@ -486,7 +486,7 @@ The example documents every supported knob. Highlights:
   roster.
 - **`TF_VAR_foundry_additional_model_deployments`** — JSON list
   of extra model deployments to surface on `/config`'s per-agent
-  dropdown. Defaults to `gpt-4.1` and `gpt-4o-mini` alongside the
+  dropdown. Defaults to `gpt-4.1` and `gpt-4.1-nano` alongside the
   primary `gpt-4.1-mini`.
 - **`TF_VAR_detection_rules_kb_enabled`** — flips the Foundry IQ
   rule-library subsystem on or off. Default: `true`.

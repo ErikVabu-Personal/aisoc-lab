@@ -82,14 +82,14 @@
 
 # ── Additional Foundry model deployments (optional) ────────────────
 # Extra deployments alongside the primary one — selectable per-agent
-# in /config's model dropdown. Defaults to gpt-4.1 + gpt-4o-mini so
+# in /config's model dropdown. Defaults to gpt-4.1 + gpt-4.1-nano so
 # the dropdown isn't a single-item list out of the box. Set to []
 # to keep only the primary.
 #
 # JSON-encoded list of objects; field names match the Terraform
 # variable schema (deployment_name, model_name, model_version,
 # sku_name?, sku_capacity?, label?, description?).
-# TF_VAR_foundry_additional_model_deployments='[{"deployment_name":"gpt-4.1","model_name":"gpt-4.1","model_version":"2025-04-14","label":"GPT-4.1","description":"Larger, more capable; better for tricky investigations."},{"deployment_name":"gpt-4o-mini","model_name":"gpt-4o-mini","model_version":"2024-07-18","label":"GPT-4o-mini","description":"Fast + cheap; good fit for triage."}]'
+# TF_VAR_foundry_additional_model_deployments='[{"deployment_name":"gpt-4.1","model_name":"gpt-4.1","model_version":"2025-04-14","label":"GPT-4.1","description":"Larger, more capable; better for tricky investigations."},{"deployment_name":"gpt-4.1-nano","model_name":"gpt-4.1-nano","model_version":"2025-04-14","label":"GPT-4.1-nano","description":"Fast + cheap; good fit for triage."}]'
 
 # ── Detection rule library (Foundry IQ knowledge base) ─────────────
 # When enabled, Phase 2 stands up an Azure Storage account, an Azure
