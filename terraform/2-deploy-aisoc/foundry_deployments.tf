@@ -12,7 +12,10 @@
 resource "azapi_resource" "foundry_model_deployment" {
   count = var.foundry_model_deployment_name != null && var.foundry_model_choice != null && var.foundry_model_version != null ? 1 : 0
 
-  type      = "Microsoft.CognitiveServices/accounts/deployments@2023-05-01"
+  # 2025-10-01-preview is the api-version Microsoft's Claude-on-Foundry starter kit
+  # uses for Anthropic deployments (it takes the modelProviderData attestation
+  # below). It's backward-compatible for OpenAI models too.
+  type      = "Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview"
   name      = var.foundry_model_deployment_name
   parent_id = azapi_resource.foundry_account.id
 
@@ -24,17 +27,29 @@ resource "azapi_resource" "foundry_model_deployment" {
       capacity = var.foundry_model_sku_capacity
     }
 
-    properties = {
-      model = {
-        # Publisher/format of the primary model. "OpenAI" for GPT models,
-        # "Anthropic" for Claude (both deploy through the same
-        # Microsoft.CognitiveServices/accounts/deployments resource and are
-        # usable by the Foundry Agent Service).
-        format  = var.foundry_model_format
-        name    = var.foundry_model_choice
-        version = var.foundry_model_version
+    # Anthropic (Claude) deployments REQUIRE a modelProviderData attestation
+    # (organizationName / countryCode / industry) — Azure uses it to auto-accept the
+    # Marketplace offer on your behalf; OpenAI deployments must NOT carry it (a 400
+    # InvalidModelProviderData otherwise). The for-filter includes the key only when
+    # non-null (i.e. Anthropic), so it's cleanly omitted for OpenAI.
+    properties = merge(
+      {
+        model = {
+          format  = var.foundry_model_format
+          name    = var.foundry_model_choice
+          version = var.foundry_model_version
+        }
+      },
+      {
+        for k, v in {
+          modelProviderData = var.foundry_model_format == "Anthropic" ? {
+            organizationName = var.foundry_model_provider_organization
+            countryCode      = var.foundry_model_provider_country
+            industry         = var.foundry_model_provider_industry
+          } : null
+        } : k => v if v != null
       }
-    }
+    )
   }
 
   # Microsoft.CognitiveServices/accounts only allows one mutation at

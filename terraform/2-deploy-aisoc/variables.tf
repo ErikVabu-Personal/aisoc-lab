@@ -106,6 +106,34 @@ variable "foundry_model_sku_capacity" {
   default     = 1500
 }
 
+# --- Anthropic (Claude) model-provider attestation ---
+# Deploying an Anthropic model on Foundry REQUIRES a modelProviderData block; Azure
+# uses it to auto-accept the Anthropic Marketplace offer on your behalf. These are
+# sent only when foundry_model_format == "Anthropic" (ignored for OpenAI). Set them
+# to describe the real organization using the model.
+
+variable "foundry_model_provider_organization" {
+  description = "Anthropic attestation: your legal entity name (modelProviderData.organizationName)."
+  type        = string
+  default     = "NVISO"
+}
+
+variable "foundry_model_provider_country" {
+  description = "Anthropic attestation: two-letter ISO country code (modelProviderData.countryCode)."
+  type        = string
+  default     = "BE"
+}
+
+variable "foundry_model_provider_industry" {
+  description = "Anthropic attestation: industry (modelProviderData.industry, lowercase)."
+  type        = string
+  default     = "technology"
+  validation {
+    condition     = contains(["technology", "finance", "healthcare", "education", "retail", "manufacturing", "government", "media", "other"], var.foundry_model_provider_industry)
+    error_message = "foundry_model_provider_industry must be one of: technology, finance, healthcare, education, retail, manufacturing, government, media, other."
+  }
+}
+
 
 variable "detection_rules_kb_enabled" {
   type        = bool
