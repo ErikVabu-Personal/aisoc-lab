@@ -32,7 +32,7 @@ def _ensure_search_role_for_project_mi(
     foundry_hub: str,
     foundry_project: str,
     search_service_name: str,
-    role_definition: str = "Search Service Contributor",
+    role_definition: str = "Search Index Data Reader",
 ) -> str:
     """Idempotently grant the Foundry project's system-assigned MI a
     role on the Azure AI Search service.
@@ -53,23 +53,25 @@ def _ensure_search_role_for_project_mi(
     the project MI principalId via ARM, resolve the role definition,
     and PUT a deterministic role assignment on the Search service.
 
-    Why "Search Service Contributor" and not just "Search Index Data
-    Reader" / "Search Index Data Contributor":
+    Which role (default "Search Index Data Reader"):
 
-    The KB MCP endpoint's "enumerate tools" call (which Foundry hits
-    on every agent run start) is part of the *agentic retrieval*
-    feature — that's a service-level capability, not just an
-    index-level one. The Index Data roles cover document-level
-    queries against indexes, but they DON'T include the operations
-    needed to enumerate KB tools, even though indexes back the KB.
-    `Search Service Contributor` covers both planes (data + the
-    KB-management surface) which is what the MCP discovery call
-    needs.
+    The KB MCP `knowledge_base_retrieve` call — which Foundry hits on
+    every agent run — is a Search DATA-plane operation. Azure AI
+    Search splits management-plane and data-plane RBAC: management
+    roles (Owner / Contributor / "Search Service Contributor") let you
+    manage the service + its indexes but do NOT grant the data-plane
+    read the retrieval needs. Per Microsoft's Foundry-IQ docs the
+    project MI must have **Search Index Data Reader** — which is why
+    granting only "Search Service Contributor" still 403s. The caller
+    grants both (Index Data Reader for retrieval + Service Contributor
+    for the KB-management surface), belt-and-braces across Foundry-IQ
+    versions.
 
-    Without this the agent reports HTTP 403:
+    Without the data-plane role the agent reports HTTP 403:
         "Access denied when connecting to the MCP server at
          https://...search.windows.net/knowledgebases/.../mcp while
          enumerating tools"
+    See: https://learn.microsoft.com/azure/foundry/agents/how-to/foundry-iq-connect#troubleshooting
     """
 
     try:
@@ -614,45 +616,60 @@ def main() -> int:
             f"/mcp?api-version={KB_MCP_API_VERSION}"
         )
 
-        # Grant the Foundry project's MI 'Search Service Contributor' on
-        # the Search service BEFORE we wire up the connection. The
-        # connection uses ProjectManagedIdentity auth, so Foundry calls
-        # the KB MCP endpoint to enumerate tools as the project MI on
-        # every agent run. Without this role every agent returns HTTP 403
-        # "Access denied … while enumerating tools" (Erik's 2026-05-01
-        # incident). Terraform grants the role to the hub/account MI, but
-        # the project MI is a different principal, created post-apply by
+        # Grant the Foundry project's MI the roles it needs on the Search
+        # service BEFORE we wire up the connection. The connection uses
+        # ProjectManagedIdentity auth, so Foundry calls the KB MCP endpoint
+        # as the project MI on every agent run. Without the right role the
+        # agent returns HTTP 403 "Access denied … while enumerating tools".
+        # Terraform grants a role to the hub/account MI, but the project MI
+        # is a different principal, created post-apply by
         # deploy_foundry_project.py.
         #
-        # Self-healing: on a fresh deploy the project MI is created
-        # seconds earlier and often isn't resolvable in Entra yet (the
-        # grant helper raises "no principalId"), and the role-assignment
-        # PUT can transiently fail. A one-shot grant then silently
-        # WARN-fails and every agent 403s until an operator grants it by
-        # hand — so we retry with backoff for a couple of minutes, then
-        # give the Search data-plane a moment to propagate before the
-        # connection PUT triggers the first enumeration.
+        # WHICH ROLE: the KB MCP `knowledge_base_retrieve` call is a Search
+        # DATA-plane operation, so per Microsoft's Foundry-IQ docs the
+        # project MI needs **Search Index Data Reader**. A management-plane
+        # role like "Search Service Contributor" does NOT grant data-plane
+        # reads — Azure AI Search splits the two planes, which is exactly
+        # why granting only Service Contributor still 403s. We grant Index
+        # Data Reader for the retrieval path and also keep Search Service
+        # Contributor for the KB-management surface, belt-and-braces across
+        # Foundry-IQ versions.
+        #   https://learn.microsoft.com/azure/foundry/agents/how-to/foundry-iq-connect#troubleshooting
+        #
+        # Self-healing: on a fresh deploy the project MI is created seconds
+        # earlier and often isn't resolvable in Entra yet (the grant helper
+        # raises "no principalId"), and the role-assignment PUT can
+        # transiently fail. A one-shot grant then silently WARN-fails and
+        # every agent 403s until an operator grants it by hand — so we
+        # retry both roles with backoff for a couple of minutes, then give
+        # the Search data-plane a moment to propagate before the connection
+        # PUT triggers the first enumeration.
         from urllib.parse import urlparse as _urlparse
         _search_host = _urlparse(drk_search_ep).hostname or ""
         _search_svc = _search_host.split(".", 1)[0]
         if _search_svc:
+            # Data-plane role first (the one the 403 is actually about),
+            # then the management-plane role.
+            _kb_roles = ["Search Index Data Reader", "Search Service Contributor"]
             _granted_pmi = None
             _delays = [0, 10, 15, 20, 30, 30, 45]  # ~2.5 min of retries
             for _attempt, _delay in enumerate(_delays, start=1):
                 if _delay:
                     time.sleep(_delay)
                 try:
-                    _granted_pmi = _ensure_search_role_for_project_mi(
-                        sub_id=sub_id,
-                        rg=rg,
-                        foundry_hub=hub,
-                        foundry_project=project,
-                        search_service_name=_search_svc,
-                    )
+                    for _role in _kb_roles:
+                        _granted_pmi = _ensure_search_role_for_project_mi(
+                            sub_id=sub_id,
+                            rg=rg,
+                            foundry_hub=hub,
+                            foundry_project=project,
+                            search_service_name=_search_svc,
+                            role_definition=_role,
+                        )
                     print(
-                        f"INFO: project MI granted 'Search Service "
-                        f"Contributor' on {_search_svc!r} "
-                        f"(attempt {_attempt}/{len(_delays)}, idempotent)"
+                        f"INFO: project MI granted {_kb_roles} on "
+                        f"{_search_svc!r} (attempt {_attempt}/{len(_delays)}, "
+                        f"idempotent)"
                     )
                     break
                 except Exception as e:
@@ -667,14 +684,15 @@ def main() -> int:
                         # Give up after the backoff budget — WARN, don't
                         # hard-fail; the connection PUT below still
                         # succeeds and the operator can re-run this
-                        # (idempotent) script, or grant 'Search Service
-                        # Contributor' to the project MI by hand.
+                        # (idempotent) script, or grant 'Search Index Data
+                        # Reader' (+ 'Search Service Contributor') to the
+                        # project MI by hand.
                         print(
-                            f"WARN: could not grant project MI role on "
+                            f"WARN: could not grant project MI roles on "
                             f"Search service {_search_svc!r} after "
                             f"{len(_delays)} attempts: {e!r}. Agents will "
                             f"see HTTP 403 enumerating the KB MCP tools "
-                            f"until the role is granted.",
+                            f"until the roles are granted.",
                             file=sys.stderr,
                         )
             # Management-plane assignment is instant; Azure AI Search's
