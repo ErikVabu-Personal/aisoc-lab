@@ -9,10 +9,11 @@ detects and triages. Ported from the AWS `redamon.tf` — same cloud-init.
 
 In GOAD's resource group + subnet (discovered by name): a public IP, an NSG
 (SSH + `:3000` locked to `admin_cidrs`), a NIC in `<lab>-vm-subnet`, and an Ubuntu
-22.04 VM (`Standard_D4s_v3`, 200 GB). cloud-init (`templates/redamon-init.sh.tpl`,
-verbatim from the AWS box) installs Docker + jq, clones RedAmon, and runs
-`./redamon.sh install --gvm` in a tmux session. Optional Tailscale/keepalive for a
-self-hosted LLM (set `home_llm_tailscale_ip`).
+22.04 VM (`redamon_size` default `Standard_D4as_v4`, 200 GB — the driver auto-picks a
+capacity-available size per region, see `scripts/azure_preflight.py`). cloud-init
+(`templates/redamon-init.sh.tpl`, verbatim from the AWS box) installs Docker + jq,
+clones RedAmon, and runs `./redamon.sh install --gvm` in a tmux session. Optional
+Tailscale/keepalive for a self-hosted LLM (set `home_llm_tailscale_ip`).
 
 ## Prerequisites
 
@@ -27,8 +28,15 @@ self-hosted LLM (set `home_llm_tailscale_ip`).
 cd terraform/5-deploy-redamon
 terraform init
 terraform apply -var 'admin_cidrs=["<your-ip>/32"]'
-# or via the driver: ../../aisoc_demo.sh deploy --with-redamon
+# or via the driver (auto-locks SSH/UI to your resolved public IP, auto-picks a
+# capacity-available VM size): ../../aisoc_demo.sh deploy --with-redamon
 ```
+
+**`admin_cidrs`:** the Terraform default is `["0.0.0.0/0"]` (open), so a bare
+`terraform apply` leaves SSH/`:3000` world-reachable — always pass your own `/32`.
+The **driver** resolves your public IP (via ifconfig.me) and locks it to a `/32`
+automatically when `admin_cidrs` is unset, so `--with-redamon` needs no manual CIDR;
+override with `--admin-cidrs='["a.b.c.d/32"]'`.
 
 ## Access
 

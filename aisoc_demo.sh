@@ -148,7 +148,10 @@ Other:
                               Omit to reuse Phase 1's region (same-region onboarding).
   --with-redamon              Also run Phase 5: deploy RedAmon (AI red-team) into
                               GOAD's VNet (needs GOAD on Azure). The on-box install
-                              runs in tmux; reach the UI via an SSH tunnel.
+                              runs in tmux; reach the UI via an SSH tunnel. SSH/UI
+                              (22/3000) are auto-locked to your resolved public IP
+                              unless you set admin_cidrs (--admin-cidrs='["a.b.c.d/32"]'
+                              / TF_VAR_admin_cidrs / aisoc.config).
                               (Or AISOC_DEPLOY_REDAMON=1 in aisoc.config.)
   -h, --help                  show this help
 
@@ -734,6 +737,35 @@ fi
 # terraform/5-deploy-redamon/README.md.
 if [[ "$DEPLOY_REDAMON" == "1" ]]; then
   say "Phase 5: RedAmon (AI red-team) in the GOAD VNet"
+
+  # Auto-lock RedAmon's SSH/UI (22 + 3000) to the operator's own public IP,
+  # UNLESS admin_cidrs was set explicitly (pre-shell TF_VAR_admin_cidrs,
+  # --admin-cidrs=..., or aisoc.config). The Terraform default is 0.0.0.0/0
+  # (open); resolving a /32 via a public echo service is far safer and saves
+  # passing the CIDR by hand. Best-effort: if resolution fails we warn and let
+  # the (open) default stand rather than blocking the deploy.
+  if [[ -z "${TF_VAR_admin_cidrs:-}" ]]; then
+    _myip=""
+    if command -v curl >/dev/null 2>&1; then
+      for _svc in https://ifconfig.me https://api.ipify.org https://ipinfo.io/ip https://icanhazip.com; do
+        _myip="$(curl -4 -fsS --max-time 5 "$_svc" 2>/dev/null | tr -d '[:space:]')" || true
+        [[ "$_myip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && break
+        _myip=""
+      done
+    else
+      warn "curl not found — can't auto-resolve your public IP for the RedAmon NSG"
+    fi
+    if [[ -n "$_myip" ]]; then
+      export TF_VAR_admin_cidrs="[\"${_myip}/32\"]"
+      ok "Locked RedAmon SSH/UI (22/3000) to your public IP ${_myip}/32 (override: --admin-cidrs='[\"a.b.c.d/32\"]')"
+    else
+      warn "Couldn't resolve your public IP — RedAmon's NSG falls back to the Terraform default 0.0.0.0/0 (OPEN)."
+      warn "  Re-run with --admin-cidrs='[\"YOUR.IP/32\"]' to lock it down."
+    fi
+  else
+    ok "RedAmon SSH/UI locked to your configured admin_cidrs (${TF_VAR_admin_cidrs})"
+  fi
+
   # Capacity/quota preflight — RedAmon deploys into GOAD's region, and fresh subs
   # often lack VM capacity or quota there for the hardcoded size. Auto-pick a size
   # that has both (best-effort; on any failure we fall back to the Terraform

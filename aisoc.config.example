@@ -157,7 +157,9 @@
 # VM into GOAD's VNet (needs GOAD on Azure). Reach its UI via an SSH tunnel;
 # the on-box install runs in tmux. See terraform/5-deploy-redamon/README.md.
 # AISOC_DEPLOY_REDAMON=1
-# Lock SSH/UI to your IP (strongly recommended):
+# SSH/UI (22/3000) are auto-locked to your resolved public IP (via ifconfig.me)
+# when admin_cidrs is unset. Set this only to pin a different CIDR, or to
+# deliberately open it ('["0.0.0.0/0"]'):
 # TF_VAR_admin_cidrs='["203.0.113.10/32"]'
 # Optional: reach a self-hosted LLM over Tailscale (as on the AWS box):
 # TF_VAR_home_llm_tailscale_ip="100.x.y.z"
