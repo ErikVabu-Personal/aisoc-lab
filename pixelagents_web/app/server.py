@@ -751,38 +751,31 @@ NAV_CSS = """\
     align-items: center !important;
     text-decoration: none !important;
     height: 44px !important;
-    gap: 12px !important;
+    gap: 10px !important;
   }
-  /* NVISO wordmark (PNG) + "CRUISES" subtitle stacked. */
-  #aisoc-nav .brand-mark {
-    display: inline-flex !important;
-    flex-direction: column !important;
-    align-items: flex-start !important;
+  /* Maison Miró serif wordmark. This selector (#id + 2 classes) is more
+     specific than the nav-wide `#aisoc-nav *` sans rule above, so the
+     serif wins even with both marked !important. */
+  #aisoc-nav .brand .brand-word {
+    font-family: "Cormorant Garamond", "Times New Roman", Georgia, serif !important;
+    font-weight: 600 !important;
+    font-size: 22px !important;
     line-height: 1 !important;
+    letter-spacing: 0.005em !important;
+    color: var(--aisoc-nav-text) !important;
+    white-space: nowrap !important;
   }
-  #aisoc-nav .brand-mark img {
-    height: 32px !important;
+  #aisoc-nav .brand .brand-div {
+    width: 1px !important;
+    height: 20px !important;
+    background: #e5ddcd !important;
+    display: inline-block !important;
+  }
+  #aisoc-nav .brand .brand-nviso {
+    height: 17px !important;
     width: auto !important;
     display: block !important;
-  }
-  #aisoc-nav .brand-mark .tag {
-    font-size: 9px !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.40em !important;
-    color: var(--aisoc-nav-accent) !important;
-    margin-top: 4px !important;
-    padding-left: 2px !important;
-  }
-  /* Geometric cruise-ship icon to the right of the wordmark. */
-  #aisoc-nav .brand-ship {
-    display: inline-flex !important;
-    align-items: center !important;
-    height: 44px !important;
-  }
-  #aisoc-nav .brand-ship svg {
-    width: 56px !important;
-    height: 36px !important;
-    display: block !important;
+    opacity: 0.85 !important;
   }
   /* Two-row nav: top row (groups + brand + userbar) and an
      optional sub-row of sub-tabs that only renders when the active
@@ -910,23 +903,6 @@ NAV_CSS = """\
   }
 </style>
 """
-
-
-# Geometric cruise-ship icon, inlined so we don't need a second
-# round-trip for the brand mark. Origami / triangulated facets in the
-# NVISO blue palette — visually consistent with the NVISO bird mark
-# but unmistakably a ship.
-SHIP_SVG_INLINE = (
-    '<svg viewBox="0 0 90 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
-    '<polygon points="34,4 46,4 48,18 32,18" fill="#7DD9F2"/>'
-    '<polygon points="22,18 60,18 56,28 26,28" fill="#33B0DD"/>'
-    '<polygon points="14,28 70,28 66,40 18,40" fill="#0099CC"/>'
-    '<polygon points="6,40 80,40 84,52 2,52" fill="#0F6BAA"/>'
-    '<polygon points="2,52 84,52 76,64 10,64" fill="#0E5C8C"/>'
-    '<path d="M-4 70 Q 6 66 16 70 T 36 70 T 56 70 T 76 70 T 90 70" '
-    'stroke="#33B0DD" stroke-width="2.4" fill="none" stroke-linecap="round"/>'
-    '</svg>'
-)
 
 
 def _user_nav_capabilities(user_email: str) -> dict[str, bool]:
@@ -1180,12 +1156,10 @@ def _render_nav(active: str, current_user: str) -> str:
     return (
         '<nav id="aisoc-nav">'
         '  <div class="nav-row">'
-        '    <a href="/" class="brand">'
-        '      <span class="brand-mark">'
-        '        <img src="/static/nviso-logo.png" alt="NVISO">'
-        '        <span class="tag">CRUISES</span>'
-        '      </span>'
-        f'      <span class="brand-ship">{SHIP_SVG_INLINE}</span>'
+        '    <a href="/" class="brand" title="Maison Miró · Security Operations">'
+        '      <span class="brand-word">Maison&nbsp;Miró</span>'
+        '      <span class="brand-div" aria-hidden="true"></span>'
+        '      <img class="brand-nviso" src="/static/nviso-logo.png" alt="NVISO">'
         '    </a>'
         '    <div class="tabs">' + "".join(top_items) + '</div>'
         '    <div class="userbar">'
@@ -1239,7 +1213,9 @@ def _render_shell(
         f'<!DOCTYPE html><html lang="en"><head>'
         f'<meta charset="utf-8">'
         f'<title>{title}</title>'
-        f'<link rel="icon" href="/static/nviso-cruises-logo.svg">'
+        f'<link rel="icon" href="/static/maison-favicon.svg">'
+        f'<link rel="preconnect" href="https://fonts.googleapis.com">'
+        f'<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">'
         f'{SHELL_BASE_CSS}'
         f'{NAV_CSS}'
         f'{extra_head}'
@@ -1267,7 +1243,7 @@ def dashboard_view(request: Request) -> Response:
     return HTMLResponse(_render_shell(
         active="dashboard",
         current_user=user,
-        title="NVISO Cruises · Dashboard",
+        title="Maison Miró · Dashboard",
         body_html=body,
         scripts=["/static/dashboard.js"],
     ))
@@ -1300,7 +1276,7 @@ def config_view(request: Request) -> Response:
             _render_shell(
                 active="config",
                 current_user=user,
-                title="NVISO Cruises · Configuration",
+                title="Maison Miró · Configuration",
                 body_html=denied,
                 scripts=[],
             ),
@@ -1321,7 +1297,7 @@ def config_view(request: Request) -> Response:
     return HTMLResponse(_render_shell(
         active="config",
         current_user=user,
-        title="NVISO Cruises · Configuration",
+        title="Maison Miró · Configuration",
         body_html=body,
         scripts=["/static/config.js"],
     ))
@@ -1349,7 +1325,7 @@ def audit_view(request: Request) -> Response:
             _render_shell(
                 active="audit",
                 current_user=user,
-                title="NVISO Cruises · Logging & Auditing",
+                title="Maison Miró · Logging & Auditing",
                 body_html=denied,
                 scripts=[],
             ),
@@ -1366,7 +1342,7 @@ def audit_view(request: Request) -> Response:
     return HTMLResponse(_render_shell(
         active="audit",
         current_user=user,
-        title="NVISO Cruises · Logging & Auditing",
+        title="Maison Miró · Logging & Auditing",
         body_html=body,
         scripts=["/static/audit.js"],
     ))
@@ -1395,7 +1371,7 @@ def threat_horizon_view(request: Request) -> Response:
     return HTMLResponse(_render_shell(
         active="threat-horizon",
         current_user=user,
-        title="NVISO Cruises · Threat Horizon",
+        title="Maison Miró · Threat Horizon",
         body_html=body,
         scripts=["/static/threat_horizon.js"],
     ))
@@ -1433,7 +1409,7 @@ def improvements_view(request: Request) -> Response:
             _render_shell(
                 active="improvements",
                 current_user=user,
-                title="NVISO Cruises · Continuous Improvement",
+                title="Maison Miró · Continuous Improvement",
                 body_html=denied,
                 scripts=[],
             ),
@@ -1451,7 +1427,7 @@ def improvements_view(request: Request) -> Response:
     return HTMLResponse(_render_shell(
         active="improvements",
         current_user=user,
-        title="NVISO Cruises · Continuous Improvement",
+        title="Maison Miró · Continuous Improvement",
         body_html=body,
         scripts=["/static/improvements.js"],
     ))
@@ -1481,11 +1457,11 @@ def chat_popup_view(request: Request, kind: str = "", id: str = "") -> Response:
 
     if kind == "agent":
         target_id = _slug_agent(target_id)
-        title = f"{target_id.title()} · NVISO Cruises"
+        title = f"{target_id.title()} · Maison Miró"
         header = target_id.title()
     else:
         target_id = target_id.lower()
-        title = f"DM · {target_id} · NVISO Cruises"
+        title = f"DM · {target_id} · Maison Miró"
         header = target_id
 
     token = os.getenv(TOKEN_ENV, "")
@@ -6450,7 +6426,7 @@ def rules_view(request: Request) -> Response:
             _render_shell(
                 active="rules",
                 current_user=user,
-                title="NVISO Cruises · Rules",
+                title="Maison Miró · Rules",
                 body_html=denied,
                 scripts=[],
             ),
@@ -6469,7 +6445,7 @@ def rules_view(request: Request) -> Response:
     return HTMLResponse(_render_shell(
         active="rules",
         current_user=user,
-        title="NVISO Cruises · Rules",
+        title="Maison Miró · Rules",
         body_html=body,
         scripts=["/static/rules.js"],
     ))
@@ -6923,7 +6899,7 @@ def kb_view(request: Request) -> Response:
             _render_shell(
                 active="kb",
                 current_user=user,
-                title="NVISO Cruises · Knowledge",
+                title="Maison Miró · Knowledge",
                 body_html=denied,
                 scripts=[],
             ),
@@ -6942,7 +6918,7 @@ def kb_view(request: Request) -> Response:
     return HTMLResponse(_render_shell(
         active="kb",
         current_user=user,
-        title="NVISO Cruises · Knowledge",
+        title="Maison Miró · Knowledge",
         body_html=body,
         scripts=["/static/kb.js"],
     ))
@@ -8021,6 +7997,8 @@ def index(request: Request) -> Response:
     )
     nav_html = _render_nav("live", current_user)
     injection = (
+        f'<link rel="icon" href="/static/maison-favicon.svg">'
+        f'<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">'
         f'{NAV_CSS}'
         f'{nviso_theme}'
         f'{nav_html}'
