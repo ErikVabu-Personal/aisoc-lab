@@ -479,88 +479,137 @@ LOGIN_HTML = """\
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>NVISO Cruises — AISOC Demo · Sign in</title>
+  <title>Maison Miró — Agentic SOC · Sign in</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #ffffff; --fg: #1f2937; --muted: #6b7280;
-      --accent: #0099cc; --accent-bright: #33b0dd;
-      --bg-dark: #f3f4f6; --border: #cbd5e1;
+      --cream:#f7f3ea; --paper:#fffdf8; --ink:#1c1813; --ink-soft:#3a342b;
+      --muted:#857b6c; --line:#e5ddcd; --line-soft:#efe9dc;
+      --blue:#1e50a2; --red:#d1402c; --yellow:#f2b705; --green:#1f7a5a;
+      --serif:"Cormorant Garamond","Times New Roman",Georgia,serif;
+      --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
     }
     * { box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--fg);
+      font-family: var(--sans);
+      background: var(--cream);
+      color: var(--ink);
       margin: 0;
       min-height: 100vh;
       display: grid;
       place-items: center;
+      padding: 24px;
     }
     .card {
-      width: 380px;
+      width: 400px;
       max-width: calc(100vw - 32px);
-      padding: 32px 28px;
-      background: #ffffff;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+      padding: 40px 36px 28px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      box-shadow: 0 12px 44px rgba(28,24,19,0.08);
     }
-    h1 {
-      font-size: 20px;
-      font-weight: 700;
-      margin: 0 0 4px;
-      color: var(--accent);
-      letter-spacing: 0.02em;
+    /* Brand ---------------------------------------------------- */
+    .brand { text-align: center; }
+    .miro { display: flex; align-items: center; justify-content: center; gap: 7px; margin-bottom: 14px; }
+    .miro .dot { width: 9px; height: 9px; border-radius: 50%; }
+    .miro .red { background: var(--red); }
+    .miro .blue { background: var(--blue); }
+    .miro .yellow { background: var(--yellow); }
+    .miro .star { color: var(--ink); font-size: 13px; line-height: 1; margin-left: 1px; }
+    .wordmark {
+      font-family: var(--serif);
+      font-weight: 600;
+      font-size: 40px;
+      line-height: 1;
+      letter-spacing: 0.005em;
+      color: var(--ink);
+      margin: 0;
+    }
+    .ops {
+      margin-top: 9px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.30em;
+      text-transform: uppercase;
+      color: var(--muted);
     }
     .subtitle {
-      margin: 0 0 24px;
-      font-size: 14px;
-      color: var(--muted);
+      margin: 20px 0 22px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line-soft);
+      font-size: 13.5px;
+      color: var(--ink-soft);
+      text-align: center;
     }
     label {
       display: block;
-      font-size: 13px;
+      font-family: var(--sans);
+      font-size: 11px;
       font-weight: 600;
-      margin: 14px 0 6px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-soft);
+      margin: 16px 0 6px;
     }
     input[type="email"], input[type="password"] {
       width: 100%;
-      padding: 9px 10px;
-      border: 1px solid var(--border);
-      border-radius: 4px;
+      padding: 10px 11px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
       font: inherit;
-      color: var(--fg);
-      background: #ffffff;
+      font-family: var(--sans);
+      color: var(--ink);
+      background: var(--paper);
+      transition: border-color .18s, box-shadow .18s;
     }
     input:focus {
       outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(0,153,204,0.18);
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(30,80,162,0.14);
     }
     button {
       width: 100%;
-      margin-top: 20px;
-      padding: 10px;
-      background: var(--accent);
-      color: #ffffff;
+      margin-top: 24px;
+      padding: 12px;
+      background: var(--ink);
+      color: var(--paper);
       border: none;
-      border-radius: 4px;
-      font-weight: 700;
-      font-size: 14px;
+      border-radius: 3px;
+      font-family: var(--sans);
+      font-weight: 600;
+      font-size: 13.5px;
+      letter-spacing: 0.02em;
       cursor: pointer;
+      transition: background .18s;
     }
-    button:hover { background: var(--accent-bright); }
+    button:hover { background: #2f2a22; }
     .err {
       margin-top: 14px;
-      padding: 8px 10px;
-      background: rgba(239,68,68,0.1);
-      border: 1px solid rgba(239,68,68,0.4);
-      color: #991b1b;
-      border-radius: 4px;
-      font-size: 13px;
+      padding: 9px 11px;
+      background: rgba(209,64,44,0.08);
+      border: 1px solid rgba(209,64,44,0.35);
+      color: #a3301f;
+      border-radius: 3px;
+      font-size: 12.5px;
     }
+    .partner {
+      margin-top: 22px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line-soft);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+    }
+    .partner img { height: 17px; opacity: 0.88; }
     .footer {
-      margin-top: 18px;
+      margin-top: 14px;
       font-size: 11px;
       color: var(--muted);
       text-align: center;
@@ -569,23 +618,14 @@ LOGIN_HTML = """\
 </head>
 <body>
   <div class="card">
-    <div style="display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:14px;">
-      <span style="display:inline-flex; flex-direction:column; align-items:flex-start; line-height:1;">
-        <img src="/static/nviso-logo.png" alt="NVISO" style="height:36px; display:block;">
-        <span style="font-size:10px; font-weight:700; letter-spacing:0.40em; color:#0099CC; margin-top:5px; padding-left:2px;">CRUISES</span>
-      </span>
-      <svg viewBox="0 0 90 60" style="width:60px; height:42px;" aria-hidden="true">
-        <polygon points="34,4 46,4 48,18 32,18" fill="#7DD9F2"/>
-        <polygon points="22,18 60,18 56,28 26,28" fill="#33B0DD"/>
-        <polygon points="14,28 70,28 66,40 18,40" fill="#0099CC"/>
-        <polygon points="6,40 80,40 84,52 2,52" fill="#0F6BAA"/>
-        <polygon points="2,52 84,52 76,64 10,64" fill="#0E5C8C"/>
-        <path d="M-4 70 Q 6 66 16 70 T 36 70 T 56 70 T 76 70 T 90 70" stroke="#33B0DD" stroke-width="2.4" fill="none" stroke-linecap="round"/>
-      </svg>
+    <div class="brand">
+      <div class="miro" aria-hidden="true">
+        <span class="dot red"></span><span class="dot blue"></span><span class="dot yellow"></span><span class="star">&#10022;</span>
+      </div>
+      <h1 class="wordmark">Maison&nbsp;Mir&oacute;</h1>
+      <div class="ops">Security Operations</div>
     </div>
-    <p class="subtitle" style="text-align:center; margin-top:0;">
-      Agentic SOC Demo — sign in to continue
-    </p>
+    <p class="subtitle">Agentic SOC Demo &mdash; sign in to continue</p>
     <form method="post" action="/login">
       <label for="username">Email</label>
       <input id="username" name="username" type="email"
@@ -596,7 +636,8 @@ LOGIN_HTML = """\
       __ERROR__
       <button type="submit">Sign in</button>
     </form>
-    <div class="footer">Demo environment — sessions expire after 12 hours.</div>
+    <div class="partner">Defended by <img src="/static/nviso-logo.png" alt="NVISO"></div>
+    <div class="footer">Demo environment &mdash; sessions expire after 12 hours.</div>
   </div>
 </body>
 </html>
