@@ -2,6 +2,11 @@ output "resource_group" {
   value = azurerm_resource_group.rg.name
 }
 
+output "selected_location" {
+  value       = azurerm_resource_group.rg.location
+  description = "Region used for Phase 1 (the resource group's location). Consumed by Phase 2 + Phase 3 via remote state as their location fallback. Named 'selected_location' for back-compat with those consumers — there is no auto-selection anymore, so it is simply the RG location."
+}
+
 output "log_analytics_workspace_id" {
   value = azurerm_log_analytics_workspace.law.id
 }

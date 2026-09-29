@@ -1,0 +1,1 @@
+triage,investigator,reporter,detection-engineer,soc-manager,threat-intel
