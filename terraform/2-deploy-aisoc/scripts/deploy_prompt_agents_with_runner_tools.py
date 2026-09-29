@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from typing import Any, Dict, List
 
 
@@ -32,7 +33,7 @@ def _ensure_search_role_for_project_mi(
     foundry_project: str,
     search_service_name: str,
     role_definition: str = "Search Service Contributor",
-) -> None:
+) -> str:
     """Idempotently grant the Foundry project's system-assigned MI a
     role on the Azure AI Search service.
 
@@ -158,12 +159,12 @@ def _ensure_search_role_for_project_mi(
         timeout=30,
     )
     if r.status_code in (200, 201):
-        return
+        return principal_id
     # ARM returns 409 with code "RoleAssignmentExists" when the same
     # principal already has the role at the same scope under a
     # different assignment id. Treat that as success.
     if r.status_code == 409 and "RoleAssignmentExists" in r.text:
-        return
+        return principal_id
     raise RuntimeError(
         f"role assignment PUT returned {r.status_code}: {r.text[:1000]}"
     )
@@ -613,46 +614,84 @@ def main() -> int:
             f"/mcp?api-version={KB_MCP_API_VERSION}"
         )
 
-        # Grant the Foundry project's MI 'Search Index Data Reader' on
+        # Grant the Foundry project's MI 'Search Service Contributor' on
         # the Search service BEFORE we wire up the connection. The
-        # connection uses ProjectManagedIdentity auth, so the very
-        # first thing Foundry does after PUT-ing the connection is
-        # call the MCP endpoint to enumerate tools — and that call
-        # auths as the project MI. Without this role the call returns
-        # HTTP 403 "Access denied … while enumerating tools" (Erik's
-        # 2026-05-01 incident). Terraform grants the role to the hub/
-        # account MI, but the project MI is a different principal,
-        # created post-apply by deploy_foundry_project.py.
+        # connection uses ProjectManagedIdentity auth, so Foundry calls
+        # the KB MCP endpoint to enumerate tools as the project MI on
+        # every agent run. Without this role every agent returns HTTP 403
+        # "Access denied … while enumerating tools" (Erik's 2026-05-01
+        # incident). Terraform grants the role to the hub/account MI, but
+        # the project MI is a different principal, created post-apply by
+        # deploy_foundry_project.py.
+        #
+        # Self-healing: on a fresh deploy the project MI is created
+        # seconds earlier and often isn't resolvable in Entra yet (the
+        # grant helper raises "no principalId"), and the role-assignment
+        # PUT can transiently fail. A one-shot grant then silently
+        # WARN-fails and every agent 403s until an operator grants it by
+        # hand — so we retry with backoff for a couple of minutes, then
+        # give the Search data-plane a moment to propagate before the
+        # connection PUT triggers the first enumeration.
         from urllib.parse import urlparse as _urlparse
         _search_host = _urlparse(drk_search_ep).hostname or ""
         _search_svc = _search_host.split(".", 1)[0]
         if _search_svc:
-            try:
-                _ensure_search_role_for_project_mi(
-                    sub_id=sub_id,
-                    rg=rg,
-                    foundry_hub=hub,
-                    foundry_project=project,
-                    search_service_name=_search_svc,
+            _granted_pmi = None
+            _delays = [0, 10, 15, 20, 30, 30, 45]  # ~2.5 min of retries
+            for _attempt, _delay in enumerate(_delays, start=1):
+                if _delay:
+                    time.sleep(_delay)
+                try:
+                    _granted_pmi = _ensure_search_role_for_project_mi(
+                        sub_id=sub_id,
+                        rg=rg,
+                        foundry_hub=hub,
+                        foundry_project=project,
+                        search_service_name=_search_svc,
+                    )
+                    print(
+                        f"INFO: project MI granted 'Search Service "
+                        f"Contributor' on {_search_svc!r} "
+                        f"(attempt {_attempt}/{len(_delays)}, idempotent)"
+                    )
+                    break
+                except Exception as e:
+                    if _attempt < len(_delays):
+                        print(
+                            f"INFO: project-MI Search grant not ready yet "
+                            f"(attempt {_attempt}/{len(_delays)}): {e!r} — "
+                            f"retrying…",
+                            file=sys.stderr,
+                        )
+                    else:
+                        # Give up after the backoff budget — WARN, don't
+                        # hard-fail; the connection PUT below still
+                        # succeeds and the operator can re-run this
+                        # (idempotent) script, or grant 'Search Service
+                        # Contributor' to the project MI by hand.
+                        print(
+                            f"WARN: could not grant project MI role on "
+                            f"Search service {_search_svc!r} after "
+                            f"{len(_delays)} attempts: {e!r}. Agents will "
+                            f"see HTTP 403 enumerating the KB MCP tools "
+                            f"until the role is granted.",
+                            file=sys.stderr,
+                        )
+            # Management-plane assignment is instant; Azure AI Search's
+            # data-plane RBAC lags ~30-90s. Wait a beat so the connection
+            # PUT / first agent run doesn't 403 on a role that exists but
+            # hasn't propagated yet. Not a hard guarantee — tune or skip
+            # via AISOC_SEARCH_RBAC_PROPAGATION_WAIT (seconds; 0 disables).
+            if _granted_pmi:
+                _prop = int(
+                    os.environ.get("AISOC_SEARCH_RBAC_PROPAGATION_WAIT", "45")
                 )
-                print(
-                    f"INFO: project MI granted 'Search Index Data Reader' "
-                    f"on {_search_svc!r} (idempotent)"
-                )
-            except Exception as e:
-                # Surface as a warning, not a hard failure — the
-                # connection PUT below will still succeed; the operator
-                # will see the 403 at runtime and can re-run this
-                # script (it's idempotent) once any RBAC propagation
-                # delay clears.
-                print(
-                    f"WARN: could not grant project MI role on Search "
-                    f"service {_search_svc!r}: {e!r}. The Detection "
-                    f"Engineer agent will see HTTP 403 when enumerating "
-                    f"the KB MCP tools. Re-run this script to retry, "
-                    f"or grant 'Search Index Data Reader' manually.",
-                    file=sys.stderr,
-                )
+                if _prop > 0:
+                    print(
+                        f"INFO: waiting {_prop}s for Search RBAC to "
+                        f"propagate to the data plane…"
+                    )
+                    time.sleep(_prop)
 
         try:
             _ensure_project_connection_remote_tool(
