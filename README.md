@@ -103,8 +103,12 @@ gh auth login
 # 3. Deploy
 ./aisoc_demo.sh deploy --resource-group=aisoc-demo --azure-location=westus
 
-# … 15-20 minutes later, the script prints the operator UI URL
-# and the Maison Miró store URL.
+# …or let it pick a region with capacity for you (Sentinel + web + Function
+# Apps + GOAD/RedAmon land in one region; Foundry stays model-gated):
+#   ./aisoc_demo.sh deploy --auto-region
+
+# … 15-20 minutes later, the script prints the operator UI URL, the Maison
+# Miró store URL, and the region(s) it deployed into.
 
 # 4. When you're done
 ./aisoc_demo.sh destroy

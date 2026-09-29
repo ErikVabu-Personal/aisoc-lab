@@ -121,6 +121,16 @@ Other:
                               (use if you've already bootstrapped or are
                               re-running from a fresh shell). Only meaningful
                               for the `deploy` command.
+  --auto-region               Auto-pick ONE Azure region with capacity and deploy the
+                              movable infra there (Sentinel + web apps + Function Apps +
+                              GOAD/RedAmon), so you don't choose a region. Prefers West
+                              Central US (the validated App Service region) when it has VM
+                              capacity, else surveys for one that does (scripts/
+                              azure_find_region.py). Foundry stays in its model-gated region
+                              (Sweden Central / East US 2). If the resource group already
+                              exists its region is kept (no move). Any region you set
+                              explicitly still wins. The chosen region is printed in the
+                              final summary. (Or AISOC_AUTO_REGION=1 in aisoc.config.)
   --onboard-goad              Also run Phase 4: onboard an EXISTING GOAD Active
                               Directory lab (already deployed with `goad.sh -p azure`)
                               into Sentinel — AMA + a GOAD-region DCR + Sysmon on its
@@ -191,6 +201,8 @@ SKIP_OIDC=0
 ONBOARD_GOAD=0
 DEPLOY_GOAD=0
 DEPLOY_REDAMON=0
+AUTO_REGION=0
+AUTO_REGION_CHOSEN=""
 GOAD_CLONE=""
 ACTION=""
 
@@ -244,6 +256,7 @@ unset _name
 [[ "${AISOC_ONBOARD_GOAD:-0}" == "1" ]] && ONBOARD_GOAD=1
 [[ "${AISOC_DEPLOY_GOAD:-0}" == "1" ]] && { DEPLOY_GOAD=1; ONBOARD_GOAD=1; }
 [[ "${AISOC_DEPLOY_REDAMON:-0}" == "1" ]] && DEPLOY_REDAMON=1
+[[ "${AISOC_AUTO_REGION:-0}" == "1" ]] && AUTO_REGION=1
 [[ -n "${AISOC_GOAD_CLONE:-}" ]] && GOAD_CLONE="$AISOC_GOAD_CLONE"
 [[ -n "${AISOC_GITHUB_REPO:-}" ]] && REPO="$AISOC_GITHUB_REPO"
 [[ -n "${AZURE_SUBSCRIPTION_OVERRIDE:-}" ]] && SUBSCRIPTION_OVERRIDE="$AZURE_SUBSCRIPTION_OVERRIDE"
@@ -278,6 +291,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)              usage; exit 0 ;;
     --skip-oidc-bootstrap)  SKIP_OIDC=1; shift ;;
+    --auto-region)          AUTO_REGION=1; shift ;;
+    --no-auto-region)       AUTO_REGION=0; shift ;;
     --onboard-goad)         ONBOARD_GOAD=1; shift ;;
     --deploy-goad)          DEPLOY_GOAD=1; ONBOARD_GOAD=1; shift ;;
     --goad-clone=*)         GOAD_CLONE="${1#*=}"; shift ;;
@@ -593,6 +608,37 @@ trigger_and_wait_workflow() {
   ok "$workflow completed"
 }
 
+# ── 0c) Auto-region (optional) — one capacity region for the movable infra ──
+# Gated behind --auto-region / AISOC_AUTO_REGION=1. On a FRESH deploy, pick a region
+# with VM capacity (preferring West Central US, which is also the validated App
+# Service region) and pin Sentinel + web apps + Function Apps + GOAD/RedAmon to it —
+# the operator chooses nothing. Foundry stays in its model-gated region (Sweden
+# Central / East US 2); Azure requires that. If the resource group already exists we
+# keep the existing phase regions (never move deployed resources). Any region set
+# explicitly (--azure-location / --location-override / --goad-location) still wins.
+if [[ "$AUTO_REGION" == "1" ]]; then
+  _arg_rg="${TF_VAR_resource_group_name:-aisoc-demo}"
+  if _ex_region="$(az group show -n "$_arg_rg" --query location -o tsv 2>/dev/null)" && [[ -n "$_ex_region" ]]; then
+    say "Auto-region: ${_arg_rg} already exists in ${_ex_region} — keeping existing phase regions (no move)."
+    AUTO_REGION_CHOSEN="${_ex_region} (existing RG)"
+  elif [[ -z "${TF_VAR_azure_location:-}" ]]; then
+    say "Auto-region: detecting a capacity region (preferring West Central US for App Service)…"
+    _pick="$(python3 scripts/azure_find_region.py --prefer westcentralus 2>/dev/null | tail -n1 || true)"
+    if [[ "$_pick" =~ ^[a-z][a-z0-9]+$ ]]; then
+      [[ -z "${TF_VAR_azure_location:-}" ]]    && export TF_VAR_azure_location="$_pick"
+      [[ -z "${TF_VAR_location_override:-}" ]] && export TF_VAR_location_override="$_pick"
+      [[ -z "${TF_VAR_goad_location:-}" ]]     && export TF_VAR_goad_location="$_pick"
+      AUTO_REGION_CHOSEN="$_pick"
+      ok "Auto-region: ${_pick} for Sentinel + web + Function Apps + GOAD/RedAmon (Foundry stays ${TF_VAR_foundry_location:-eastus2})"
+    else
+      warn "Auto-region: detection returned no region — using per-phase defaults."
+    fi
+  else
+    say "Auto-region: azure_location set explicitly (${TF_VAR_azure_location}) — respecting it."
+    AUTO_REGION_CHOSEN="${TF_VAR_azure_location} (explicit)"
+  fi
+fi
+
 # ── 1) Phase 1 — Sentinel + RG + Maison Miró + analytic rules ────────
 say "Phase 1: Sentinel + Maison Miró"
 apply_phase terraform/1-deploy-sentinel
@@ -801,6 +847,25 @@ printf '\n  %sMaison Miró (store — web victim)%s\n' "$BOLD" "$NC"
 printf '    %s%s%s%s\n'              "$BOLD" "$CYAN" "$STORE_URL" "$NC"
 printf '\n  %sPixelAgents UI%s\n'      "$BOLD" "$NC"
 printf '    %s%s%s%s\n'              "$BOLD" "$CYAN" "$PIXEL_URL"  "$NC"
+
+# ── Regions this deploy used (so you always know where it landed). ─────
+_r_sentinel="$(cd terraform/1-deploy-sentinel && terraform output -raw selected_location 2>/dev/null || echo "${TF_VAR_azure_location:-westus}")"
+_r_funcs="${TF_VAR_location_override:-westcentralus}"
+_r_foundry="${TF_VAR_foundry_location:-eastus2}"
+printf '\n%s%s%s\n'   "$BLUE" "$HR" "$NC"
+printf '  %sRegions%s\n' "$BOLD" "$NC"
+printf '%s%s%s\n'     "$BLUE" "$HR" "$NC"
+printf '  Sentinel + web apps:             %s\n' "$_r_sentinel"
+if [[ -n "$_r_funcs" && "$_r_funcs" != "$_r_sentinel" ]]; then
+  printf '  Function Apps:                   %s\n' "$_r_funcs"
+else
+  printf '  Function Apps:                   %s (same)\n' "$_r_sentinel"
+fi
+printf '  Foundry (model, region-locked):  %s\n' "$_r_foundry"
+if [[ "$ONBOARD_GOAD" == "1" ]]; then
+  printf '  GOAD + RedAmon:                  %s\n' "${TF_VAR_goad_location:-$_r_sentinel}"
+fi
+[[ -n "$AUTO_REGION_CHOSEN" ]] && printf '  %sauto-region: %s%s\n' "$GREEN" "$AUTO_REGION_CHOSEN" "$NC"
 
 # ── GOAD onboarding (when --onboard-goad was used). ────────────────────
 if [[ "$ONBOARD_GOAD" == "1" ]]; then

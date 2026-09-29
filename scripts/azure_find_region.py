@@ -66,6 +66,10 @@ def main() -> int:
     ap.add_argument("--redamon-sizes", nargs="*", default=RED_SIZES)
     ap.add_argument("--default-region", default="eastus2",
                     help="Printed on stdout if nothing has capacity (deploy still validates it).")
+    ap.add_argument("--prefer", nargs="*", default=[],
+                    help="Regions to choose first if they have capacity (e.g. westcentralus, "
+                         "which is also the validated App Service region) — picked over a region "
+                         "with more size options.")
     args = ap.parse_args()
 
     if not az.current_subscription():
@@ -97,10 +101,19 @@ def main() -> int:
         print(args.default_region)
         return 0
 
-    # Rank: most candidate sizes available first; ties broken by --regions order (preference).
-    order = {r: i for i, r in enumerate(args.regions)}
-    rows.sort(key=lambda r: (-(len(r[1]) + len(r[2])), order.get(r[0], 999)))
-    best, dc_ok, red_ok = rows[0]
+    # A --prefer region that has capacity wins outright (e.g. westcentralus is the
+    # validated App Service region, so we consolidate there even if another region
+    # exposes more VM sizes). Otherwise rank: most candidate sizes first, ties broken
+    # by --regions order.
+    by_region = {r[0]: r for r in rows}
+    best = next((p for p in args.prefer if p in by_region), None)
+    if best is None:
+        order = {r: i for i, r in enumerate(args.regions)}
+        rows.sort(key=lambda r: (-(len(r[1]) + len(r[2])), order.get(r[0], 999)))
+        best = rows[0][0]
+    else:
+        az.log(f"preferred region {best} has capacity — choosing it")
+    _, dc_ok, red_ok = by_region[best]
 
     az.log("")
     az.log(f"→ recommended region: {best}")

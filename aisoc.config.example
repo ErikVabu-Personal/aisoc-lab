@@ -22,7 +22,14 @@
 # 2 + 3 will deploy into.
 # TF_VAR_resource_group_name="rg-aisoc-demo"
 
-# Region for Phase 1 (Sentinel workspace).
+# Auto-pick ONE capacity region for the movable infra (Sentinel + web apps +
+# Function Apps + GOAD/RedAmon) so you don't choose regions per phase. Prefers
+# westcentralus (validated for App Service) when it has VM capacity, else surveys
+# for a region that does. Foundry stays model-gated (below). Explicit regions and an
+# already-deployed RG's region always win. Set-and-forget for a fresh subscription:
+# AISOC_AUTO_REGION=1
+
+# Region for Phase 1 (Sentinel workspace). Ignored when AISOC_AUTO_REGION picks one.
 # TF_VAR_azure_location="westus"
 
 # Region for Phase 2 (Function Apps). EP-series quota is most readily
@@ -30,7 +37,7 @@
 # TF_VAR_location_override="westcentralus"
 
 # Region for Foundry. Model Router + gpt-4.1-mini are gated to
-# eastus2 / swedencentral.
+# eastus2 / swedencentral (NOT moved by AISOC_AUTO_REGION).
 # TF_VAR_foundry_location="eastus2"
 
 # Override the active Azure subscription before any deploy step runs
