@@ -273,7 +273,7 @@ output "foundry_location" {
 
 output "foundry_model_choice" {
   value       = var.foundry_model_choice
-  description = "Desired model family/choice string (e.g. gpt-4.1-mini)."
+  description = "Desired model family/choice string (e.g. claude-opus-5-5, gpt-4.1-mini)."
 }
 
 output "foundry_model_deployment_name" {

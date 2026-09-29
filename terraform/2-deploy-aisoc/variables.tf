@@ -37,19 +37,19 @@ variable "foundry_model_price_eur_per_1m_in" {
     EUR cost per 1 million INPUT tokens for the currently-deployed
     Foundry model. Used by the orchestrator + PixelAgents Web to
     compute per-incident cost. Re-apply when pricing or model changes.
-    Default tracks gpt-4.1-mini list pricing (~USD 0.40 → ~EUR 0.37).
+    Default tracks Claude Opus 5.5 list pricing (~USD 4.00 → ~EUR 3.68).
   EOT
   type        = number
-  default     = 0.37
+  default     = 3.68
 }
 
 variable "foundry_model_price_eur_per_1m_out" {
   description = <<-EOT
-    EUR cost per 1 million OUTPUT tokens. Default tracks gpt-4.1-mini
-    list pricing (~USD 1.60 → ~EUR 1.48).
+    EUR cost per 1 million OUTPUT tokens. Default tracks Claude Opus 5.5
+    list pricing (~USD 20.00 → ~EUR 18.40).
   EOT
   type        = number
-  default     = 1.48
+  default     = 18.40
 }
 
 variable "foundry_project_name" {
@@ -64,32 +64,44 @@ variable "foundry_location" {
   default     = "eastus2"
 }
 
-variable "foundry_model_choice" {
-  description = "Human-friendly model choice string (e.g. 'gpt-4.1-mini'). Source of truth for what we want, even if deployment is scripted."
+variable "foundry_model_format" {
+  description = <<-EOT
+    Publisher/format of the PRIMARY model deployment: "OpenAI" for GPT models,
+    "Anthropic" for Claude. Both deploy through the same
+    Microsoft.CognitiveServices/accounts/deployments resource and back the Foundry
+    agents. Defaults to "Anthropic" (Claude Opus 5.5). Set to "OpenAI" alongside a
+    gpt-* foundry_model_choice/version to switch back to a GPT model.
+  EOT
   type        = string
-  default     = "gpt-4.1-mini"
+  default     = "Anthropic"
+}
+
+variable "foundry_model_choice" {
+  description = "Primary model the agents run on (e.g. 'claude-opus-5-5', 'gpt-4.1-mini'). Must match foundry_model_format's publisher."
+  type        = string
+  default     = "claude-opus-5-5"
 }
 
 variable "foundry_model_deployment_name" {
-  description = "Model deployment name in Foundry that agents should use (often distinct from model family)."
+  description = "Model deployment name in Foundry that agents bind to (exported as AZURE_AI_MODEL_DEPLOYMENT)."
   type        = string
-  default     = "gpt-4.1-mini"
+  default     = "claude-opus-5-5"
 }
 
 variable "foundry_model_version" {
-  description = "Model version string for the Foundry deployment."
+  description = "Model version string for the Foundry deployment. Anthropic uses short revisions ('1'/'2'); Azure OpenAI uses dated versions ('2025-04-14'). claude-opus-5-5's latest is '2'."
   type        = string
-  default     = "2025-04-14"
+  default     = "2"
 }
 
 variable "foundry_model_sku_name" {
-  description = "SKU name for the deployment. GlobalStandard is required when the chosen region/model combo doesn't offer plain 'Standard' (which is most of the time for gpt-4.1-mini)."
+  description = "SKU name for the deployment. GlobalStandard works for both gpt-* and Claude in East US 2 (plain 'Standard' usually isn't offered there)."
   type        = string
   default     = "GlobalStandard"
 }
 
 variable "foundry_model_sku_capacity" {
-  description = "SKU capacity for the deployment. For Azure OpenAI's GlobalStandard SKU this is **thousands of tokens-per-minute** — i.e. 1500 = 1,500,000 TPM. Defaults to 1500: any lower and the orchestrator's three-agent pipeline trips Foundry's rate limit (429 'rate_limit_exceeded') on tool-heavy incidents, especially when the investigator and reporter follow triage in quick succession."
+  description = "SKU capacity for the deployment, in **thousands of tokens-per-minute** on GlobalStandard for both OpenAI and Anthropic (identical capacity model in East US 2) — i.e. 1500 = 1,500,000 TPM. Defaults to 1500: any lower and the orchestrator's three-agent pipeline trips Foundry's rate limit (429 'rate_limit_exceeded') on tool-heavy incidents, especially when the investigator and reporter follow triage in quick succession."
   type        = number
   default     = 1500
 }
@@ -161,10 +173,12 @@ variable "foundry_additional_model_deployments" {
       - description: optional 1-line hint for the dropdown ("faster",
         "more capable", etc).
 
-    Defaults to a small recommended set (gpt-4.1, gpt-4.1-nano) so a
-    fresh deploy already has options beyond gpt-4.1-mini. Override in
-    tfvars when you want different models or want to lock the demo
-    down to one option.
+    Defaults to a small recommended set (gpt-4.1, gpt-4.1-nano — GPT
+    alternatives to the Claude primary) so a fresh deploy already has
+    other options on the dropdown. Override in tfvars when you want
+    different models or want to lock the demo down to one option.
+    NB: these extras are deployed with format "OpenAI"; to add a Claude
+    alternative you'd extend the resource to carry a per-entry format.
   EOT
   type = list(object({
     deployment_name = string

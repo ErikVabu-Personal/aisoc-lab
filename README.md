@@ -160,7 +160,8 @@ Common Terraform variables:
 Common Terraform variables (Phase 2):
   --location-override=...     Region for Function Apps (default: westcentralus)
   --foundry-location=...      Region for Foundry hub/project (default: eastus2)
-  --foundry-model-choice=...  Model name (default: gpt-4.1-mini)
+  --foundry-model-choice=...  Model name (default: claude-opus-5-5;
+                              set --foundry-model-format=OpenAI for gpt-*)
   --runner-image=...          Override runner image tag (default: :latest)
 
 Other:
@@ -555,8 +556,8 @@ The example documents every supported knob. Highlights:
   roster.
 - **`TF_VAR_foundry_additional_model_deployments`** — JSON list
   of extra model deployments to surface on `/config`'s per-agent
-  dropdown. Defaults to `gpt-4.1` and `gpt-4.1-nano` alongside the
-  primary `gpt-4.1-mini`.
+  dropdown. Defaults to `gpt-4.1` and `gpt-4.1-nano` (GPT alternatives)
+  alongside the primary `claude-opus-5-5`.
 - **`TF_VAR_detection_rules_kb_enabled`** — flips the Foundry IQ
   rule-library subsystem on or off. Default: `true`.
 - **`TF_VAR_bing_grounding_enabled`** — when `true` (default),

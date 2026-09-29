@@ -26,7 +26,11 @@ resource "azapi_resource" "foundry_model_deployment" {
 
     properties = {
       model = {
-        format  = "OpenAI"
+        # Publisher/format of the primary model. "OpenAI" for GPT models,
+        # "Anthropic" for Claude (both deploy through the same
+        # Microsoft.CognitiveServices/accounts/deployments resource and are
+        # usable by the Foundry Agent Service).
+        format  = var.foundry_model_format
         name    = var.foundry_model_choice
         version = var.foundry_model_version
       }

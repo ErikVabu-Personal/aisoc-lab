@@ -34,21 +34,24 @@ foundry_location = "eastus2"
 # runner_image = "ghcr.io/erikvabu-personal/aisoc-runner:<sha>"
 runner_image = "ghcr.io/erikvabu-personal/aisoc-runner:latest"
 
-# REQUIRED: model choice + version + deployment name that agents should target
+# Model the agents run on. The variables.tf defaults are Claude Opus 5.5 on
+# Foundry; set these only to override. Match foundry_model_format to the publisher.
 #
-# Recommended default: gpt-4.1-mini (agent-runtime compatible)
-#
-# Example:
+# Claude (default):
+foundry_model_format          = "Anthropic"
+foundry_model_choice          = "claude-opus-5-5"
+foundry_model_version         = "2"
+foundry_model_deployment_name = "claude-opus-5-5"
+# ...or a GPT model instead:
+# foundry_model_format          = "OpenAI"
 # foundry_model_choice          = "gpt-4.1-mini"
 # foundry_model_version         = "2025-04-14"
 # foundry_model_deployment_name = "gpt-4.1-mini"
-foundry_model_choice          = "gpt-4.1-mini"
-foundry_model_version         = "2025-04-14"
-foundry_model_deployment_name = "gpt-4.1-mini"
 
-# If you hit: "SKU 'Standard' ... not supported", try:
+# GlobalStandard works for both OpenAI and Anthropic; capacity is thousands-of-TPM
+# (1500 = 1.5M TPM). Below ~1500 the 3-agent pipeline trips Foundry's 429 rate limit.
 foundry_model_sku_name     = "GlobalStandard"
-foundry_model_sku_capacity = 10
+foundry_model_sku_capacity = 1500
 
 # Additional Foundry model deployments. Each entry creates one extra
 # deployment in the Foundry account; the /config UI lets the SOC

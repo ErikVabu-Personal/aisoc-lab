@@ -36,8 +36,8 @@
 # available in westcentralus on freshly-onboarded subscriptions.
 # TF_VAR_location_override="westcentralus"
 
-# Region for Foundry. Model Router + gpt-4.1-mini are gated to
-# eastus2 / swedencentral (NOT moved by AISOC_AUTO_REGION).
+# Region for Foundry. Claude + GPT models are gated to eastus2 / swedencentral
+# (NOT moved by AISOC_AUTO_REGION).
 # TF_VAR_foundry_location="eastus2"
 
 # Override the active Azure subscription before any deploy step runs
@@ -45,7 +45,15 @@
 # AZURE_SUBSCRIPTION_OVERRIDE="6e961575-c100-444e-a868-1972223b2410"
 
 # ── Foundry model deployment ────────────────────────────────────────
-# Model identity. Defaults match the validated demo combo.
+# The agents run on Claude Opus 5.5 by default (deployed on Foundry as an
+# Anthropic-format model). Uncomment to override — set the format to match the
+# model's publisher ("Anthropic" for claude-*, "OpenAI" for gpt-*).
+# TF_VAR_foundry_model_format="Anthropic"
+# TF_VAR_foundry_model_choice="claude-opus-5-5"
+# TF_VAR_foundry_model_version="2"
+# TF_VAR_foundry_model_deployment_name="claude-opus-5-5"
+# ...or switch back to a GPT model:
+# TF_VAR_foundry_model_format="OpenAI"
 # TF_VAR_foundry_model_choice="gpt-4.1-mini"
 # TF_VAR_foundry_model_version="2025-04-14"
 # TF_VAR_foundry_model_deployment_name="gpt-4.1-mini"
