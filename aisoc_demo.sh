@@ -759,6 +759,27 @@ if [[ "$DEPLOY_GOAD" == "1" ]]; then
   [[ -d "$_goad_clone" ]] || die "GOAD checkout not found at ${_goad_clone} — clone https://github.com/Orange-Cyberdefense/GOAD (or pass --goad-clone=/path / AISOC_GOAD_CLONE)."
   [[ -x "$_goad_clone/goad.sh" ]] || die "${_goad_clone}/goad.sh missing or not executable — is that a GOAD checkout?"
 
+  # GOAD generates an SSH private key (jumpbox) and chmods it 600; ssh REFUSES a
+  # key that isn't 0600. On WSL's /mnt/c (DrvFs) chmod is a no-op WITHOUT the mount's
+  # `metadata` option, so the key stays world-readable and ansible-over-the-jumpbox
+  # dies "Permission denied (publickey)" — after the VMs are already up. Fail fast
+  # (before the ~30-min VM deploy) with the fix.
+  case "$_goad_clone" in
+    /mnt/*)
+      _pt="$_goad_clone/.goad_perm_test"
+      ( : > "$_pt" ) 2>/dev/null && chmod 600 "$_pt" 2>/dev/null
+      _pm="$(stat -c '%a' "$_pt" 2>/dev/null || true)"; rm -f "$_pt" 2>/dev/null || true
+      if [[ -n "$_pm" && "$_pm" != "600" ]]; then
+        die "GOAD is on a Windows mount (${_goad_clone}) where chmod doesn't stick (test file came back ${_pm}, not 600).
+     ssh will reject GOAD's jumpbox key (it'll be 0777) and the ansible provisioning will fail.
+     Fix — enable WSL 'metadata' so chmod works on /mnt/c, then re-run:
+       printf '[automount]\\noptions = \"metadata\"\\n' | sudo tee -a /etc/wsl.conf
+       (from a Windows PowerShell/cmd) wsl --shutdown      # then reopen WSL
+     Or point --goad-clone / AISOC_GOAD_CLONE at a Linux-filesystem path (e.g. ~/GOAD)."
+      fi
+      ;;
+  esac
+
   # 1. Prep GOAD's Azure provider (region, Standard public IP, capacity sizes).
   if command -v python3 >/dev/null 2>&1; then
     python3 scripts/goad_azure_prep.py --region "$_goad_region" --goad-clone "$_goad_clone" \
