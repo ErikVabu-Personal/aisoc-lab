@@ -78,7 +78,22 @@ jobs:
         run: |
           set -euo pipefail
           cd terraform/2-deploy-aisoc/orchestrator/function_app
-          az functionapp deployment source config-zip \
-            --resource-group "$RG" \
-            --name "$FUNCTION_APP_NAME" \
-            --src function_app.zip
+          # Azure's zip-deploy status endpoint intermittently returns a 503
+          # ("Our services aren't available right now", ARM Ref A/B/C) even after
+          # the deploy was accepted (202). Retry the whole config-zip a few times
+          # so a transient SCM/ARM blip doesn't fail the run; re-deploy is
+          # idempotent (Kudu just redeploys the same zip).
+          attempt=1; max=4
+          until az functionapp deployment source config-zip \
+                  --resource-group "$RG" \
+                  --name "$FUNCTION_APP_NAME" \
+                  --src function_app.zip; do
+            rc=$?
+            if [[ $attempt -ge $max ]]; then
+              echo "::error::config-zip failed after $max attempts (last rc=$rc)"
+              exit $rc
+            fi
+            echo "::warning::config-zip attempt $attempt/$max failed (rc=$rc) — retrying in $((attempt*30))s"
+            sleep $((attempt*30))
+            attempt=$((attempt+1))
+          done
