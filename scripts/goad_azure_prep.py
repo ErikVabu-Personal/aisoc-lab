@@ -93,6 +93,25 @@ def patch_public_ip_sku(clone: str) -> None:
             az.log(f"public IP -> Standard SKU: {f}")
 
 
+def patch_wsl_terraform(clone: str) -> None:
+    """Under WSL, GOAD's CommandFactory selects WslCommand, which hardcodes
+    `terraform.exe` (goad/command/wsl.py) — that's for GOAD's LOCAL-VM WSL use, where
+    it drives the Windows-hosted terraform. For a CLOUD (Azure) deploy terraform runs
+    natively in Linux, so use plain `terraform` (the same binary aisoc_demo.sh uses).
+    Without this: `FileNotFoundError: terraform.exe` at `terraform init`."""
+    f = os.path.join(clone, "goad", "command", "wsl.py")
+    if not os.path.isfile(f):
+        az.log("wsl.py not found — skipping terraform.exe patch")
+        return
+    s = open(f, encoding="utf-8").read()
+    if "'terraform.exe'" not in s:
+        az.log("wsl.py already uses linux terraform")
+        return
+    _backup(f, "wslterraform")
+    open(f, "w", encoding="utf-8").write(s.replace("'terraform.exe'", "'terraform'"))
+    az.log("patched wsl.py: terraform.exe -> terraform (cloud deploy runs Linux terraform)")
+
+
 def set_dc_size(clone: str, size: str) -> None:
     # Windows DCs hardcode `size = "Standard_..."` per host in windows.tf.
     size_re = re.compile(r'(size\s*=\s*)"Standard_[A-Za-z0-9_]+"')
@@ -140,6 +159,7 @@ def main() -> int:
         az.log(f"goad.ini not found at {args.goad_config}; goad.sh creates it on first run — "
                f"re-run this after, or set --goad-config")
     patch_public_ip_sku(args.goad_clone)
+    patch_wsl_terraform(args.goad_clone)
 
     # 3) capacity-aware sizes (needs az)
     sub = args.subscription or az.current_subscription()
