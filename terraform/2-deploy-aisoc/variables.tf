@@ -279,16 +279,18 @@ variable "bing_grounding_enabled" {
   description = <<-EOT
     Provision a `Microsoft.Bing/accounts` resource (kind=Bing.Grounding)
     and auto-create a Foundry project connection so the Threat Intel
-    agent's `bing_grounding` tool works without manual setup.
+    agent gets a live web-SEARCH tool.
 
-    Set to false if your subscription hasn't accepted the Bing Search
-    legal terms (one-time portal click) or if you want to wire the
-    connection by hand. When false, the agent is deployed without
-    bing_grounding; the runner's `fetch_url` tool still works for
-    known URLs.
+    OFF by default: it needs a one-time subscription step (register the
+    Microsoft.Bing RP + accept the Bing Search legal terms in the portal),
+    and Microsoft has been retiring Grounding-with-Bing, so the account can
+    fail to provision / 404 on listKeys. When false (default), the agent is
+    deployed without bing_grounding; the runner's `fetch_url` tool still works
+    for known URLs. Set true only if you've done the portal setup and want
+    open web search.
   EOT
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "bing_grounding_sku" {

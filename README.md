@@ -560,12 +560,15 @@ The example documents every supported knob. Highlights:
   alongside the primary `claude-opus-5-5`.
 - **`TF_VAR_detection_rules_kb_enabled`** — flips the Foundry IQ
   rule-library subsystem on or off. Default: `true`.
-- **`TF_VAR_bing_grounding_enabled`** — when `true` (default),
+- **`TF_VAR_bing_grounding_enabled`** — **off by default.** When `true`,
   Phase 2 provisions a `Microsoft.Bing/accounts` (kind=
   `Bing.Grounding`) and the agent deploy script auto-creates the
-  matching Foundry project connection. The Threat Intel agent
-  picks up the `bing_grounding` tool with no manual portal
-  clicks. Backward-compat: if you've already wired a project
+  matching Foundry project connection, giving the Threat Intel agent a
+  live web-search tool. Off by default because it needs a one-time
+  subscription step (register the `Microsoft.Bing` RP + accept the Bing
+  Search terms in the portal) and Grounding-with-Bing is being retired
+  by Microsoft, so the account can fail to provision / 404. With it off,
+  the agent keeps its `fetch_url` tool for known URLs. Backward-compat: if you've already wired a project
   connection by hand, set `AISOC_BING_GROUNDING_CONNECTION` to
   its name and the auto-provision step is skipped.
 - **`AISOC_ONBOARD_GOAD`** / **`AISOC_DEPLOY_REDAMON`** +
