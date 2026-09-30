@@ -618,7 +618,32 @@ trigger_and_wait_workflow() {
 
   [[ -z "$run_id" ]] && die "no new run appeared for $workflow after 90 s"
   echo "  watching run id: $run_id"
-  gh run watch "$run_id" --repo "$REPO" --exit-status
+
+  # `gh run watch` polls the GitHub API and dies on a transient 5xx (e.g.
+  # "failed to get jobs: HTTP 502"), which would abort an otherwise-healthy
+  # deploy. Retry the watch on such drops, but decide success/failure from the
+  # run's REAL conclusion — so a flaky API call never fails a good run, and a
+  # genuinely failed run still stops us.
+  local watch_tries=0 status conclusion
+  while :; do
+    if gh run watch "$run_id" --repo "$REPO" --exit-status; then
+      break
+    fi
+    status="$(gh run view "$run_id" --repo "$REPO" --json status -q '.status' 2>/dev/null || echo '')"
+    conclusion="$(gh run view "$run_id" --repo "$REPO" --json conclusion -q '.conclusion' 2>/dev/null || echo '')"
+    if [[ "$status" == "completed" ]]; then
+      if [[ "$conclusion" == "success" ]]; then
+        break
+      fi
+      die "$workflow failed (conclusion: ${conclusion:-unknown}) — gh run view $run_id --repo $REPO --log-failed"
+    fi
+    watch_tries=$((watch_tries + 1))
+    if (( watch_tries >= 8 )); then
+      die "lost the GitHub run-watch for $workflow after $watch_tries retries (run still '${status:-unknown}') — check: gh run view $run_id --repo $REPO"
+    fi
+    echo "  run-watch dropped (run is '${status:-unknown}', likely a transient GitHub API error) — retrying in 15s [$watch_tries/8]"
+    sleep 15
+  done
   ok "$workflow completed"
 }
 
