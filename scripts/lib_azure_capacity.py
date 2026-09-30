@@ -58,28 +58,33 @@ def current_subscription() -> Optional[str]:
 # --- Capacity (list-skus) ---------------------------------------------------
 
 def model_tpm_quota(region: str, model: str, sku: str = "GlobalStandard") -> Optional[float]:
-    """Available TPM quota (in thousands) for a Foundry model deployment: limit - current.
+    """TPM quota LIMIT (in thousands) for a Foundry model deployment — the MAX a single
+    deployment of this model can hold.
 
-    Anthropic Opus models default LOW (e.g. 509 in eastus2) vs 1000 for Sonnet/Haiku and
-    higher for GPT, so a hardcoded deployment capacity can exceed the quota and 400 with
-    InsufficientQuota. Matches `az cognitiveservices usage list` entries whose name (minus
-    any '.Azure' suffix) ends with '.<sku>.<model>' — covers both OpenAI.* and AIServices.*
-    prefixes. Returns the MIN available across matches, or None if not found / on failure.
+    We return the LIMIT, not (limit - currentValue): a single deployment IS the consumer of
+    its model's quota, and re-applying replaces its own usage, so on a re-run `currentValue`
+    already reflects the existing deployment (limit - current == 0 there — which would cap a
+    resize to 0 and 400 with InvalidCapacity). Anthropic Opus models default LOW (e.g. 509
+    in eastus2) vs 1000 for Sonnet/Haiku and higher for GPT, so a hardcoded capacity can
+    still exceed the limit and 400 with InsufficientQuota — hence the cap. Matches
+    `az cognitiveservices usage list` entries whose name (minus any '.Azure' suffix) ends
+    with '.<sku>.<model>' (covers OpenAI.* and AIServices.*). Returns the MIN limit across
+    matches, or None if not found / on failure.
     """
     usage = _az(["cognitiveservices", "usage", "list", "-l", region])
     if not isinstance(usage, list):
         return None
     suffix = f".{sku}.{model}"
-    avails = []
+    limits = []
     for u in usage:
         name = ((u.get("name") or {}).get("value")) or ""
         base = name[:-6] if name.endswith(".Azure") else name
         if base.endswith(suffix):
             try:
-                avails.append(float(u.get("limit", 0)) - float(u.get("currentValue", 0)))
+                limits.append(float(u.get("limit", 0)))
             except (TypeError, ValueError):
                 pass
-    return min(avails) if avails else None
+    return min(limits) if limits else None
 
 
 def region_vm_skus(region: str) -> dict:

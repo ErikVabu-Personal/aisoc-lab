@@ -32,20 +32,27 @@ def main() -> int:
     ap.add_argument("--want", type=int, required=True)
     args = ap.parse_args()
 
-    avail = az.model_tpm_quota(args.region, args.model, args.sku)
-    if avail is None:
+    limit = az.model_tpm_quota(args.region, args.model, args.sku)
+    if limit is None:
         az.log(f"quota for {args.model} ({args.sku}) not found in {args.region} — using requested {args.want}")
         print(args.want)
         return 0
 
-    availi = int(avail)
-    if args.want > availi:
-        az.log(f"{args.model}: requested capacity {args.want} > available quota {availi} "
-               f"(thousands TPM) in {args.region} — capping to {availi}. Raise the "
+    limiti = int(limit)
+    if limiti < 1:
+        # Shouldn't happen (a deployable model has a >=1 limit), but never emit a
+        # capacity < 1 (400 InvalidCapacity). Fall back to the requested value.
+        az.log(f"{args.model}: quota limit read as {limiti} (<1) — using requested {args.want}")
+        print(args.want)
+        return 0
+
+    if args.want > limiti:
+        az.log(f"{args.model}: requested capacity {args.want} > quota limit {limiti} "
+               f"(thousands TPM) in {args.region} — capping to {limiti}. Raise the "
                f"'Tokens Per Minute (thousands) - {args.model}' quota in the portal for more.")
-        print(availi)
+        print(limiti)
     else:
-        az.log(f"{args.model}: requested capacity {args.want} fits available quota {availi} (thousands TPM)")
+        az.log(f"{args.model}: requested capacity {args.want} fits quota limit {limiti} (thousands TPM)")
         print(args.want)
     return 0
 
