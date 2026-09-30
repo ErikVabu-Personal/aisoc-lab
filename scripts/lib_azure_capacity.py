@@ -57,6 +57,31 @@ def current_subscription() -> Optional[str]:
 
 # --- Capacity (list-skus) ---------------------------------------------------
 
+def model_tpm_quota(region: str, model: str, sku: str = "GlobalStandard") -> Optional[float]:
+    """Available TPM quota (in thousands) for a Foundry model deployment: limit - current.
+
+    Anthropic Opus models default LOW (e.g. 509 in eastus2) vs 1000 for Sonnet/Haiku and
+    higher for GPT, so a hardcoded deployment capacity can exceed the quota and 400 with
+    InsufficientQuota. Matches `az cognitiveservices usage list` entries whose name (minus
+    any '.Azure' suffix) ends with '.<sku>.<model>' — covers both OpenAI.* and AIServices.*
+    prefixes. Returns the MIN available across matches, or None if not found / on failure.
+    """
+    usage = _az(["cognitiveservices", "usage", "list", "-l", region])
+    if not isinstance(usage, list):
+        return None
+    suffix = f".{sku}.{model}"
+    avails = []
+    for u in usage:
+        name = ((u.get("name") or {}).get("value")) or ""
+        base = name[:-6] if name.endswith(".Azure") else name
+        if base.endswith(suffix):
+            try:
+                avails.append(float(u.get("limit", 0)) - float(u.get("currentValue", 0)))
+            except (TypeError, ValueError):
+                pass
+    return min(avails) if avails else None
+
+
 def region_vm_skus(region: str) -> dict:
     """All VM SKUs in a region in ONE az call: {size: {available, vcpus, family, reason}}.
 

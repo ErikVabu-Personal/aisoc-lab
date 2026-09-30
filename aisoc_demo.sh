@@ -669,6 +669,25 @@ ok "Phase 1 applied (repo vars synced; Maison analytic rules deployed)"
 
 # ── 2) Phase 2 — Foundry, Runner, Orchestrator, SOC Gateway ──────────
 say "Phase 2: Foundry + Runner + Function Apps"
+
+# Cap the primary Foundry model deployment's capacity to the model's AVAILABLE TPM
+# quota. Foundry quotas are per-model: Anthropic Opus defaults LOW (e.g. 509k TPM in
+# eastus2) vs 1000 for Sonnet/Haiku — so the 1500 default (tuned for gpt-4.1-mini)
+# 400s with InsufficientQuota on a Claude Opus deployment. Best-effort: if the quota
+# can't be read (e.g. OpenAI's gpt4.1-mini naming quirk — which has ample quota
+# anyway) the requested value stands.
+if command -v python3 >/dev/null 2>&1; then
+  _fcap="$(python3 scripts/azure_foundry_capacity.py \
+    --region "${TF_VAR_foundry_location:-eastus2}" \
+    --model "${TF_VAR_foundry_model_choice:-claude-opus-5-5}" \
+    --sku "${TF_VAR_foundry_model_sku_name:-GlobalStandard}" \
+    --want "${TF_VAR_foundry_model_sku_capacity:-1500}" | tail -n1 || true)"
+  if [[ "${_fcap:-}" =~ ^[0-9]+$ ]]; then
+    export TF_VAR_foundry_model_sku_capacity="$_fcap"
+    ok "Foundry model capacity: ${_fcap} (thousands TPM) for ${TF_VAR_foundry_model_choice:-claude-opus-5-5}"
+  fi
+fi
+
 apply_phase terraform/2-deploy-aisoc
 ok "Phase 2 applied (Function Apps exist; runner is up; gateway key wired)"
 
