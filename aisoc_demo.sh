@@ -770,7 +770,7 @@ if [[ "$DEPLOY_GOAD" == "1" ]]; then
 
   # 2. Run GOAD's own installer (long-running).
   say "Running goad.sh install (this takes a while — Windows VMs + ansible over the jumpbox)…"
-  if ! ( cd "$_goad_clone" && ./goad.sh -t install -l GOAD -p azure -m remote ); then
+  if ! ( cd "$_goad_clone" && GOAD_ASSUME_YES=1 ./goad.sh -t install -l GOAD -p azure -m remote ); then
     die "goad.sh install failed. Fix the cause (often capacity/quota — check the portal), then
      RESUME the same workspace instead of starting over:
        (cd ${_goad_clone} && ./goad.sh -t install -l GOAD -p azure -m remote -i <hash>-goad-azure)

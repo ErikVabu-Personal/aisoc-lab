@@ -112,6 +112,35 @@ def patch_wsl_terraform(clone: str) -> None:
     az.log("patched wsl.py: terraform.exe -> terraform (cloud deploy runs Linux terraform)")
 
 
+def patch_goad_noninteractive(clone: str) -> None:
+    """GOAD is interactive: goad.py asks 'Create lab? (y/N)' (Utils.confirm accepts only
+    y/Y/Yes) and its terraform apply/destroy run WITHOUT -auto-approve (terraform then
+    prompts for 'yes'). No single piped token satisfies both, so make GOAD non-interactive:
+      - terraform.py: add -auto-approve to apply + destroy.
+      - utils.py: confirm() returns True when GOAD_ASSUME_YES is set (the driver sets it for
+        the automated install; a manual `goad.sh` without it stays interactive/safe)."""
+    tf = os.path.join(clone, "goad", "provider", "terraform", "terraform.py")
+    if os.path.isfile(tf):
+        s = open(tf, encoding="utf-8").read()
+        n = s.replace("run_terraform(['apply'],", "run_terraform(['apply', '-auto-approve'],") \
+             .replace("run_terraform(['destroy'],", "run_terraform(['destroy', '-auto-approve'],")
+        if n != s:
+            _backup(tf, "tfautoapprove")
+            open(tf, "w", encoding="utf-8").write(n)
+            az.log("patched terraform.py: apply/destroy -auto-approve")
+    uf = os.path.join(clone, "goad", "utils.py")
+    if os.path.isfile(uf):
+        s = open(uf, encoding="utf-8").read()
+        marker = '        result = input(f"{message}")'
+        if "GOAD_ASSUME_YES" not in s and marker in s:
+            _backup(uf, "confirm")
+            n = s.replace(marker,
+                          '        if __import__("os").environ.get("GOAD_ASSUME_YES"):\n'
+                          '            return True\n' + marker)
+            open(uf, "w", encoding="utf-8").write(n)
+            az.log("patched utils.py: confirm() honors GOAD_ASSUME_YES")
+
+
 def set_dc_size(clone: str, size: str) -> None:
     # Windows DCs hardcode `size = "Standard_..."` per host in windows.tf.
     size_re = re.compile(r'(size\s*=\s*)"Standard_[A-Za-z0-9_]+"')
@@ -160,6 +189,7 @@ def main() -> int:
                f"re-run this after, or set --goad-config")
     patch_public_ip_sku(args.goad_clone)
     patch_wsl_terraform(args.goad_clone)
+    patch_goad_noninteractive(args.goad_clone)
 
     # 3) capacity-aware sizes (needs az)
     sub = args.subscription or az.current_subscription()
