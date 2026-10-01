@@ -86,10 +86,15 @@ Commands:
             code workflows, Foundry bootstrap, smoke-test print.
             Idempotent; safe to re-run. Add --onboard-goad to also run
             Phase 4 (attach an existing GOAD AD lab to Sentinel).
-  destroy   Tear down all phases (Phase 3 → 2 → 1) via terraform
-            destroy. Leaves the OIDC trust and AZURE_* repo
+  destroy   Tear down all phases (Phase 5 → 4 → 3 → 2 → 1) via
+            terraform destroy, AND remove every GOAD instance (RG +
+            workspace). Leaves the OIDC trust and AZURE_* repo
             variables in place so the next `deploy` is one command.
             5-second countdown before applying.
+  clean-goad  Remove ALL GOAD instances (resource groups + goad.py
+            workspace dirs) without touching the rest of the lab.
+            Reclaims regional vCPU quota from leftover/abandoned
+            GOAD builds. 5-second countdown before applying.
 
 Common Terraform variables:
   --resource-group=...    Resource group to create / use in Azure
@@ -266,9 +271,9 @@ unset _name
 # Allow --help / -h before the subcommand for convenience.
 if [[ $# -ge 1 ]]; then
   case "$1" in
-    deploy|destroy)  ACTION="$1"; shift ;;
+    deploy|destroy|clean-goad)  ACTION="$1"; shift ;;
     -h|--help)       usage; exit 0 ;;
-    *)               die "first argument must be 'deploy' or 'destroy' (got: '$1'). Try --help." ;;
+    *)               die "first argument must be 'deploy', 'destroy' or 'clean-goad' (got: '$1'). Try --help." ;;
   esac
 fi
 [[ -z "$ACTION" ]] && { usage >&2; exit 2; }
@@ -358,6 +363,65 @@ gh auth status -h github.com >/dev/null 2>&1 || die "gh not authenticated. Run: 
 
 ok "prereqs satisfied"
 
+# ── GOAD instance cleanup ────────────────────────────────────────────
+# GOAD (goad.py) tracks instances under <clone>/workspace/<hash>-goad-azure and
+# mirrors each as an Azure RG "GOAD-<hash>-goad-azure". Its `terraform apply` can
+# fail (e.g. a quota/capacity 409) yet goad.py still exits 0, leaving a half- or
+# fully-built lab whose VMs silently consume the regional vCPU quota — the #1
+# cause of a later deploy failing with "exceeding approved Total Regional Cores".
+# So we remove GOAD instances explicitly: on destroy, via the `clean-goad`
+# action, and whenever a build doesn't fully finish.
+_goad_clone_path() { echo "${GOAD_CLONE:-$ROOT/GOAD}"; }
+
+# Delete ONE GOAD instance: its Azure RG (authoritative — removes the VMs that
+# eat quota) and its workspace dir (so goad.py stops listing a phantom).
+goad_destroy_instance() {
+  local clone="$1" rg="$2"
+  [[ -n "$rg" ]] || return 0
+  if az group show -n "$rg" >/dev/null 2>&1; then
+    say "Removing GOAD resource group ${rg} (frees its regional vCPU quota)…"
+    if az group delete -n "$rg" --yes --no-wait >/dev/null 2>&1; then
+      ok "GOAD RG ${rg} deletion started (runs in the background)"
+    else
+      warn "could not start deletion of ${rg} — remove it manually in the portal"
+    fi
+  fi
+  local ws="${clone}/workspace/${rg#GOAD-}"
+  if [[ -d "$ws" ]]; then rm -rf "$ws" && echo "  removed workspace dir ${ws}"; fi
+}
+
+# Delete ALL GOAD instances: every GOAD-*-goad-azure RG in the subscription, plus
+# any leftover workspace dirs (phantoms whose RG was already gone).
+goad_destroy_all() {
+  local clone rg found=0
+  clone="$(_goad_clone_path)"
+  for rg in $(az group list --query "[?ends_with(name,'-goad-azure')].name" -o tsv 2>/dev/null); do
+    found=1
+    goad_destroy_instance "$clone" "$rg"
+  done
+  if compgen -G "${clone}/workspace/*-goad-azure" >/dev/null 2>&1; then
+    found=1
+    rm -rf "${clone}"/workspace/*-goad-azure && echo "  cleared remaining GOAD workspace dirs"
+  fi
+  [[ "$found" == "1" ]] || ok "no GOAD instances found — nothing to clean"
+}
+
+# ── CLEAN-GOAD mode ──────────────────────────────────────────────────
+# Remove every GOAD instance (RG + workspace) WITHOUT touching the rest of the
+# lab. Reclaims regional vCPU quota from leftover/abandoned GOAD builds; `destroy`
+# does this too but tears down everything else as well.
+if [[ "$ACTION" == "clean-goad" ]]; then
+  warn "CLEAN-GOAD: removing ALL GOAD instances (resource groups + workspace dirs)."
+  warn "The rest of the lab (Sentinel / Foundry / PixelAgents) is left untouched."
+  warn "Press Ctrl-C now to abort. Continuing in 5 seconds..."
+  sleep 5
+  goad_destroy_all
+  printf '\n%s%s GOAD instances cleaned.%s\n' "$BOLD" "$GREEN" "$NC"
+  printf '  RG deletions run in the background — watch with:\n'
+  printf '    az group list -o table | grep goad-azure\n\n'
+  exit 0
+fi
+
 # ── DESTROY mode ─────────────────────────────────────────────────────
 # Tear down the lab in reverse order. We don't touch the OIDC trust
 # (federated cred + repo vars) — those are stateless config a re-deploy
@@ -417,6 +481,10 @@ if [[ "$ACTION" == "destroy" ]]; then
   # since both reference GOAD resources. destroy_phase self-skips if never applied.
   destroy_phase terraform/5-deploy-redamon
   destroy_phase terraform/4-onboard-goad
+  # Remove GOAD itself (goad.py-managed RGs + workspace). The terraform phases
+  # above only cover the onboarding/RedAmon add-ons, not the GOAD lab VMs — those
+  # are built by goad.sh and would otherwise linger and keep eating quota.
+  goad_destroy_all
   destroy_phase terraform/3-deploy-pixelagents-web
   pre_destroy_phase2_cleanup
   destroy_phase terraform/2-deploy-aisoc
@@ -814,14 +882,12 @@ if [[ "$DEPLOY_GOAD" == "1" ]]; then
     warn "python3 not found — skipping GOAD prep (region/size/public-IP fixes)"
   fi
 
-  # 2. Run GOAD's own installer (long-running).
+  # 2. Run GOAD's own installer (long-running). NB: goad.py exits 0 even when its
+  #    `terraform apply` fails, so its exit code alone is not trustworthy — we
+  #    verify the VMs actually exist in step 4 below.
   say "Running goad.sh install (this takes a while — Windows VMs + ansible over the jumpbox)…"
-  if ! ( cd "$_goad_clone" && GOAD_ASSUME_YES=1 ./goad.sh -t install -l GOAD -p azure -m remote ); then
-    die "goad.sh install failed. Fix the cause (often capacity/quota — check the portal), then
-     RESUME the same workspace instead of starting over:
-       (cd ${_goad_clone} && ./goad.sh -t install -l GOAD -p azure -m remote -i <hash>-goad-azure)
-     then re-run this driver (a finished GOAD is picked up idempotently)."
-  fi
+  _goad_install_rc=0
+  ( cd "$_goad_clone" && GOAD_ASSUME_YES=1 ./goad.sh -t install -l GOAD -p azure -m remote ) || _goad_install_rc=$?
 
   # 3. Discover the hashed RG goad.sh created. Prefer the newest local workspace
   #    dir (the one this install rendered) and verify it exists as an RG; else
@@ -836,11 +902,35 @@ if [[ "$DEPLOY_GOAD" == "1" ]]; then
     mapfile -t _rgs < <(az group list --query "[?location=='${_goad_region}' && ends_with(name, 'goad-azure')].name" -o tsv 2>/dev/null || true)
     [[ "${#_rgs[@]}" -eq 1 ]] && _goad_rg="${_rgs[0]}"
   fi
-  [[ -n "$_goad_rg" ]] || die "GOAD built but its resource group couldn't be auto-discovered. Re-run with --goad-resource-group=GOAD-<hash>-goad-azure (az group list -o table | grep goad-azure)."
+
+  # 4. Verify the install actually finished. goad.py swallows a failed
+  #    `terraform apply` (e.g. a quota/capacity 409 leaves 0 VMs) and still exits
+  #    0, which would otherwise send Phase 4 at VMs that don't exist. Require the
+  #    full VM set (5 DCs + jumpbox = 6). On anything less, clean up the partial
+  #    instance so it doesn't leave VMs eating quota, then stop — set
+  #    AISOC_KEEP_FAILED_GOAD=1 to keep it for debugging / `-i <hash>` resume.
+  _goad_vm_count=0
+  if [[ -n "$_goad_rg" ]]; then
+    _goad_vm_count="$(az vm list -g "$_goad_rg" --query 'length(@)' -o tsv 2>/dev/null || echo 0)"
+  fi
+  if [[ "$_goad_install_rc" -ne 0 || -z "$_goad_rg" || "${_goad_vm_count:-0}" -lt 6 ]]; then
+    warn "GOAD install did not fully finish (goad.sh rc=${_goad_install_rc}, RG=${_goad_rg:-<none>}, VMs=${_goad_vm_count:-0}/6)."
+    warn "Most common cause: Total Regional vCPUs quota in ${_goad_region} —"
+    warn "  az vm list-usage -l ${_goad_region} --query \"[?name.value=='cores']\" -o table"
+    if [[ "${AISOC_KEEP_FAILED_GOAD:-0}" == "1" ]]; then
+      warn "AISOC_KEEP_FAILED_GOAD=1 — keeping the partial instance for debugging / resume:"
+      warn "  (cd ${_goad_clone} && ./goad.sh -t install -l GOAD -p azure -m remote -i $(basename "${_goad_ws:-<hash>-goad-azure}"))"
+    elif [[ -n "$_goad_rg" ]]; then
+      warn "Cleaning up the partial GOAD instance (set AISOC_KEEP_FAILED_GOAD=1 to keep it)…"
+      goad_destroy_instance "$_goad_clone" "$_goad_rg"
+    fi
+    die "GOAD build incomplete — free regional vCPU quota ('./aisoc_demo.sh clean-goad' removes
+     leftover GOAD instances, or raise the quota in the portal), then re-run."
+  fi
 
   export TF_VAR_goad_resource_group="$_goad_rg"
   export TF_VAR_goad_location="$_goad_region"
-  ok "GOAD built in ${_goad_region}; Phase 4 will onboard RG ${_goad_rg}"
+  ok "GOAD built in ${_goad_region} (${_goad_vm_count} VMs); Phase 4 will onboard RG ${_goad_rg}"
 fi
 
 # ── 5b) Phase 4 (optional) — onboard GOAD into Sentinel ──────────────
