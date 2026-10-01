@@ -198,14 +198,20 @@ def main() -> int:
                "(re-run with az logged in to auto-select capacity-safe sizes)")
         return 0
     usage = az.region_usage(args.region)
+    # ONE bulk SKU-catalogue read for the whole prep, shared by both pick_size
+    # calls below. (Previously each pick_size did one `az vm list-skus --size`
+    # per candidate — ~11 slow calls that timed out and made every size look
+    # like "no capacity".)
+    skus = az.region_vm_skus(args.region)
     dc_vcpus = 2 * args.dc_count
 
     az.log(f"picking DC size (needs {dc_vcpus} vCPU across {args.dc_count} DCs)…")
-    dc = az.pick_size(args.region, DC_CANDIDATES, dc_vcpus, usage)
+    dc = az.pick_size(args.region, DC_CANDIDATES, dc_vcpus, usage, skus=skus)
     if not dc:
-        az.log(f"no 2-vCPU family has capacity in {args.region} for this subscription. "
-               f"Find a region that does — `python3 scripts/azure_find_region.py` — then re-run "
-               f"with --region <that>. Leaving sizes unchanged.")
+        az.log(f"could not pick a DC size in {args.region} (no 2-vCPU family with capacity, "
+               f"or the SKU catalogue could not be read — see the line above). Find a region "
+               f"that has capacity — `python3 scripts/azure_find_region.py` — then re-run with "
+               f"--region <that>. Leaving sizes unchanged.")
         return 0
 
     # Simulate the DCs consuming their family, then pick the jumpbox (2 vCPU) —
@@ -216,7 +222,7 @@ def main() -> int:
             if k.lower() == dc["family"].lower():
                 sim[k]["current"] += dc_vcpus
     az.log("picking jumpbox size (2 vCPU, second family if the DC family is full)…")
-    jb = az.pick_size(args.region, DC_CANDIDATES, 2, sim) or dc
+    jb = az.pick_size(args.region, DC_CANDIDATES, 2, sim, skus=skus) or dc
 
     set_dc_size(args.goad_clone, dc["size"])
     set_jumpbox_size(args.goad_clone, jb["size"])

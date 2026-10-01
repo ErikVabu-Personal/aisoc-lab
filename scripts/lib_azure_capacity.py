@@ -25,18 +25,22 @@ from typing import Optional
 
 QUOTA_API_VERSION = "2023-02-01"
 _AZ_TIMEOUT = 120
+# `az vm list-skus` returns the whole region catalogue and is far slower than the
+# other calls (120 s is routinely not enough on a cold subscription). Give the
+# SKU enumeration its own generous timeout; it runs at most once per region now.
+_LIST_SKUS_TIMEOUT = 300
 
 
 def log(msg: str) -> None:
     print(f"[azure-preflight] {msg}", file=sys.stderr, flush=True)
 
 
-def _az(args: list[str]) -> Optional[object]:
+def _az(args: list[str], timeout: int = _AZ_TIMEOUT) -> Optional[object]:
     """Run `az <args> -o json`; return parsed JSON, or None on any failure."""
     try:
         r = subprocess.run(
             ["az", *args, "-o", "json"],
-            capture_output=True, text=True, timeout=_AZ_TIMEOUT,
+            capture_output=True, text=True, timeout=timeout,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         log(f"az call failed ({' '.join(args[:3])}…): {e!r}")
@@ -95,7 +99,8 @@ def region_vm_skus(region: str) -> dict:
     the SKU has NO restriction; `reason` carries the restriction reasonCode(s)
     (e.g. NotAvailableForSubscription) for the unavailable ones.
     """
-    skus = _az(["vm", "list-skus", "-l", region, "--resource-type", "virtualMachines"])
+    skus = _az(["vm", "list-skus", "-l", region, "--resource-type", "virtualMachines"],
+               timeout=_LIST_SKUS_TIMEOUT)
     out: dict[str, dict] = {}
     if not isinstance(skus, list):
         return out
@@ -122,7 +127,8 @@ def size_info(region: str, size: str) -> dict:
     `family` is the quota-family token used by list-usage / the Quota API
     (e.g. "standardDASv4Family").
     """
-    skus = _az(["vm", "list-skus", "-l", region, "--size", size])
+    skus = _az(["vm", "list-skus", "-l", region, "--resource-type", "virtualMachines",
+                "--size", size], timeout=_LIST_SKUS_TIMEOUT)
     if not isinstance(skus, list) or not skus:
         return {"available": False, "vcpus": 0, "family": None, "reason": "not-found"}
     s = skus[0]
@@ -170,18 +176,35 @@ def family_headroom(usage: dict, family_token: Optional[str]) -> Optional[int]:
 # --- Size selection ---------------------------------------------------------
 
 def pick_size(region: str, candidates: list[str], vcpus_needed: int,
-              usage: Optional[dict] = None) -> Optional[dict]:
+              usage: Optional[dict] = None, skus: Optional[dict] = None) -> Optional[dict]:
     """First candidate that has CAPACITY and enough FAMILY quota headroom.
+
+    Capacity comes from ONE bulk `region_vm_skus()` call, not one
+    `az vm list-skus --size` per candidate — the latter re-downloads the whole
+    region catalogue every time and times out (every size then looks like
+    "no capacity"). Pass a pre-fetched `skus` map to share it across several
+    pick_size() calls for the same region.
 
     Falls back to the first capacity-available candidate (regardless of quota)
     with a flag, so the caller can request a quota bump for it. Returns
-    {size, family, vcpus, headroom, quota_ok} or None if nothing has capacity.
+    {size, family, vcpus, headroom, quota_ok}; returns None if nothing has
+    capacity OR the SKU catalogue couldn't be read (a distinct log line, so the
+    caller can tell a read failure apart from a genuinely full region).
     """
     if usage is None:
         usage = region_usage(region)
+    if skus is None:
+        skus = region_vm_skus(region)
+    if not skus:
+        log(f"  could not enumerate VM SKUs in {region} (az list-skus failed/timed out) — "
+            f"cannot verify capacity; leaving sizing to the caller's fallback")
+        return None
     first_available: Optional[dict] = None
     for size in candidates:
-        info = size_info(region, size)
+        info = skus.get(size)
+        if info is None:
+            log(f"  {size}: not offered in {region}")
+            continue
         if not info["available"]:
             log(f"  {size}: no capacity ({info.get('reason') or 'restricted'})")
             continue
